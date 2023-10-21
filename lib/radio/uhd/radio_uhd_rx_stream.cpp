@@ -21,17 +21,17 @@
  */
 
 #include "radio_uhd_rx_stream.h"
+#include <complex>
+#include <vector> 
+
 
 using namespace srsran;
 
-bool radio_uhd_rx_stream::receive_block(unsigned&                       nof_rxd_samples,
-                                        baseband_gateway_buffer_writer& data,
-                                        unsigned                        offset,
-                                        uhd::rx_metadata_t&             md)
+bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& complex_buffer,unsigned& nof_rxd_samples, baseband_gateway_buffer_writer& data, unsigned offset, uhd::rx_metadata_t& md)
 {
   // Extract number of samples.
   unsigned num_samples = data.get_nof_samples() - offset;
-
+  
   // Ignore reception if it is not streaming.
   if (state != states::STREAMING) {
     nof_rxd_samples = num_samples;
@@ -52,15 +52,27 @@ bool radio_uhd_rx_stream::receive_block(unsigned&                       nof_rxd_
   // Protect the UHD Tx stream against concurrent access.
   std::unique_lock<std::mutex> lock(stream_mutex);
 
-  return safe_execution([this, buffs_cpp, num_samples, &md, &nof_rxd_samples]() {
+  return safe_execution([this, buffs_cpp, num_samples, &md, &nof_rxd_samples, &complex_buffer]() {
     nof_rxd_samples = stream->recv(buffs_cpp, num_samples, md, RECEIVE_TIMEOUT_S, ONE_PACKET);
+	
+	// Create a complex buffer to hold the received data
+    complex_buffer.resize(nof_rxd_samples);
+
+    // Copy the received data into the complex buffer
+     memcpy(complex_buffer.data(), buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>));
+
+    // Send complex_buffer data to the socket
+    socket.send_to(boost::asio::buffer(complex_buffer.data(), nof_rxd_samples * sizeof(std::complex<float>)), endpoint);
+
   });
 }
 
 radio_uhd_rx_stream::radio_uhd_rx_stream(uhd::usrp::multi_usrp::sptr& usrp,
                                          const stream_description&    description,
                                          radio_notification_handler&  notifier_) :
-  id(description.id), srate_Hz(description.srate_Hz), notifier(notifier_)
+  id(description.id), srate_Hz(description.srate_Hz), notifier(notifier_),  // Initialize the notifier member first
+  socket(io_service),   // Initialize the socket member next
+  endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 5588) // Change IP and port as needed
 {
   srsran_assert(std::isnormal(srate_Hz) && (srate_Hz > 0.0), "Invalid sampling rate {}.", srate_Hz);
 
@@ -91,7 +103,10 @@ radio_uhd_rx_stream::radio_uhd_rx_stream(uhd::usrp::multi_usrp::sptr& usrp,
   }
 
   state = states::SUCCESSFUL_INIT;
+
+  socket.open(boost::asio::ip::udp::v4());
 }
+
 
 bool radio_uhd_rx_stream::start(const uhd::time_spec_t& time_spec)
 {
@@ -129,7 +144,10 @@ baseband_gateway_receiver::metadata radio_uhd_rx_stream::receive(baseband_gatewa
   // Receive stream in multiple blocks.
   while (rxd_samples_total < nsamples) {
     unsigned rxd_samples = 0;
-    if (!receive_block(rxd_samples, buffs, rxd_samples_total, md)) {
+    std::vector<std::complex<float>> complex_buffer;
+    complex_buffer.resize(rxd_samples);
+    
+    if (!receive_block(complex_buffer,rxd_samples, buffs, rxd_samples_total, md)) {
       printf("Error: failed receiving packet. %s.\n", get_error_message().c_str());
       return {};
     }
@@ -203,7 +221,7 @@ bool radio_uhd_rx_stream::stop()
     printf("Error: failed to stop stream %d. %s.", id, get_error_message().c_str());
     return false;
   }
-
+  socket.close();
   return true;
 }
 

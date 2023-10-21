@@ -29,6 +29,7 @@
 #include "srsran/radio/radio_configuration.h"
 #include "srsran/radio/radio_notification_handler.h"
 #include <mutex>
+#include <boost/asio.hpp>
 
 namespace srsran {
 
@@ -36,7 +37,8 @@ namespace srsran {
 class radio_uhd_rx_stream : public uhd_exception_handler, public baseband_gateway_receiver
 {
 private:
-  /// Receive timeout in seconds.
+   
+    /// Receive timeout in seconds.
   static constexpr double RECEIVE_TIMEOUT_S = 0.2f;
   /// Set to true for receiving data in a single packet.
   static constexpr bool ONE_PACKET = false;
@@ -60,13 +62,18 @@ private:
   /// Protects stream from concurrent receive and stop.
   std::mutex stream_mutex;
 
+  boost::asio::io_service io_service;
+  boost::asio::ip::udp::socket socket;
+  boost::asio::ip::udp::endpoint endpoint;
+
   /// \brief Receives a single block of baseband samples.
   /// \param[out] nof_rxd_samples Indicate the number of samples received in the block.
   /// \param[in,out] buffs Provides the reception buffers.
   /// \param[in] buffer_offset Indicates the data offset in the reception buffers.
   /// \param[in] metadata Provides the reception metadata.
   /// \return True if no exception is caught. Otherwise false.
-  bool receive_block(unsigned&                       nof_rxd_samples,
+  bool receive_block(std::vector<std::complex<float>>& complex_buffer, 
+                     unsigned&                       nof_rxd_samples,
                      baseband_gateway_buffer_writer& buffs,
                      unsigned                        buffer_offset,
                      uhd::rx_metadata_t&             metadata);
