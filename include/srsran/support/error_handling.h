@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,8 +23,7 @@
 #pragma once
 
 #include "srsran/srslog/srslog.h"
-#include <signal.h>
-#include <sys/prctl.h>
+#include <csignal>
 
 namespace srsran {
 
@@ -49,15 +48,7 @@ template <typename... Args>
   ::fflush(stdout);
   fmt::print(stderr, "srsGNB ERROR: {}\n", fmt::format(reason_fmt, std::forward<Args>(args)...));
 
-  // Disable coredump.
-  int ret = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
-  if (ret != 0) {
-    fmt::print(stderr, "Could not disable coredump: {}\n", strerror(errno));
-  }
-
-  // Disable backtrace for SIGABRT.
-  signal(SIGABRT, SIG_DFL);
-  std::abort();
+  std::quick_exit(1);
 }
 
 /// \brief Reports a fatal error and handles the application shutdown. This function is intended to be used for

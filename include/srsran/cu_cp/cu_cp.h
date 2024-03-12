@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,76 +22,41 @@
 
 #pragma once
 
-#include "cu_cp_types.h"
-#include "srsran/cu_cp/cu_up_repository.h"
-#include "srsran/cu_cp/du_repository.h"
-#include "srsran/e1ap/common/e1ap_common.h"
-#include "srsran/ngap/ngap.h"
+#include "srsran/cu_cp/cu_cp_e1_handler.h"
+#include "srsran/cu_cp/cu_cp_f1c_handler.h"
+#include "srsran/cu_cp/cu_cp_metrics_handler.h"
+#include "srsran/cu_cp/cu_cp_ng_handler.h"
+#include "srsran/cu_cp/cu_cp_types.h"
 
 namespace srsran {
 namespace srs_cu_cp {
 
-/// Interface to handle AMF connections
-class cu_cp_ngap_handler
+/// \brief Public interface for a CU-CP instance.
+class cu_cp
 {
 public:
-  virtual ~cu_cp_ngap_handler() = default;
+  virtual ~cu_cp() = default;
 
-  /// \brief Handles a AMF connection notification.
-  virtual void handle_amf_connection() = 0;
+  /// \brief Get handler of the F1-C interface of the CU-CP.
+  virtual cu_cp_f1c_handler& get_f1c_handler() = 0;
 
-  /// \brief Handles a AMF connection drop notification.
-  virtual void handle_amf_connection_drop() = 0;
-};
+  /// \brief Get handler of the E1 interface of the CU-CP.
+  virtual cu_cp_e1_handler& get_e1_handler() = 0;
 
-class cu_cp_ngap_connection_interface
-{
-public:
-  virtual ~cu_cp_ngap_connection_interface() = default;
+  /// \brief Get handler of the NG interface of the CU-CP.
+  virtual cu_cp_ng_handler& get_ng_handler() = 0;
 
-  /// \brief Get the NG message handler interface.
-  /// \return The NG message handler interface.
-  virtual ngap_message_handler& get_ngap_message_handler() = 0;
+  /// \brief Get the metrics handler interface of the CU-CP.
+  virtual metrics_handler& get_metrics_handler() = 0;
 
-  /// \brief Get the NG event handler interface.
-  /// \return The NG event handler interface.
-  virtual ngap_event_handler& get_ngap_event_handler() = 0;
+  /// \brief Initiate AMF TNL connection and run NG Setup Procedure.
+  ///
+  /// This function blocks until the procedure is complete. Once completed, the CU-CP is in operational state.
+  /// \return Returns true if the connection to the AMF and NG setup procedure were successful. False, otherwise.
+  virtual bool start() = 0;
 
-  /// \brief Get the state of the AMF connection.
-  /// \return True if AMF is connected, false otherwise.
-  virtual bool amf_is_connected() = 0;
-};
-
-class cu_cp_cu_up_connection_interface
-{
-public:
-  virtual ~cu_cp_cu_up_connection_interface() = default;
-
-  /// \brief Get the number of CU-UPs connected to the CU-CP.
-  /// \return The number of CU-UPs.
-  virtual size_t get_nof_cu_ups() const = 0;
-
-  /// \brief Get the E1AP message handler interface of the CU-UP processor object.
-  /// \param[in] cu_up_index The index of the CU-UP processor object.
-  /// \return The E1AP message handler interface of the CU-UP processor object.
-  virtual e1ap_message_handler& get_e1ap_message_handler(const cu_up_index_t cu_up_index) = 0;
-};
-
-class cu_cp_interface : public cu_cp_ngap_connection_interface,
-                        public cu_cp_ngap_handler,
-                        public cu_cp_cu_up_connection_interface
-
-{
-public:
-  virtual ~cu_cp_interface() = default;
-
-  virtual du_repository&                    get_connected_dus()                    = 0;
-  virtual cu_up_repository&                 get_connected_cu_ups()                 = 0;
-  virtual cu_cp_ngap_handler&               get_cu_cp_ngap_handler()               = 0;
-  virtual cu_cp_ngap_connection_interface&  get_cu_cp_ngap_connection_interface()  = 0;
-  virtual cu_cp_cu_up_connection_interface& get_cu_cp_cu_up_connection_interface() = 0;
-
-  virtual void start() = 0;
+  /// \brief Stop the CU-CP operation.
+  virtual void stop() = 0;
 };
 
 } // namespace srs_cu_cp

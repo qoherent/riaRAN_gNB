@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,6 +31,7 @@
 #include "srsran/e1ap/cu_cp/e1ap_cu_cp_factory.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include <gtest/gtest.h>
+#include <unordered_map>
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -43,7 +44,7 @@ class dummy_cu_cp_e1ap_gateway
 public:
   dummy_cu_cp_e1ap_gateway() : logger(srslog::fetch_basic_logger("TEST")) {}
 
-  void attach_cu_cp_cu_up_repo(srs_cu_cp::cu_up_repository& cu_cp_cu_up_mng_)
+  void attach_cu_cp_cu_up_repo(srs_cu_cp::cu_cp_e1_handler& cu_cp_cu_up_mng_)
   {
     local_e1ap_gw.attach_cu_cp_cu_up_repo(cu_cp_cu_up_mng_);
   }
@@ -114,7 +115,7 @@ protected:
   srslog::basic_logger& e1ap_logger = srslog::fetch_basic_logger("E1AP");
   srslog::basic_logger& test_logger = srslog::fetch_basic_logger("TEST");
 
-  slotted_id_table<ue_index_t, test_ue, MAX_NOF_CU_UES> test_ues;
+  std::unordered_map<ue_index_t, test_ue> test_ues;
 
   timer_manager                       timers;
   dummy_e1ap_pdu_notifier             e1ap_pdu_notifier;
@@ -122,6 +123,7 @@ protected:
   dummy_e1ap_cu_cp_notifier           cu_cp_notifier;
   manual_task_worker                  ctrl_worker{128};
   std::unique_ptr<e1ap_interface>     e1ap;
+  unsigned                            max_nof_supported_ues = 1024 * 4;
 };
 
 } // namespace srs_cu_cp

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,27 +23,21 @@
 #pragma once
 
 #include "epoll_helper.h"
-#include "srsran/srslog/srslog.h"
 #include "srsran/support/io/io_broker.h"
 #include <mutex>
 #include <unordered_map>
 
 namespace srsran {
 
-struct io_broker_config {
-  std::string                 thread_name = "io_broker_epoll";
-  os_thread_realtime_priority thread_prio = os_thread_realtime_priority::no_realtime();
-};
-
 /// @brief Implementation of an IO broker using epoll.
 class io_broker_epoll : public io_broker
 {
 public:
-  explicit io_broker_epoll(io_broker_config config);
+  explicit io_broker_epoll(const io_broker_config& config);
   ~io_broker_epoll();
 
-  bool register_fd(int fd, recv_callback_t handler) override;
-  bool unregister_fd(int fd) override;
+  SRSRAN_NODISCARD bool register_fd(int fd, recv_callback_t handler) override;
+  SRSRAN_NODISCARD bool unregister_fd(int fd) override;
 
 private:
   void thread_loop();

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -168,31 +168,35 @@ inline size_t rlc_um_nr_packed_length(const rlc_um_pdu_header& header)
   return len;
 }
 
-inline void rlc_um_write_data_pdu_header(const rlc_um_pdu_header& header, byte_buffer& pdu)
+inline size_t rlc_um_write_data_pdu_header(span<uint8_t> buf, const rlc_um_pdu_header& header)
 {
-  byte_buffer        hdr_buf;
-  byte_buffer_writer hdr_writer = hdr_buf;
-  // write SI field
-  hdr_writer.append((to_number(header.si) & 0x03U) << 6U); // 2 bits SI
+  span<uint8_t>::iterator buf_it = buf.begin();
+
+  *buf_it = (to_number(header.si) & 0x03U) << 6U; // 2 bits SI
 
   if (header.si == rlc_si_field::full_sdu) {
-    // that's all
-  } else {
-    if (header.sn_size == rlc_um_sn_size::size6bits) {
-      // write SN
-      hdr_writer.back() |= (header.sn & 0x3fU); // 6 bit SN
-    } else {
-      // 12bit SN
-      hdr_writer.back() |= (header.sn >> 8U) & 0xfU; // high part of SN (4 bit)
-      hdr_writer.append(header.sn & 0xffU);          // remaining 8 bit SN
-    }
-    if (header.so != 0) {
-      // write SO
-      hdr_writer.append((header.so) >> 8U); // first part of SO
-      hdr_writer.append(header.so & 0xffU); // second part of SO
-    }
+    return 1; // that's all
   }
-  pdu.prepend(std::move(hdr_buf));
+
+  if (header.sn_size == rlc_um_sn_size::size6bits) {
+    // 6-bit SN
+    *buf_it |= (header.sn & 0x3fU); // write SN (6 bit)
+    buf_it++;
+  } else {
+    // 12-bit SN
+    *buf_it |= (header.sn >> 8U) & 0xfU; // upper 4 bits of SN
+    buf_it++;
+    *buf_it = header.sn & 0xffU; // lower part 8 bits of SN
+    buf_it++;
+  }
+  if (header.so != 0) {
+    // write SO
+    *buf_it = header.so >> 8U; // upper part of SO
+    buf_it++;
+    *buf_it = header.so & 0xffU; // lower part of SO
+    buf_it++;
+  }
+  return std::distance(buf.begin(), buf_it);
 }
 
 } // namespace srsran

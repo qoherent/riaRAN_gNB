@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -208,17 +208,121 @@ rlc_bearer_cfg_s make_asn1_rrc_rlc_bearer(const rlc_bearer_config& cfg)
 
   out.mac_lc_ch_cfg_present                    = true;
   out.mac_lc_ch_cfg.ul_specific_params_present = true;
-  out.mac_lc_ch_cfg.ul_specific_params.prio    = is_srb(cfg.lcid) ? 1 : 2;
-  out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
-      lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::infinity;
-  out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
-      lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms5;
+  out.mac_lc_ch_cfg.ul_specific_params.prio    = cfg.mac_cfg.priority;
+  switch (cfg.mac_cfg.pbr) {
+    case prioritized_bit_rate::kBps0:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps0;
+      break;
+    case prioritized_bit_rate::kBps8:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps8;
+      break;
+    case prioritized_bit_rate::kBps16:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps16;
+      break;
+    case prioritized_bit_rate::kBps32:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps32;
+      break;
+    case prioritized_bit_rate::kBps64:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps64;
+      break;
+    case prioritized_bit_rate::kBps128:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps128;
+      break;
+    case prioritized_bit_rate::kBps256:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps256;
+      break;
+    case prioritized_bit_rate::kBps512:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps512;
+      break;
+    case prioritized_bit_rate::kBps1024:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps1024;
+      break;
+    case prioritized_bit_rate::kBps2048:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps2048;
+      break;
+    case prioritized_bit_rate::kBps4096:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps4096;
+      break;
+    case prioritized_bit_rate::kBps8192:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps8192;
+      break;
+    case prioritized_bit_rate::kBps16384:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps16384;
+      break;
+    case prioritized_bit_rate::kBps32768:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps32768;
+      break;
+    case prioritized_bit_rate::kBps65536:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::kbps65536;
+      break;
+    case prioritized_bit_rate::infinity:
+      out.mac_lc_ch_cfg.ul_specific_params.prioritised_bit_rate.value =
+          lc_ch_cfg_s::ul_specific_params_s_::prioritised_bit_rate_opts::infinity;
+      break;
+    default:
+      report_fatal_error("Invalid Prioritised Bit Rate {}", cfg.mac_cfg.pbr);
+  }
+  switch (cfg.mac_cfg.bsd) {
+    case bucket_size_duration::ms5:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms5;
+      break;
+    case bucket_size_duration::ms10:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms10;
+      break;
+    case bucket_size_duration::ms20:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms20;
+      break;
+    case bucket_size_duration::ms50:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms50;
+      break;
+    case bucket_size_duration::ms100:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms100;
+      break;
+    case bucket_size_duration::ms150:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms150;
+      break;
+    case bucket_size_duration::ms300:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms300;
+      break;
+    case bucket_size_duration::ms500:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms500;
+      break;
+    case bucket_size_duration::ms1000:
+      out.mac_lc_ch_cfg.ul_specific_params.bucket_size_dur.value =
+          lc_ch_cfg_s::ul_specific_params_s_::bucket_size_dur_opts::ms1000;
+      break;
+    default:
+      report_fatal_error("Invalid Bucket size duration {}", cfg.mac_cfg.bsd);
+  }
   out.mac_lc_ch_cfg.ul_specific_params.lc_ch_group_present          = true;
-  out.mac_lc_ch_cfg.ul_specific_params.lc_ch_group                  = is_srb(cfg.lcid) ? 0 : 1;
+  out.mac_lc_ch_cfg.ul_specific_params.lc_ch_group                  = cfg.mac_cfg.lcg_id;
   out.mac_lc_ch_cfg.ul_specific_params.sched_request_id_present     = true;
-  out.mac_lc_ch_cfg.ul_specific_params.sched_request_id             = 0;
-  out.mac_lc_ch_cfg.ul_specific_params.lc_ch_sr_mask                = false;
-  out.mac_lc_ch_cfg.ul_specific_params.lc_ch_sr_delay_timer_applied = false;
+  out.mac_lc_ch_cfg.ul_specific_params.sched_request_id             = cfg.mac_cfg.sr_id;
+  out.mac_lc_ch_cfg.ul_specific_params.lc_ch_sr_mask                = cfg.mac_cfg.lc_sr_mask;
+  out.mac_lc_ch_cfg.ul_specific_params.lc_ch_sr_delay_timer_applied = cfg.mac_cfg.lc_sr_delay_applied;
 
   return out;
 }
@@ -266,16 +370,18 @@ asn1::rrc_nr::bwp_dl_common_s srsran::srs_du::make_asn1_init_dl_bwp(const dl_con
     const search_space_configuration& ss = cfg.init_dl_bwp.pdcch_common.search_spaces[ss_idx];
     pdcch.common_search_space_list.push_back(srsran::srs_du::make_asn1_rrc_search_space(ss));
   }
-  pdcch.search_space_sib1_present           = true;
-  pdcch.search_space_sib1                   = cfg.init_dl_bwp.pdcch_common.sib1_search_space_id;
-  pdcch.search_space_other_sys_info_present = false;
-  pdcch.paging_search_space_present         = cfg.init_dl_bwp.pdcch_common.paging_search_space_id.has_value();
+  pdcch.search_space_sib1_present   = true;
+  pdcch.search_space_sib1           = cfg.init_dl_bwp.pdcch_common.sib1_search_space_id;
+  pdcch.paging_search_space_present = cfg.init_dl_bwp.pdcch_common.paging_search_space_id.has_value();
   if (pdcch.paging_search_space_present) {
     pdcch.paging_search_space = cfg.init_dl_bwp.pdcch_common.paging_search_space_id.value();
   }
-  pdcch.ra_search_space_present = true;
-  pdcch.ra_search_space         = (unsigned)cfg.init_dl_bwp.pdcch_common.ra_search_space_id;
-
+  pdcch.ra_search_space_present             = true;
+  pdcch.ra_search_space                     = (unsigned)cfg.init_dl_bwp.pdcch_common.ra_search_space_id;
+  pdcch.search_space_other_sys_info_present = cfg.init_dl_bwp.pdcch_common.other_si_search_space_id.has_value();
+  if (pdcch.search_space_other_sys_info_present) {
+    pdcch.search_space_other_sys_info = cfg.init_dl_bwp.pdcch_common.other_si_search_space_id.value();
+  }
   // > PDSCH-ConfigCommon.
   init_dl_bwp.pdsch_cfg_common_present = true;
   pdsch_cfg_common_s& pdsch            = init_dl_bwp.pdsch_cfg_common.set_setup();
@@ -357,6 +463,270 @@ pucch_group_hop_convert_to_asn1(pucch_group_hopping group_hop_value)
   return asn1::rrc_nr::pucch_cfg_common_s::pucch_group_hop_opts::disable;
 }
 
+static void ssb_per_rach_occasion_and_cb_preambles_per_ssb_to_asn1(const float        nof_ssb_per_ro,
+                                                                   const uint8_t      nof_cb_preambles_per_ssb,
+                                                                   rach_cfg_common_s& out_cfg)
+{
+  out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb_present = true;
+  if (nof_ssb_per_ro == 1 / 8) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_one_eighth();
+    switch (nof_cb_preambles_per_ssb) {
+      case 4:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n4;
+        return;
+      case 8:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n8;
+        return;
+      case 12:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n12;
+        return;
+      case 16:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n16;
+        return;
+      case 20:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n20;
+        return;
+      case 24:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n24;
+        return;
+      case 28:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n28;
+        return;
+      case 32:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n32;
+        return;
+      case 36:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n36;
+        return;
+      case 40:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n40;
+        return;
+      case 44:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n44;
+        return;
+      case 48:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n48;
+        return;
+      case 52:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n52;
+        return;
+      case 56:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n56;
+        return;
+      case 60:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n60;
+        return;
+      case 64:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n64;
+        return;
+      default:
+        report_fatal_error("Invalid nof. contention based preambles per SSB value {}", nof_cb_preambles_per_ssb);
+    }
+  } else if (nof_ssb_per_ro == 1 / 4) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_one_fourth();
+    switch (nof_cb_preambles_per_ssb) {
+      case 4:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n4;
+        return;
+      case 8:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n8;
+        return;
+      case 12:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n12;
+        return;
+      case 16:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n16;
+        return;
+      case 20:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n20;
+        return;
+      case 24:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n24;
+        return;
+      case 28:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n28;
+        return;
+      case 32:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n32;
+        return;
+      case 36:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n36;
+        return;
+      case 40:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n40;
+        return;
+      case 44:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n44;
+        return;
+      case 48:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n48;
+        return;
+      case 52:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n52;
+        return;
+      case 56:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n56;
+        return;
+      case 60:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n60;
+        return;
+      case 64:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n64;
+        return;
+      default:
+        report_fatal_error("Invalid nof. contention based preambles per SSB value {}", nof_cb_preambles_per_ssb);
+    }
+  } else if (nof_ssb_per_ro == 1 / 2) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_one_half();
+    switch (nof_cb_preambles_per_ssb) {
+      case 4:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n4;
+        return;
+      case 8:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n8;
+        return;
+      case 12:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n12;
+        return;
+      case 16:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n16;
+        return;
+      case 20:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n20;
+        return;
+      case 24:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n24;
+        return;
+      case 28:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n28;
+        return;
+      case 32:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n32;
+        return;
+      case 36:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n36;
+        return;
+      case 40:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n40;
+        return;
+      case 44:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n44;
+        return;
+      case 48:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n48;
+        return;
+      case 52:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n52;
+        return;
+      case 56:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n56;
+        return;
+      case 60:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n60;
+        return;
+      case 64:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n64;
+        return;
+      default:
+        report_fatal_error("Invalid nof. contention based preambles per SSB value {}", nof_cb_preambles_per_ssb);
+    }
+  } else if (nof_ssb_per_ro == 1) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_one();
+    switch (nof_cb_preambles_per_ssb) {
+      case 4:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n4;
+        return;
+      case 8:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n8;
+        return;
+      case 12:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n12;
+        return;
+      case 16:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n16;
+        return;
+      case 20:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n20;
+        return;
+      case 24:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n24;
+        return;
+      case 28:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n28;
+        return;
+      case 32:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n32;
+        return;
+      case 36:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n36;
+        return;
+      case 40:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n40;
+        return;
+      case 44:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n44;
+        return;
+      case 48:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n48;
+        return;
+      case 52:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n52;
+        return;
+      case 56:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n56;
+        return;
+      case 60:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n60;
+        return;
+      case 64:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n64;
+        return;
+      default:
+        report_fatal_error("Invalid nof. contention based preambles per SSB value {}", nof_cb_preambles_per_ssb);
+    }
+  } else if (nof_ssb_per_ro == 2) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_two();
+    switch (nof_cb_preambles_per_ssb) {
+      case 4:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n4;
+        return;
+      case 8:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n8;
+        return;
+      case 12:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n12;
+        return;
+      case 16:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n16;
+        return;
+      case 20:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n20;
+        return;
+      case 24:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n24;
+        return;
+      case 28:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n28;
+        return;
+      case 32:
+        nof_cb_preambles_per_ssb_opt.value = decltype(nof_cb_preambles_per_ssb_opt.value)::n32;
+        return;
+      default:
+        report_fatal_error("Invalid nof. contention based preambles per SSB value {}", nof_cb_preambles_per_ssb);
+    }
+  } else if (nof_ssb_per_ro == 4) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_four();
+    nof_cb_preambles_per_ssb_opt       = nof_cb_preambles_per_ssb;
+  } else if (nof_ssb_per_ro == 8) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_eight();
+    nof_cb_preambles_per_ssb_opt       = nof_cb_preambles_per_ssb;
+  } else if (nof_ssb_per_ro == 16) {
+    auto& nof_cb_preambles_per_ssb_opt = out_cfg.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_sixteen();
+    nof_cb_preambles_per_ssb_opt       = nof_cb_preambles_per_ssb;
+  }
+  report_fatal_error("Invalid nof. SSB per RACH occasion value {}", nof_ssb_per_ro);
+}
+
 asn1::rrc_nr::bwp_ul_common_s srsran::srs_du::make_asn1_rrc_initial_up_bwp(const ul_config_common& cfg)
 {
   asn1::rrc_nr::bwp_ul_common_s init_ul_bwp;
@@ -375,9 +745,61 @@ asn1::rrc_nr::bwp_ul_common_s srsran::srs_du::make_asn1_rrc_initial_up_bwp(const
   rach.rach_cfg_generic.msg1_freq_start = static_cast<uint16_t>(rach_cfg.rach_cfg_generic.msg1_frequency_start);
   rach.rach_cfg_generic.zero_correlation_zone_cfg =
       static_cast<uint8_t>(rach_cfg.rach_cfg_generic.zero_correlation_zone_config);
-  rach.rach_cfg_generic.preamb_rx_target_pwr   = rach_cfg.rach_cfg_generic.preamble_rx_target_pw.to_int();
-  rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n7;
-  rach.rach_cfg_generic.pwr_ramp_step.value    = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db4;
+  rach.rach_cfg_generic.preamb_rx_target_pwr = rach_cfg.rach_cfg_generic.preamble_rx_target_pw.to_int();
+  switch (rach_cfg.rach_cfg_generic.preamble_trans_max) {
+    case 3:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n3;
+      break;
+    case 4:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n4;
+      break;
+    case 5:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n5;
+      break;
+    case 6:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n6;
+      break;
+    case 7:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n7;
+      break;
+    case 8:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n8;
+      break;
+    case 10:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n10;
+      break;
+    case 20:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n20;
+      break;
+    case 50:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n50;
+      break;
+    case 100:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n100;
+      break;
+    case 200:
+      rach.rach_cfg_generic.preamb_trans_max.value = asn1::rrc_nr::rach_cfg_generic_s::preamb_trans_max_opts::n200;
+      break;
+    default:
+      report_fatal_error("Invalid preamble transmission max value");
+  }
+  switch (rach_cfg.rach_cfg_generic.power_ramping_step_db) {
+    case 0:
+      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db0;
+      break;
+    case 2:
+      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db2;
+      break;
+    case 4:
+      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db4;
+      break;
+    case 6:
+      rach.rach_cfg_generic.pwr_ramp_step.value = asn1::rrc_nr::rach_cfg_generic_s::pwr_ramp_step_opts::db6;
+      break;
+    default:
+      report_fatal_error("Invalid power ramping step value");
+  }
+
   bool success = asn1::number_to_enum(rach.rach_cfg_generic.ra_resp_win, rach_cfg.rach_cfg_generic.ra_resp_window);
   srsran_assert(success, "Invalid ra-WindowSize");
   if (rach_cfg.total_nof_ra_preambles.has_value()) {
@@ -385,9 +807,8 @@ asn1::rrc_nr::bwp_ul_common_s srsran::srs_du::make_asn1_rrc_initial_up_bwp(const
     rach.total_nof_ra_preambs         = rach_cfg.total_nof_ra_preambles.value();
     rach.total_nof_ra_preambs -= 1; // Account for zero-indexed ASN field.
   }
-  rach.ssb_per_rach_occasion_and_cb_preambs_per_ssb_present = true;
-  rach.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_one().value =
-      asn1::rrc_nr::rach_cfg_common_s::ssb_per_rach_occasion_and_cb_preambs_per_ssb_c_::one_opts::n4;
+  ssb_per_rach_occasion_and_cb_preambles_per_ssb_to_asn1(
+      rach_cfg.nof_ssb_per_ro, rach_cfg.nof_cb_preambles_per_ssb, rach);
   rach.ra_contention_resolution_timer.value =
       asn1::rrc_nr::rach_cfg_common_s::ra_contention_resolution_timer_opts::sf64;
   if (rach_cfg.is_prach_root_seq_index_l839) {
@@ -847,9 +1268,9 @@ void calculate_pdsch_config_diff(asn1::rrc_nr::pdsch_cfg_s& out, const pdsch_con
   // TODO: Remaining.
 }
 
-void calculate_bwp_dl_dedicated_diff(asn1::rrc_nr::bwp_dl_ded_s&   out,
-                                     const bwp_downlink_dedicated& src,
-                                     const bwp_downlink_dedicated& dest)
+static bool calculate_bwp_dl_dedicated_diff(asn1::rrc_nr::bwp_dl_ded_s&   out,
+                                            const bwp_downlink_dedicated& src,
+                                            const bwp_downlink_dedicated& dest)
 {
   if ((dest.pdcch_cfg.has_value() && not src.pdcch_cfg.has_value()) ||
       (dest.pdcch_cfg.has_value() && src.pdcch_cfg.has_value() && dest.pdcch_cfg != src.pdcch_cfg)) {
@@ -873,6 +1294,8 @@ void calculate_bwp_dl_dedicated_diff(asn1::rrc_nr::bwp_dl_ded_s&   out,
     out.pdsch_cfg.set_release();
   }
   // TODO: sps-Config and radioLinkMonitoringConfig.
+
+  return out.pdcch_cfg_present || out.pdsch_cfg_present;
 }
 
 asn1::rrc_nr::pucch_res_set_s srsran::srs_du::make_asn1_rrc_pucch_resource_set(const pucch_resource_set& cfg)
@@ -880,7 +1303,7 @@ asn1::rrc_nr::pucch_res_set_s srsran::srs_du::make_asn1_rrc_pucch_resource_set(c
   pucch_res_set_s pucch_res_set;
   pucch_res_set.pucch_res_set_id = cfg.pucch_res_set_id;
   for (const auto& it : cfg.pucch_res_id_list) {
-    pucch_res_set.res_list.push_back(it);
+    pucch_res_set.res_list.push_back(it.ue_res_id);
   }
   if (cfg.max_payload_size.has_value()) {
     pucch_res_set.max_payload_size = cfg.max_payload_size.value();
@@ -948,7 +1371,7 @@ void make_asn1_rrc_pucch_formats_common_param(asn1::rrc_nr::pucch_format_cfg_s& 
 asn1::rrc_nr::pucch_res_s srsran::srs_du::make_asn1_rrc_pucch_resource(const pucch_resource& cfg)
 {
   pucch_res_s pucch_res;
-  pucch_res.pucch_res_id                = cfg.res_id;
+  pucch_res.pucch_res_id                = cfg.res_id.ue_res_id;
   pucch_res.start_prb                   = cfg.starting_prb;
   pucch_res.intra_slot_freq_hop_present = cfg.second_hop_prb.has_value();
   pucch_res.second_hop_prb_present      = cfg.second_hop_prb.has_value();
@@ -1030,7 +1453,7 @@ srsran::srs_du::make_asn1_rrc_sr_resource(const scheduling_request_resource_conf
   sr_res_cfg.sched_request_res_id           = cfg.sr_res_id;
   sr_res_cfg.sched_request_id               = cfg.sr_id;
   sr_res_cfg.res_present                    = true;
-  sr_res_cfg.res                            = cfg.pucch_res_id;
+  sr_res_cfg.res                            = cfg.pucch_res_id.ue_res_id;
   sr_res_cfg.periodicity_and_offset_present = true;
   switch (cfg.period) {
     case sr_periodicity::sym_2:
@@ -1114,7 +1537,13 @@ void calculate_pucch_config_diff(asn1::rrc_nr::pucch_cfg_s& out, const pucch_con
       src.pucch_res_list,
       dest.pucch_res_list,
       [](const pucch_resource& res) { return make_asn1_rrc_pucch_resource(res); },
-      [](const pucch_resource& res) { return res.res_id; });
+      [](const pucch_resource& res) {
+        // NOTE: For safety, we use an ID composed of both UE and cell PUCCH resource IDs. We cannot compare only by
+        // using the UE PUCCH resource ID. This is because the UE PUCCH resource ID always uses index {0 , ...,
+        // max_UE_PUCCH_resources - 1}; therefore, even if we changed the configuration, this index wouldn't change and
+        // the function would not detect the change of configuration.
+        return (static_cast<uint64_t>(res.res_id.ue_res_id) << 32U) + static_cast<uint64_t>(res.res_id.cell_res_id);
+      });
 
   if ((dest.format_1_common_param.has_value() && not src.format_1_common_param.has_value()) ||
       (dest.format_1_common_param.has_value() && src.format_1_common_param.has_value() &&
@@ -2031,9 +2460,9 @@ void calculate_srs_config_diff(asn1::rrc_nr::srs_cfg_s& out, const srs_config& s
   }
 }
 
-void calculate_bwp_ul_dedicated_diff(asn1::rrc_nr::bwp_ul_ded_s& out,
-                                     const bwp_uplink_dedicated& src,
-                                     const bwp_uplink_dedicated& dest)
+static bool calculate_bwp_ul_dedicated_diff(asn1::rrc_nr::bwp_ul_ded_s& out,
+                                            const bwp_uplink_dedicated& src,
+                                            const bwp_uplink_dedicated& dest)
 {
   if ((dest.pucch_cfg.has_value() && not src.pucch_cfg.has_value()) ||
       (dest.pucch_cfg.has_value() && src.pucch_cfg.has_value() && dest.pucch_cfg != src.pucch_cfg)) {
@@ -2067,14 +2496,18 @@ void calculate_bwp_ul_dedicated_diff(asn1::rrc_nr::bwp_ul_ded_s& out,
     out.srs_cfg.set_release();
   }
   // TODO: Remaining.
+
+  return out.pucch_cfg_present || out.pusch_cfg_present || out.srs_cfg_present;
 }
 
-void calculate_uplink_config_diff(asn1::rrc_nr::ul_cfg_s& out, const uplink_config& src, const uplink_config& dest)
+static bool
+calculate_uplink_config_diff(asn1::rrc_nr::ul_cfg_s& out, const uplink_config& src, const uplink_config& dest)
 {
-  out.init_ul_bwp_present = true;
-  calculate_bwp_ul_dedicated_diff(out.init_ul_bwp, src.init_ul_bwp, dest.init_ul_bwp);
+  out.init_ul_bwp_present = calculate_bwp_ul_dedicated_diff(out.init_ul_bwp, src.init_ul_bwp, dest.init_ul_bwp);
 
   // TODO: Remaining.
+
+  return out.init_ul_bwp_present;
 }
 
 void calculate_pdsch_serving_cell_cfg_diff(asn1::rrc_nr::pdsch_serving_cell_cfg_s& out,
@@ -2171,17 +2604,15 @@ void calculate_pdsch_serving_cell_cfg_diff(asn1::rrc_nr::pdsch_serving_cell_cfg_
   }
 }
 
-void calculate_serving_cell_config_diff(asn1::rrc_nr::serving_cell_cfg_s& out,
-                                        const serving_cell_config&        src,
-                                        const serving_cell_config&        dest)
+static bool calculate_serving_cell_config_diff(asn1::rrc_nr::serving_cell_cfg_s& out,
+                                               const serving_cell_config&        src,
+                                               const serving_cell_config&        dest)
 {
-  out.init_dl_bwp_present = true;
-  calculate_bwp_dl_dedicated_diff(out.init_dl_bwp, src.init_dl_bwp, dest.init_dl_bwp);
+  out.init_dl_bwp_present = calculate_bwp_dl_dedicated_diff(out.init_dl_bwp, src.init_dl_bwp, dest.init_dl_bwp);
 
   // UplinkConfig.
   if (dest.ul_config.has_value()) {
-    out.ul_cfg_present = true;
-    calculate_uplink_config_diff(
+    out.ul_cfg_present = calculate_uplink_config_diff(
         out.ul_cfg, src.ul_config.has_value() ? src.ul_config.value() : uplink_config{}, dest.ul_config.value());
   }
 
@@ -2213,6 +2644,9 @@ void calculate_serving_cell_config_diff(asn1::rrc_nr::serving_cell_cfg_s& out,
 
   // TAG-ID.
   out.tag_id = dest.tag_id;
+
+  return out.init_dl_bwp_present || out.ul_cfg_present || out.pdsch_serving_cell_cfg_present ||
+         out.csi_meas_cfg_present;
 }
 
 asn1::rrc_nr::sched_request_to_add_mod_s
@@ -2528,9 +2962,9 @@ void make_asn1_rrc_phr_config(asn1::rrc_nr::phr_cfg_s& out, const phr_config& cf
   }
 }
 
-void calculate_mac_cell_group_config_diff(asn1::rrc_nr::mac_cell_group_cfg_s& out,
-                                          const mac_cell_group_config&        src,
-                                          const mac_cell_group_config&        dest)
+static bool calculate_mac_cell_group_config_diff(asn1::rrc_nr::mac_cell_group_cfg_s& out,
+                                                 const mac_cell_group_config&        src,
+                                                 const mac_cell_group_config&        dest)
 {
   calculate_addmodremlist_diff(
       out.sched_request_cfg.sched_request_to_add_mod_list,
@@ -2570,6 +3004,8 @@ void calculate_mac_cell_group_config_diff(asn1::rrc_nr::mac_cell_group_cfg_s& ou
   }
 
   out.skip_ul_tx_dyn = dest.skip_uplink_tx_dynamic;
+
+  return out.sched_request_cfg_present || out.bsr_cfg_present || out.tag_cfg_present || out.phr_cfg_present;
 }
 
 void srsran::srs_du::calculate_cell_group_config_diff(asn1::rrc_nr::cell_group_cfg_s& out,
@@ -2584,18 +3020,17 @@ void srsran::srs_du::calculate_cell_group_config_diff(asn1::rrc_nr::cell_group_c
       [](const rlc_bearer_config& b) { return make_asn1_rrc_rlc_bearer(b); },
       [](const rlc_bearer_config& b) { return (uint8_t)b.lcid; });
 
-  out.sp_cell_cfg_present               = true;
-  out.sp_cell_cfg.serv_cell_idx_present = false;
   if (dest.cells.contains(0)) {
-    out.sp_cell_cfg.serv_cell_idx           = dest.cells[0].serv_cell_idx;
-    out.sp_cell_cfg.sp_cell_cfg_ded_present = true;
-    calculate_serving_cell_config_diff(out.sp_cell_cfg.sp_cell_cfg_ded,
-                                       src.cells.contains(0) ? src.cells[0].serv_cell_cfg : serving_cell_config{},
-                                       dest.cells[0].serv_cell_cfg);
+    out.sp_cell_cfg.sp_cell_cfg_ded_present =
+        calculate_serving_cell_config_diff(out.sp_cell_cfg.sp_cell_cfg_ded,
+                                           src.cells.contains(0) ? src.cells[0].serv_cell_cfg : serving_cell_config{},
+                                           dest.cells[0].serv_cell_cfg);
+
+    out.sp_cell_cfg_present = out.sp_cell_cfg.sp_cell_cfg_ded_present;
   }
 
-  out.mac_cell_group_cfg_present = true;
-  calculate_mac_cell_group_config_diff(out.mac_cell_group_cfg, src.mcg_cfg, dest.mcg_cfg);
+  out.mac_cell_group_cfg_present =
+      calculate_mac_cell_group_config_diff(out.mac_cell_group_cfg, src.mcg_cfg, dest.mcg_cfg);
 
   out.phys_cell_group_cfg_present = true;
   if (dest.pcg_cfg.p_nr_fr1.has_value()) {
@@ -2667,7 +3102,7 @@ bool srsran::srs_du::calculate_reconfig_with_sync_diff(asn1::rrc_nr::recfg_with_
   // ss-PBCH-BlockPower INTEGER (-60..50)
   out.sp_cell_cfg_common.ss_pbch_block_pwr = du_cell_cfg.ssb_cfg.ssb_block_power;
 
-  out.new_ue_id = rnti;
+  out.new_ue_id = to_value(rnti);
 
   out.t304.value = recfg_with_sync_s::t304_opts::ms2000;
 

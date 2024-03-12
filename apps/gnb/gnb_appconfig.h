@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,12 +22,16 @@
 
 #pragma once
 
+#include "gnb_os_sched_affinity_manager.h"
+#include "srsran/adt/byte_buffer.h"
 #include "srsran/adt/optional.h"
 #include "srsran/adt/variant.h"
 #include "srsran/ran/band_helper.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/ran/direct_current_offset.h"
+#include "srsran/ran/dmrs.h"
 #include "srsran/ran/five_qi.h"
+#include "srsran/ran/lcid.h"
 #include "srsran/ran/ntn.h"
 #include "srsran/ran/pcch/pcch_configuration.h"
 #include "srsran/ran/pci.h"
@@ -37,8 +41,12 @@
 #include "srsran/ran/pusch/pusch_mcs.h"
 #include "srsran/ran/rnti.h"
 #include "srsran/ran/s_nssai.h"
+#include "srsran/ran/sib/system_info_config.h"
+#include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/support/unique_thread.h"
+#include "srsran/support/units.h"
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,6 +71,21 @@ struct prach_appconfig {
   /// with the PUCCH, the user should leave some guardband between the PUCCH CRBs and the PRACH PRBs.
   /// Possible values: {0,...,MAX_NOF_PRB - 1}.
   optional<unsigned> prach_frequency_start;
+  /// Max number of RA preamble transmissions performed before declaring a failure. Values {3, 4, 5, 6, 7, 8, 10, 20,
+  /// 50, 100, 200}.
+  uint8_t preamble_trans_max = 7;
+  /// Power ramping steps for PRACH. Values {0, 2, 4, 6}.
+  uint8_t power_ramping_step_db = 4;
+  /// Ports list for PRACH reception.
+  std::vector<uint8_t> ports = {0};
+  /// Indicates the number of SSBs per RACH occasion (L1 parameter 'SSB-per-rach-occasion'). See TS 38.331, \c
+  /// ssb-perRACH-OccasionAndCB-PreamblesPerSSB. Values {1/8, 1/4, 1/2, 1, 2, 4, 8, 16}.
+  /// Value 1/8 corresponds to one SSB associated with 8 RACH occasions and so on so forth.
+  float nof_ssb_per_ro = 1;
+  /// Indicates the number of Contention Based preambles per SSB (L1 parameter 'CB-preambles-per-SSB'). See TS 38.331,
+  /// \c ssb-perRACH-OccasionAndCB-PreamblesPerSSB.
+  /// \remark Values of \c cb_preambles_per_ssb depends on value of \c ssb_per_ro.
+  uint8_t nof_cb_preambles_per_ssb = 4;
 };
 
 /// TDD pattern configuration. See TS 38.331, \c TDD-UL-DL-Pattern.
@@ -72,7 +95,7 @@ struct tdd_ul_dl_pattern_appconfig {
   /// Values: {0,...,maxNrofSlots=80}.
   unsigned nof_dl_slots = 6;
   /// Values: {0,...,maxNrofSymbols-1=13}.
-  unsigned nof_dl_symbols = 0;
+  unsigned nof_dl_symbols = 8;
   /// Values: {0,...,maxNrofSlots=80}.
   unsigned nof_ul_slots = 3;
   /// Values: {0,...,maxNrofSymbols-1=13}.
@@ -108,6 +131,8 @@ struct pdcch_common_appconfig {
   std::array<uint8_t, 5> ss1_n_candidates = {0, 0, 1, 0, 0};
   /// SearchSpace#0 index as per tables in TS 38.213, clause 13.
   unsigned ss0_index = 0;
+  /// Maximum CORESET#0 duration in OFDM symbols to consider when deriving CORESET#0 index.
+  optional<uint8_t> max_coreset0_duration;
 };
 
 /// PDCCH Dedicated configuration.
@@ -150,18 +175,22 @@ struct pdsch_appconfig {
   unsigned fixed_sib1_mcs = 5;
   /// Number of UE DL HARQ processes.
   unsigned nof_harqs = 16;
+  /// Maximum number of times an HARQ process can be retransmitted, before it gets discarded.
+  unsigned max_nof_harq_retxs = 4;
   /// Maximum number of consecutive DL KOs before an RLF is reported.
   unsigned max_consecutive_kos = 100;
   /// Redundancy version sequence to use. Each element can have one of the following values: {0, 1, 2, 3}.
   std::vector<unsigned> rv_sequence = {0, 2, 3, 1};
   /// MCS table to use for PDSCH
   pdsch_mcs_table mcs_table = pdsch_mcs_table::qam64;
-  /// Number of antenna ports. If empty, the \c nof_ports is derived from the number of DL antennas.
-  optional<unsigned> nof_ports;
   /// Minimum number of RBs for Resource Allocation of UE PDSCHs.
   unsigned min_rb_size = 1;
   /// Maximum number of RBs for Resource Allocation of UE PDSCHs.
   unsigned max_rb_size = MAX_NOF_PRBS;
+  /// Maximum number of PDSCH grants per slot.
+  unsigned max_pdschs_per_slot = MAX_PDSCH_PDUS_PER_SLOT;
+  /// Maximum number of DL or UL PDCCH allocation attempts per slot.
+  unsigned max_pdcch_alloc_attempts_per_slot = std::max(MAX_DL_PDCCH_PDUS_PER_SLOT, MAX_UL_PDCCH_PDUS_PER_SLOT);
   /// CQI offset increment used in outer loop link adaptation (OLLA) algorithm. If set to zero, OLLA is disabled.
   float olla_cqi_inc{0.001};
   /// DL Target BLER to be achieved with OLLA.
@@ -173,7 +202,15 @@ struct pdsch_appconfig {
   ///
   /// The numerology of the active DL BWP is used as a reference to determine the number of subcarriers.
   /// The DC offset value 0 corresponds to the center of the SCS-Carrier for the numerology of the active DL BWP.
-  optional<dc_offset_t> dc_offset;
+  dc_offset_t dc_offset{dc_offset_t::center};
+  /// Link Adaptation (LA) threshold for drop in CQI of the first HARQ transmission above which HARQ retransmissions are
+  /// cancelled.
+  uint8_t harq_la_cqi_drop_threshold{3};
+  /// Link Adaptation (LA) threshold for drop in nof. layers of the first HARQ transmission above which HARQ
+  /// retransmission is cancelled.
+  uint8_t harq_la_ri_drop_threshold{1};
+  /// Position for additional DM-RS in DL, see Tables 7.4.1.1.2-3 and 7.4.1.1.2-4 in TS 38.211.
+  uint8_t dmrs_add_pos{1};
 };
 
 /// PUSCH application configuration.
@@ -216,6 +253,8 @@ struct pusch_appconfig {
 
   /// Minimum k2 value (distance in slots between UL PDCCH and PUSCH) that the gNB can use. Values: {1, ..., 32}.
   unsigned min_k2 = 4;
+  /// Maximum number of PUSCH grants per slot.
+  unsigned max_puschs_per_slot = MAX_PUSCH_PDUS_PER_SLOT;
   /// \brief Direct Current (DC) offset, in number of subcarriers, used in PUSCH.
   ///
   /// The numerology of the active UL BWP is used as a reference to determine the number of subcarriers.
@@ -228,6 +267,8 @@ struct pusch_appconfig {
   float olla_target_bler{0.01};
   /// Maximum CQI offset that the OLLA algorithm can apply to the reported CQI.
   float olla_max_snr_offset{5.0};
+  /// Position for additional DM-RS in UL (see TS 38.211, clause 6.4.1.1.3).
+  uint8_t dmrs_add_pos{2};
 };
 
 struct pucch_appconfig {
@@ -279,6 +320,9 @@ struct pucch_appconfig {
   max_pucch_code_rate max_code_rate = max_pucch_code_rate::dot_35;
   /// Minimum k1 value (distance in slots between PDSCH and HARQ-ACK) that the gNB can use. Values: {1, ..., 15}.
   unsigned min_k1 = 4;
+
+  /// Maximum number of consecutive undecoded PUCCH Format 2 for CSI before an RLF is reported.
+  unsigned max_consecutive_kos = 100;
 };
 
 /// Parameters that are used to initialize or build the \c PhysicalCellGroupConfig, TS 38.331.
@@ -302,6 +346,10 @@ struct amplitude_control_appconfig {
 struct ul_common_appconfig {
   /// Maximum transmit power allowed in this serving cell. Values: {-30,...,33}dBm.
   optional<int> p_max;
+  /// Maximum number of PUCCH grants per slot.
+  unsigned max_pucchs_per_slot = 31U;
+  /// Maximum number of PUSCH + PUCCH grants per slot.
+  unsigned max_ul_grants_per_slot = 32U;
 };
 
 struct ssb_appconfig {
@@ -315,7 +363,54 @@ struct ssb_appconfig {
   ssb_pss_to_sss_epre pss_to_sss_epre = ssb_pss_to_sss_epre::dB_0;
 };
 
+/// Configuration of SIBs and SI-message scheduling.
+struct sib_appconfig {
+  struct si_sched_info_config {
+    /// List of SIB indexes (sib2 => value 2 in list, sib3 => value 3 in list, ...) included in this SI message. The
+    /// list has at most 32 elements.
+    std::vector<uint8_t> sib_mapping_info;
+    /// Periodicity of the SI-message in radio frames. Values: {8, 16, 32, 64, 128, 256, 512}.
+    unsigned si_period_rf = 32;
+  };
+
+  struct sib_ue_timers_and_constants {
+    /// t300
+    /// Values (in ms): {100, 200, 300, 400, 600, 1000, 1500, 2000}
+    unsigned t300 = 1000;
+    /// t301
+    /// Values (in ms): {100, 200, 300, 400, 600, 1000, 1500, 2000}
+    unsigned t301 = 1000;
+    /// t310
+    /// Values (in ms): {0, 50, 100, 200, 500, 1000, 2000}
+    unsigned t310 = 1000;
+    /// n310
+    /// Values: {1, 2, 3, 4, 6, 8, 10, 20}
+    unsigned n310 = 1;
+    /// t311
+    /// Values (in ms): {1000, 3000, 5000, 10000, 15000, 20000, 30000}
+    unsigned t311 = 3000;
+    /// n311
+    /// Values: {1, 2, 3, 4, 5, 6, 8, 10}
+    unsigned n311 = 1;
+    /// t319
+    /// Values (in ms): {100, 200, 300, 400, 600, 1000, 1500, 2000}
+    unsigned t319 = 1000;
+  };
+
+  /// The length of the SI scheduling window, in slots. It is always shorter or equal to the period of the SI message.
+  /// Values: {5, 10, 20, 40, 80, 160, 320, 640, 1280}.
+  unsigned si_window_len_slots = 160;
+  /// List of SI-messages and associated scheduling information.
+  std::vector<si_sched_info_config> si_sched_info;
+  /// UE timers and constants parameters
+  sib_ue_timers_and_constants ue_timers_and_constants;
+  /// Parameters of the SIB19.
+  sib19_info sib19;
+};
+
 struct csi_appconfig {
+  /// \brief Enable CSI-RS and CSI reporting in the cell.
+  bool csi_rs_enabled = true;
   /// \brief \c CSI-RS period in milliseconds. Limited by TS38.214, clause 5.1.6.1.1. Values: {10, 20, 40, 80}.
   unsigned csi_rs_period_msec = 20;
   /// \brief Slot offset for measurement CSI-RS resources. If not set, it is automatically derived to avoid collisions
@@ -396,6 +491,8 @@ struct base_cell_appconfig {
   int q_qual_min = -20;
   /// SSB parameters.
   ssb_appconfig ssb_cfg;
+  /// SIB parameters.
+  sib_appconfig sib_cfg;
   /// UL common configuration parameters.
   ul_common_appconfig ul_common_cfg;
   /// PDCCH configuration.
@@ -431,7 +528,7 @@ struct cell_appconfig {
 /// RLC UM TX configuration
 struct rlc_tx_um_appconfig {
   uint16_t sn_field_length; ///< Number of bits used for sequence number
-  int32_t  t_reassembly;    ///< Timer used by rx to detect PDU loss (ms)
+  uint32_t queue_size;      ///< RLC SDU queue size
 };
 
 /// RLC UM RX configuration
@@ -453,6 +550,8 @@ struct rlc_tx_am_appconfig {
   uint32_t max_retx_thresh; ///< Max retx threshold
   int32_t  poll_pdu;        ///< Insert poll bit after this many PDUs
   int32_t  poll_byte;       ///< Insert poll bit after this much data (bytes)
+  uint32_t max_window = 0;  ///< Custom parameter to limit the maximum window size for memory reasons. 0 means no limit.
+  uint32_t queue_size = 4096; ///< RLC SDU queue size
 };
 
 /// RLC UM RX configuration
@@ -460,6 +559,10 @@ struct rlc_rx_am_appconfig {
   uint16_t sn_field_length;   ///< Number of bits used for sequence number
   int32_t  t_reassembly;      ///< Timer used by rx to detect PDU loss (ms)
   int32_t  t_status_prohibit; ///< Timer used by rx to prohibit tx of status PDU (ms)
+
+  // Implementation-specific parameters that are not specified by 3GPP
+  /// Maximum number of visited SNs in the RX window when building a status report. 0 means no limit.
+  uint32_t max_sn_per_status = 0;
 };
 
 /// RLC AM configuration
@@ -502,6 +605,29 @@ struct pdcp_appconfig {
   pdcp_tx_appconfig tx;
   pdcp_rx_appconfig rx;
 };
+
+struct mac_lc_appconfig {
+  /// Logical channel priority. Values {1,...,16}. An increasing priority value indicates a lower priority level.
+  /// [Implementation-Defined] Only priority > 3 are allowed for DRBs.
+  uint8_t priority;
+  /// Logical channel group ID. Values {0,...,7}.
+  /// [Implementation-Defined] Only LCG ID > 0 are allowed for DRBs.
+  uint8_t lc_group_id;
+  /// Bucket size duration in milliseconds. Values {5, 10, 20, 50, 100, 150, 300, 500, 1000}. See TS 38.331, \c
+  /// bucketSizeDuration.
+  unsigned bucket_size_duration_ms;
+  /// Prioritized Bit rate value in kiloBytes/s. Values {0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
+  /// 32768, 65536, 65537}. Value 65537 means infinity. See TS 38.331, \c prioritisedBitRate.
+  unsigned prioritized_bit_rate_kBps;
+};
+
+/// QoS configuration
+struct srb_appconfig {
+  unsigned         srb_id;
+  rlc_am_appconfig rlc;
+  mac_lc_appconfig mac;
+};
+
 /// QoS configuration
 struct qos_appconfig {
   five_qi_t           five_qi = uint_to_five_qi(9);
@@ -509,17 +635,21 @@ struct qos_appconfig {
   f1u_du_appconfig    f1u_du;
   f1u_cu_up_appconfig f1u_cu_up;
   pdcp_appconfig      pdcp;
+  mac_lc_appconfig    mac;
 };
 
 struct amf_appconfig {
   std::string ip_addr                = "127.0.0.1";
   uint16_t    port                   = 38412;
   std::string bind_addr              = "127.0.0.1";
+  std::string n2_bind_addr           = "auto";
+  std::string n3_bind_addr           = "auto";
   int         sctp_rto_initial       = 120;
   int         sctp_rto_min           = 120;
   int         sctp_rto_max           = 500;
   int         sctp_init_max_attempts = 3;
   int         sctp_max_init_timeo    = 500;
+  int         udp_rx_max_msgs        = 256;
   bool        no_core                = false;
 };
 
@@ -583,27 +713,42 @@ struct mobility_appconfig {
 /// \brief RRC specific configuration parameters.
 struct rrc_appconfig {
   bool     force_reestablishment_fallback = false;
-  unsigned rrc_procedure_timeout_ms       = 360; ///< Timeout for RRC procedures (default SRB maxRetxThreshold *
-                                                 ///< t-PollRetransmit = 8 * 45ms = 360ms, see TS 38.331 Sec 9.2.1).
+  unsigned rrc_procedure_timeout_ms       = 720; ///< Timeout for RRC procedures (2 * default SRB maxRetxThreshold *
+                                                 ///< t-PollRetransmit = 2 * 8 * 45ms = 720ms, see TS 38.331 Sec 9.2.1).
 };
 
 /// \brief Security configuration parameters.
 struct security_appconfig {
   std::string integrity_protection       = "not_needed";
-  std::string confidentiality_protection = "not_needed";
+  std::string confidentiality_protection = "required";
+  std::string nea_preference_list        = "nea0,nea2,nea1,nea3";
+  std::string nia_preference_list        = "nia2,nia1,nia3";
 };
 
 struct cu_cp_appconfig {
-  int                inactivity_timer = 7200; // in seconds
+  uint16_t           max_nof_dus                = 6;
+  uint16_t           max_nof_cu_ups             = 6;
+  int                inactivity_timer           = 7200; // in seconds
+  unsigned           ue_context_setup_timeout_s = 3;    // in seconds (must be larger than T310)
   mobility_appconfig mobility_config;
   rrc_appconfig      rrc_config;
   security_appconfig security_config;
 };
 
+struct cu_up_appconfig {
+  unsigned gtpu_queue_size          = 2048;
+  unsigned gtpu_reordering_timer_ms = 0;
+  bool     warn_on_drop             = false;
+};
+
+/// Configuration of logging functionalities.
 struct log_appconfig {
-  std::string filename    = "/tmp/gnb.log"; // Path to write log file or "stdout" to print to console.
-  std::string all_level   = "warning";      // Default log level for all layers.
-  std::string lib_level   = "warning"; // Generic log level assigned to library components without layer-specific level.
+  /// Path to log file or "stdout" to print to console.
+  std::string filename = "/tmp/gnb.log";
+  /// Default log level for all layers.
+  std::string all_level = "warning";
+  /// Generic log level assigned to library components without layer-specific level.
+  std::string lib_level   = "warning";
   std::string du_level    = "warning";
   std::string cu_level    = "warning";
   std::string phy_level   = "warning";
@@ -621,10 +766,18 @@ struct log_appconfig {
   std::string fapi_level  = "warning";
   std::string ofh_level   = "warning";
   std::string e2ap_level  = "warning";
-  int         hex_max_size      = 0;     // Maximum number of bytes to write when dumping hex arrays.
-  bool        broadcast_enabled = false; // Set to true to log broadcasting messages and all PRACH opportunities.
-  std::string phy_rx_symbols_filename;   // Set to a valid file path to print the received symbols.
-  std::string tracing_filename;          // Set to a valid file path to enable tracing and write the trace to the file.
+  /// Maximum number of bytes to write when dumping hex arrays.
+  int hex_max_size = 0;
+  /// Set to true to log broadcasting messages and all PRACH opportunities.
+  bool broadcast_enabled = false;
+  /// Set to a valid file path to print the received symbols.
+  std::string phy_rx_symbols_filename;
+  /// Set to a valid Rx port number or empty for all ports.
+  optional<unsigned> phy_rx_symbols_port = 0;
+  /// If true, prints the PRACH frequency-domain symbols.
+  bool phy_rx_symbols_prach = false;
+  /// Set to a valid file path to enable tracing and write the trace to the file.
+  std::string tracing_filename;
 };
 
 struct pcap_appconfig {
@@ -649,14 +802,33 @@ struct pcap_appconfig {
     bool        enabled  = false;
   } gtpu;
   struct {
+    std::string filename = "/tmp/gnb_rlc.pcap";
+    std::string rb_type  = "all";
+    bool        enabled  = false;
+  } rlc;
+  struct {
     std::string filename = "/tmp/gnb_mac.pcap";
+    std::string type     = "udp";
     bool        enabled  = false;
   } mac;
 };
 
 /// Metrics report configuration.
 struct metrics_appconfig {
-  unsigned rlc_report_period = 1000; // RLC report period in ms
+  struct {
+    unsigned report_period = 0; // RLC report period in ms
+    bool     json_enabled  = false;
+  } rlc;
+  struct {
+    unsigned report_period = 0; // PDCP report period in ms
+  } pdcp;
+  unsigned cu_cp_statistics_report_period = 1; // Statistics report period in seconds
+  unsigned cu_up_statistics_report_period = 1; // Statistics report period in seconds
+  /// JSON metrics reporting.
+  bool        enable_json_metrics      = false;
+  std::string addr                     = "127.0.0.1";
+  uint16_t    port                     = 55555;
+  bool        autostart_stdout_metrics = false;
 };
 
 /// Lower physical layer thread profiles.
@@ -679,22 +851,7 @@ struct expert_upper_phy_appconfig {
   /// Higher values increase the downlink processing pipeline length, which improves performance and stability for
   /// demanding cell configurations, such as using large bandwidths or higher order MIMO. Higher values also increase
   /// the round trip latency of the radio link.
-  unsigned max_processing_delay_slots = 2U;
-  /// \brief PDSCH processor type.
-  ///
-  /// Use of there options:
-  /// - \c automatic: selects \c lite implementation if \c nof_pdsch_threads is one, otherwise \c concurrent, or
-  /// - \c generic: for using unoptimized PDSCH processing, or
-  /// - \c concurrent: for using a processor that processes code blocks in parallel, or
-  /// - \c lite: for using a memory optimized processor.
-  std::string pdsch_processor_type = "auto";
-  /// Number of threads for encoding PDSCH concurrently. Only used if \c pdsch_processor_type is set to \c concurrent.
-  unsigned nof_pdsch_threads = 1;
-  /// Number of threads for processing PUSCH and PUCCH. It is set to 4 by default unless the available hardware
-  /// concurrency is limited, in which case the most suitable number of threads between one and three will be selected.
-  unsigned nof_ul_threads = std::min(4U, std::max(std::thread::hardware_concurrency(), 4U) - 3U);
-  /// Number of threads for processing PDSCH, PDCCH, NZP CSI-RS and SSB. It is set to 1 by default.
-  unsigned nof_dl_threads = 1;
+  unsigned max_processing_delay_slots = 5U;
   /// Number of PUSCH LDPC decoder iterations.
   unsigned pusch_decoder_max_iterations = 6;
   /// Set to true to enable the PUSCH LDPC decoder early stop.
@@ -705,12 +862,23 @@ struct expert_upper_phy_appconfig {
   /// -\c channel_estimator: SINR is calculated by the channel estimator using the DM-RS.
   /// -\c post_equalization: SINR is calculated using the post-equalization noise variances of the equalized RE.
   /// -\c evm: SINR is obtained from the EVM of the PUSCH symbols.
-  std::string pusch_sinr_calc_method = "evm";
+  std::string pusch_sinr_calc_method = "post_equalization";
+  /// \brief Request headroom size in slots.
+  ///
+  /// The request headroom size is the number of delayed slots that the upper physical layer will accept, ie, if the
+  /// current slot is M, the upper phy will consider the slot M - nof_slots_request_headroom as valid and process it.
+  unsigned nof_slots_request_headroom = 0U;
 };
 
 struct test_mode_ue_appconfig {
   /// C-RNTI to assign to the test UE.
-  rnti_t rnti = INVALID_RNTI;
+  rnti_t rnti = rnti_t::INVALID_RNTI;
+  /// Number of test UE(s) to create.
+  uint16_t nof_ues = 1;
+  /// \brief Delay, in slots, before the MAC test mode auto-generates the UCI/CRC indication to pass to the scheduler.
+  /// This feature should be avoided if the OFH/UL PHY are operational, otherwise the auto-generated indications
+  /// may interfere with the UL PHY HARQ handling.
+  optional<unsigned> auto_ack_indication_delay;
   /// Whether PDSCH grants are automatically assigned to the test UE.
   bool pdsch_active = true;
   /// Whether PUSCH grants are automatically assigned to the test UE.
@@ -735,28 +903,33 @@ struct test_mode_appconfig {
 
 /// Expert SDR Radio Unit configuration.
 struct ru_sdr_expert_appconfig {
-  ru_sdr_expert_appconfig()
-  {
-    // Set the lower PHY thread profile according to the number of CPU cores.
-    if (srsran::compute_host_nof_hardware_threads() >= 8U) {
-      lphy_executor_profile = lower_phy_thread_profile::quad;
-    } else {
-      lphy_executor_profile = lower_phy_thread_profile::dual;
-    }
-  }
-
-  /// \brief Lower physical layer thread profile.
-  ///
-  /// If not configured, a default value is selected based on the number of available CPU cores.
-  lower_phy_thread_profile lphy_executor_profile;
   /// System time-based throttling. See \ref lower_phy_configuration::system_time_throttling for more information.
   float lphy_dl_throttling = 0.0F;
-};
-
-/// gNB app SDR Radio Unit cell configuration.
-struct ru_sdr_cell_appconfig {
-  /// Amplitude control configuration.
-  amplitude_control_appconfig amplitude_cfg;
+  /// \brief Enables discontinuous transmission mode for the radio front-ends supporting it.
+  ///
+  /// Discontinuous Transmission (DTX) is a power-saving technique used in radio communication where the transmitter is
+  /// turned off during periods of silence or when no data needs to be transmitted. This flag allows the user to
+  /// activate DTX for radio front-ends that support this transmission mode.
+  ///
+  /// When DTX is enabled, the radio transmitter intelligently manages its transmission state, reducing power
+  /// consumption during idle or silent periods. This is particularly beneficial in scenarios where power efficiency is
+  /// a critical consideration, such as battery-operated devices.
+  bool discontinuous_tx_mode = false;
+  /// \brief Power ramping time of the transmit chain in microseconds.
+  ///
+  /// This parameter represents the duration, in microseconds, required for the transmit chain to reach its full power
+  /// level.
+  ///
+  /// In discontinuous transmission mode, the transmitter is powered on ahead of the actual data transmission. By doing
+  /// so, the data-carrying samples remain unaffected by any transient effects or fluctuations in the transmit chain
+  /// during the power ramping time. The maximum supported power ramping time is equivalent to the duration of two NR
+  /// slots.
+  ///
+  /// \note It is recommended to configure this parameter carefully, taking into account the characteristics of the
+  /// transmit chain in order to achieve optimal performance.
+  /// \note Powering up the transmitter ahead of time requires starting the transmission earlier, and reduces the time
+  /// window for the radio to transmit the provided samples.
+  float power_ramping_time_us = 0.0F;
 };
 
 /// gNB app SDR Radio Unit configuration.
@@ -794,8 +967,8 @@ struct ru_sdr_appconfig {
   std::string otw_format = "default";
   /// Expert SDR Radio Unit settings.
   ru_sdr_expert_appconfig expert_cfg;
-  /// SDR Radio Unit cells configuration.
-  std::vector<ru_sdr_cell_appconfig> cells = {{}};
+  /// Amplitude control configuration.
+  amplitude_control_appconfig amplitude_cfg;
 };
 
 /// gNB app Open Fronthaul base cell configuration.
@@ -821,25 +994,29 @@ struct ru_ofh_base_cell_appconfig {
   /// Ta4 minimum parameter for uplink User-Plane in microseconds.
   unsigned Ta4_min = 85U;
   /// Enables the Control-Plane PRACH message signalling.
-  bool is_prach_control_plane_enabled = false;
+  bool is_prach_control_plane_enabled = true;
   /// \brief Downlink broadcast flag.
   ///
   /// If enabled, broadcasts the contents of a single antenna port to all downlink RU eAxCs.
   bool is_downlink_broadcast_enabled = false;
   /// If set to true, the payload size encoded in a eCPRI header is ignored.
   bool ignore_ecpri_payload_size_field = false;
+  /// If set to true, the sequence id encoded in a eCPRI packet is ignored.
+  bool ignore_ecpri_seq_id_field = false;
+  /// If set to true, warn of unreceived Radio Unit frames.
+  bool warn_unreceived_ru_frames = true;
   /// Uplink compression method.
   std::string compression_method_ul = "bfp";
   /// Uplink compression bitwidth.
-  unsigned compresion_bitwidth_ul = 9;
+  unsigned compression_bitwidth_ul = 9;
   /// Downlink compression method.
   std::string compression_method_dl = "bfp";
   /// Downlink compression bitwidth.
-  unsigned compresion_bitwidth_dl = 9;
+  unsigned compression_bitwidth_dl = 9;
   /// PRACH compression method.
   std::string compression_method_prach = "bfp";
   /// PRACH compression bitwidth.
-  unsigned compresion_bitwidth_prach = 9;
+  unsigned compression_bitwidth_prach = 9;
   /// Downlink static compression header flag.
   bool is_downlink_static_comp_hdr_enabled = true;
   /// Uplink static compression header flag.
@@ -852,8 +1029,12 @@ struct ru_ofh_base_cell_appconfig {
 struct ru_ofh_cell_appconfig {
   /// Base cell configuration.
   ru_ofh_base_cell_appconfig cell;
-  /// Ethernet network interface name.
+  /// Ethernet network interface name or identifier.
   std::string network_interface = "enp1s0f0";
+  /// Promiscuous mode flag.
+  bool enable_promiscuous_mode = true;
+  /// MTU size.
+  units::bytes mtu_size{9000};
   /// Radio Unit MAC address.
   std::string ru_mac_address = "70:b3:d5:e1:5b:06";
   /// Distributed Unit MAC address.
@@ -878,25 +1059,150 @@ struct ru_ofh_appconfig {
   unsigned dl_processing_time = 400U;
   /// Base cell configuration for the Radio Unit.
   ru_ofh_base_cell_appconfig base_cell_cfg;
-  /// Enables the parallelization of the downlink.
-  bool is_downlink_parallelized = true;
   /// Individual Open Fronthaul cells configurations.
   std::vector<ru_ofh_cell_appconfig> cells = {{}};
 };
 
+/// gNB app dummy Radio Unit configuration.
+struct ru_dummy_appconfig {
+  /// \brief DL processing delay in slots.
+  ///
+  /// It is the number of slots that the RU expects the downlink resource grid in advance for having enough time margin
+  /// for processing.
+  unsigned dl_processing_delay = 1;
+};
+
 struct buffer_pool_appconfig {
-  std::size_t nof_segments = 524288;
-  std::size_t segment_size = 1024;
+  std::size_t nof_segments = 1048576;
+  std::size_t segment_size = byte_buffer_segment_pool_default_segment_size();
+};
+
+/// CPU affinities configuration for the cell.
+struct cpu_affinities_cell_appconfig {
+  /// L1 uplink CPU affinity mask.
+  gnb_os_sched_affinity_config l1_ul_cpu_cfg = {gnb_sched_affinity_mask_types::l1_ul,
+                                                {},
+                                                gnb_sched_affinity_mask_policy::mask};
+  /// L1 downlink workers CPU affinity mask.
+  gnb_os_sched_affinity_config l1_dl_cpu_cfg = {gnb_sched_affinity_mask_types::l1_dl,
+                                                {},
+                                                gnb_sched_affinity_mask_policy::mask};
+
+  /// L2 workers CPU affinity mask.
+  gnb_os_sched_affinity_config l2_cell_cpu_cfg = {gnb_sched_affinity_mask_types::l2_cell,
+                                                  {},
+                                                  gnb_sched_affinity_mask_policy::mask};
+
+  /// Radio Unit workers CPU affinity mask.
+  gnb_os_sched_affinity_config ru_cpu_cfg = {gnb_sched_affinity_mask_types::ru,
+                                             {},
+                                             gnb_sched_affinity_mask_policy::mask};
+};
+
+/// CPU affinities configuration for the gNB app.
+struct cpu_affinities_appconfig {
+  /// CPUs isolation.
+  optional<os_sched_affinity_bitmask> isolated_cpus;
+  /// Low priority workers CPU affinity mask.
+  gnb_os_sched_affinity_config low_priority_cpu_cfg = {gnb_sched_affinity_mask_types::low_priority,
+                                                       {},
+                                                       gnb_sched_affinity_mask_policy::mask};
+};
+
+/// Non real time thread configuration for the gNB.
+struct non_rt_threads_appconfig {
+  /// Number of non real time threads for processing of CP and UP data in the upper layers
+  unsigned nof_non_rt_threads = 4;
+};
+
+/// Upper PHY thread configuration for the gNB.
+struct upper_phy_threads_appconfig {
+  /// \brief PDSCH processor type.
+  ///
+  /// Use of there options:
+  /// - \c automatic: selects \c lite implementation if \c nof_pdsch_threads is one, otherwise \c concurrent, or
+  /// - \c generic: for using unoptimized PDSCH processing, or
+  /// - \c concurrent: for using a processor that processes code blocks in parallel, or
+  /// - \c lite: for using a memory optimized processor.
+  std::string pdsch_processor_type = "auto";
+  /// \brief Number of threads for concurrent PUSCH decoding.
+  ///
+  /// If the number of PUSCH decoder threads is greater than zero, the PUSCH decoder will enqueue received soft bits and
+  /// process them asynchronously. Otherwise, PUSCH decoding will be performed synchronously.
+  ///
+  /// In non-real-time operations (e.g., when using ZeroMQ), setting this parameter to a non-zero value can potentially
+  /// introduce delays in uplink HARQ feedback.
+  unsigned nof_pusch_decoder_threads = 0;
+  /// Number of threads for processing PUSCH and PUCCH.
+  unsigned nof_ul_threads = 1;
+  /// Number of threads for processing PDSCH, PDCCH, NZP CSI-RS and SSB. It is set to 1 by default.
+  unsigned nof_dl_threads = 1;
+};
+
+/// Lower PHY thread configuration fo the gNB.
+struct lower_phy_threads_appconfig {
+  /// \brief Lower physical layer thread profile.
+  ///
+  /// If not configured, a default value is selected based on the number of available CPU cores.
+  lower_phy_thread_profile execution_profile;
+};
+
+/// Open Fronthaul thread configuration for the gNB.
+struct ofh_threads_appconfig {
+  bool is_downlink_parallelized = true;
+};
+
+/// Expert threads configuration of the gNB app.
+struct expert_threads_appconfig {
+  expert_threads_appconfig()
+  {
+    unsigned nof_threads = compute_host_nof_hardware_threads();
+
+    if (nof_threads < 4) {
+      upper_threads.nof_ul_threads            = 1;
+      upper_threads.nof_pusch_decoder_threads = 0;
+      upper_threads.nof_dl_threads            = 2;
+      lower_threads.execution_profile         = lower_phy_thread_profile::single;
+      ofh_threads.is_downlink_parallelized    = false;
+    } else if (nof_threads < 8) {
+      upper_threads.nof_ul_threads            = 1;
+      upper_threads.nof_pusch_decoder_threads = 1;
+      upper_threads.nof_dl_threads            = 4;
+      lower_threads.execution_profile         = lower_phy_thread_profile::dual;
+      ofh_threads.is_downlink_parallelized    = true;
+    } else if (nof_threads < 16) {
+      upper_threads.nof_ul_threads            = 1;
+      upper_threads.nof_pusch_decoder_threads = 1;
+      upper_threads.nof_dl_threads            = 4;
+      lower_threads.execution_profile         = lower_phy_thread_profile::quad;
+      ofh_threads.is_downlink_parallelized    = true;
+    } else {
+      upper_threads.nof_ul_threads            = 2;
+      upper_threads.nof_pusch_decoder_threads = 2;
+      upper_threads.nof_dl_threads            = 6;
+      lower_threads.execution_profile         = lower_phy_thread_profile::quad;
+      ofh_threads.is_downlink_parallelized    = true;
+    }
+  }
+
+  /// Non real time thread configuration of the gNB app.
+  non_rt_threads_appconfig non_rt_threads;
+  /// Upper PHY thread configuration of the gNB app.
+  upper_phy_threads_appconfig upper_threads;
+  /// Lower PHY thread configuration of the gNB app.
+  lower_phy_threads_appconfig lower_threads;
+  /// Open Fronthaul thread configuration of the gNB app.
+  ofh_threads_appconfig ofh_threads;
 };
 
 /// Expert configuration of the gNB app.
-struct expert_appconfig {
-  /// Enables usage of affinity profile tuned for higher performance.
-  bool enable_tuned_affinity_profile = false;
-  /// Number of threads per physical CPU.
-  unsigned nof_threads_per_cpu = 2;
-  /// Number of CPU cores reserved for non-priority tasks.
-  unsigned nof_cores_for_non_prio_workers = 4;
+struct expert_execution_appconfig {
+  /// gNB CPU affinities.
+  cpu_affinities_appconfig affinities;
+  /// Expert thread configuration of the gNB app.
+  expert_threads_appconfig threads;
+  /// CPU affinities per cell of the gNB app.
+  std::vector<cpu_affinities_cell_appconfig> cell_affinities = {{}};
 };
 
 /// HAL configuration of the gNB app.
@@ -923,15 +1229,12 @@ struct gnb_appconfig {
   amf_appconfig amf_cfg;
   /// CU-CP configuration.
   cu_cp_appconfig cu_cp_cfg;
+  /// CU-CP configuration.
+  cu_up_appconfig cu_up_cfg;
   /// \brief E2 configuration.
   e2_appconfig e2_cfg;
   /// Radio Unit configuration.
-  variant<ru_sdr_appconfig, ru_ofh_appconfig> ru_cfg = {ru_sdr_appconfig{}};
-  /// \brief Base cell application configuration.
-  ///
-  /// \note When a cell is added, it will use the values of this base cell as default values for its base cell
-  /// configuration. This parameter usage is restricted for filling cell information in the \remark cell_cfg variable.
-  base_cell_appconfig common_cell_cfg;
+  variant<ru_sdr_appconfig, ru_ofh_appconfig, ru_dummy_appconfig> ru_cfg = {ru_sdr_appconfig{}};
   /// \brief Cell configuration.
   ///
   /// \note Add one cell by default.
@@ -939,6 +1242,9 @@ struct gnb_appconfig {
 
   /// \brief QoS configuration.
   std::vector<qos_appconfig> qos_cfg;
+
+  /// \brief QoS configuration.
+  std::map<srb_id_t, srb_appconfig> srb_cfg;
 
   /// \brief Network slice configuration.
   std::vector<s_nssai_t> slice_cfg = {s_nssai_t{1}};
@@ -956,10 +1262,23 @@ struct gnb_appconfig {
   buffer_pool_appconfig buffer_pool_config;
 
   /// \brief Expert configuration.
-  expert_appconfig expert_config;
+  expert_execution_appconfig expert_execution_cfg;
 
   /// \brief HAL configuration.
   optional<hal_appconfig> hal_config;
+};
+
+/// \brief Monolithic gnb parsed application configuration.
+///
+/// Parsed configuration includes the common cell support.
+struct gnb_parsed_appconfig {
+  /// gNB application configuration.
+  gnb_appconfig config;
+  /// \brief Base cell application configuration.
+  ///
+  /// \note When a cell is added, it will use the values of this base cell as default values for its base cell
+  /// configuration. This parameter usage is restricted for filling cell information in the \remark cell_cfg variable.
+  base_cell_appconfig common_cell_cfg;
 };
 
 } // namespace srsran

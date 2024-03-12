@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -207,7 +207,7 @@ public:
 
 protected:
   /// Maximum reserved dimensions.
-  re_measurement_dimensions reserved_dims = {};
+  re_measurement_dimensions reserved_dims;
 
   /// \brief RE measurements container.
   ///
@@ -219,7 +219,7 @@ protected:
 
 private:
   /// Current dimensions.
-  re_measurement_dimensions dimensions = {};
+  re_measurement_dimensions dimensions;
 };
 
 } // namespace detail

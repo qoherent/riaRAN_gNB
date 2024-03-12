@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -67,6 +67,8 @@ namespace detail {
 
 } // namespace srsran
 
+// NOLINTBEGIN
+
 /// Helper macro to log assertion message and terminate program.
 #define SRSRAN_ASSERT_FAILURE__(condmessage, fmtstr, ...)                                                              \
   srsran::detail::print_and_abort(                                                                                     \
@@ -94,3 +96,5 @@ namespace detail {
   SRSRAN_ALWAYS_ASSERT_IFDEF__(PARANOID_ASSERTS_ENABLED, condition, fmtstr, ##__VA_ARGS__)
 
 #define srsran_assume(condition) static_cast<void>((condition) ? void(0) : SRSRAN_UNREACHABLE)
+
+// NOLINTEND

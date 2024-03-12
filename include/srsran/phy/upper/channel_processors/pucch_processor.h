@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,8 +28,8 @@
 #include "srsran/phy/upper/channel_processors/pucch_processor_result.h"
 #include "srsran/phy/upper/channel_processors/pucch_uci_message.h"
 #include "srsran/ran/cyclic_prefix.h"
-#include "srsran/ran/modulation_scheme.h"
 #include "srsran/ran/pucch/pucch_context.h"
+#include "srsran/ran/sch/modulation_scheme.h"
 #include "srsran/ran/slot_point.h"
 
 namespace srsran {
@@ -53,6 +53,8 @@ public:
     unsigned nof_symbols;
     /// Start symbol index {0, ..., 13}.
     unsigned start_symbol_index;
+    /// Slot and numerology, for logging.
+    slot_point slot;
   };
 
   /// Collects PUCCH Format 1 parameters.
@@ -78,8 +80,8 @@ public:
     optional<unsigned> second_hop_prb;
     /// \brief Parameter \f$n_{\textup{ID}}\f$ in TS38.211 Section 6.3.2.2.1 {0, ..., 1023}.
     ///
-    /// It must be set to the higher layer parameter \e hopingID given by TS38.331 Section 6.3.2, Information Element \e
-    /// PUCCH-ConfigCommon, if it is configured. Otherwise, it must be equal to the physical cell identifier
+    /// It must be set to the higher layer parameter \e hoppingID given by TS38.331 Section 6.3.2, Information Element
+    /// \e PUCCH-ConfigCommon, if it is configured. Otherwise, it must be equal to the physical cell identifier
     /// \f$N_{\textup{ID}}^{\textup{cell}}\f$.
     unsigned n_id;
     /// Number of expected HARQ-ACK bits {0, 1, 2} (see also \ref PUCCH_payload_size "here").
@@ -119,7 +121,10 @@ public:
     /// Lowest PRB index used for the PUCCH transmission within the BWP {0, ..., 274} if intra-slot frequency hopping is
     /// enabled, empty otherwise.
     optional<unsigned> second_hop_prb;
-    /// Number of PRB {1, ..., 16}.
+    /// \brief Number of PRB {1, ..., 16}.
+    ///
+    /// This parameter is equivalent to parameter \f$N^\textup{PUCCH, 2}_\textup{PRB}\f$ in TS38.212 Section 6.3.1.4,
+    /// and parameter \f$M^\textup{PUCCH}_\textup{RB,min}\f$ in TS38.213 Section 9.2.5.2.
     unsigned nof_prb;
     /// Start symbol index {0, ..., 12}.
     unsigned start_symbol_index;
@@ -151,12 +156,16 @@ public:
   struct format3_configuration {
     /// Cyclic prefix configuration for the slot.
     cyclic_prefix cp;
+    /// Slot and numerology, for logging.
+    slot_point slot;
   };
 
   /// Collects specific PUCCH Format 4 parameters.
   struct format4_configuration {
     /// Cyclic prefix configuration for the slot.
     cyclic_prefix cp;
+    /// Slot and numerology, for logging.
+    slot_point slot;
   };
 
   /// Default destructor.

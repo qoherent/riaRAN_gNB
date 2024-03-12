@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,10 +21,10 @@
  */
 
 #include "../../../support/resource_grid_test_doubles.h"
-#include "../../rx_softbuffer_test_doubles.h"
+#include "../../rx_buffer_test_doubles.h"
 #include "pusch_processor_result_test_doubles.h"
-#include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
-#include "srsran/phy/upper/channel_processors/channel_processor_formatters.h"
+#include "srsran/phy/upper/channel_processors/pusch/factories.h"
+#include "srsran/phy/upper/channel_processors/pusch/formatters.h"
 #include "srsran/phy/upper/equalization/equalization_factories.h"
 #include "fmt/ostream.h"
 #include "gtest/gtest.h"
@@ -231,6 +231,8 @@ protected:
     pusch_dec_config.decoder_factory                         = ldpc_dec_factory;
     pusch_dec_config.dematcher_factory                       = ldpc_rm_factory;
     pusch_dec_config.segmenter_factory                       = ldpc_segm_rx_factory;
+    pusch_dec_config.nof_prb                                 = MAX_RB;
+    pusch_dec_config.nof_layers                              = pusch_constants::MAX_NOF_LAYERS;
     std::shared_ptr<pusch_decoder_factory> pusch_dec_factory = create_pusch_decoder_factory_sw(pusch_dec_config);
     ASSERT_NE(pusch_dec_factory, nullptr);
 
@@ -240,7 +242,7 @@ protected:
 
     // Create UCI decoder factory.
     std::shared_ptr<uci_decoder_factory> uci_dec_factory =
-        create_uci_decoder_factory_sw(short_block_det_factory, polar_dec_factory, crc_calc_factory);
+        create_uci_decoder_factory_generic(short_block_det_factory, polar_dec_factory, crc_calc_factory);
     ASSERT_NE(uci_dec_factory, nullptr) << "Cannot create UCI decoder factory.";
 
     // Create PUSCH processor.
@@ -254,6 +256,7 @@ protected:
     pusch_proc_factory_config.ch_estimate_dimensions.nof_symbols   = MAX_NSYMB_PER_SLOT;
     pusch_proc_factory_config.ch_estimate_dimensions.nof_rx_ports  = 1;
     pusch_proc_factory_config.ch_estimate_dimensions.nof_tx_layers = 1;
+    pusch_proc_factory_config.max_nof_concurrent_threads           = 1;
     std::shared_ptr<pusch_processor_factory> pusch_proc_factory =
         create_pusch_processor_factory_sw(pusch_proc_factory_config);
     ASSERT_NE(pusch_proc_factory, nullptr);
@@ -287,13 +290,15 @@ TEST_P(PuschProcessorFixture, PuschProcessorValidatortest)
   // Prepare receive data.
   std::vector<uint8_t> data;
 
-  // Prepare softbuffer.
-  rx_softbuffer_spy softbuffer_spy(ldpc::MAX_CODEBLOCK_SIZE, 0);
+  // Prepare buffer.
+  rx_buffer_spy    rm_buffer_spy(ldpc::MAX_CODEBLOCK_SIZE, 0);
+  unique_rx_buffer rm_buffer(rm_buffer_spy);
 
   // Process PUSCH PDU.
 #ifdef ASSERTS_ENABLED
   pusch_processor_result_notifier_spy result_notifier_spy;
-  ASSERT_DEATH({ pusch_proc->process(data, softbuffer_spy, result_notifier_spy, grid, param.get_pdu()); }, param.expr);
+  ASSERT_DEATH({ pusch_proc->process(data, std::move(rm_buffer), result_notifier_spy, grid, param.get_pdu()); },
+               param.expr);
 #endif // ASSERTS_ENABLED
 }
 

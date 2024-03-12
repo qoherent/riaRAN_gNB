@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -141,7 +141,6 @@ private:
           int end   = re_mask.find_highest();
 
           srsran_assert(begin >= 0, "Invalid mask.");
-          srsran_assert(end > 0, "Invalid mask.");
           srsran_assert(begin <= end, "Invalid mask.");
 
           symbol_estimates = symbol_estimates.subspan(begin, end - begin + 1);

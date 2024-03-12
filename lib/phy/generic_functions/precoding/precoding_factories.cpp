@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,9 @@
 #include "channel_precoder_avx2.h"
 #include "channel_precoder_avx512.h"
 #endif // __x86_64__
+#ifdef __ARM_NEON
+#include "channel_precoder_neon.h"
+#endif // __ARM_NEON
 
 using namespace srsran;
 
@@ -51,6 +54,13 @@ public:
       return std::make_unique<channel_precoder_avx2>();
     }
 #endif // __x86_64__
+#ifdef __ARM_NEON
+    bool supports_neon = cpu_supports_feature(cpu_feature::neon);
+    if (((precoder_type == "neon") || (precoder_type == "auto")) && supports_neon) {
+      return std::make_unique<channel_precoder_neon>();
+    }
+#endif // //__ARM_NEON
+
     if ((precoder_type == "generic") || (precoder_type == "auto")) {
       return std::make_unique<channel_precoder_generic>();
     }

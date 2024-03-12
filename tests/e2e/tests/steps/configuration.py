@@ -1,10 +1,23 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
-# By using this file, you agree to the terms and conditions set
-# forth in the LICENSE file which can be found at the top level of
-# the distribution.
+# This file is part of srsRAN
 #
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
+#
+
 """
 Configuration related steps
 """
@@ -16,6 +29,7 @@ from typing import Optional, Union
 
 from retina.client.manager import RetinaTestManager
 from retina.launcher.artifacts import RetinaTestData
+from retina.launcher.public import MetricServerInfo
 
 
 # pylint: disable=too-many-arguments
@@ -31,6 +45,7 @@ def configure_test_parameters(
     pcap: Optional[bool] = None,
     gtpu_enable: Optional[bool] = None,
     common_search_space_enable: bool = False,
+    prach_config_index: int = -1,
 ):
     """
     Configure test parameters
@@ -55,6 +70,7 @@ def configure_test_parameters(
                 "bandwidth": bandwidth,
                 "time_alignment_calibration": time_alignment_calibration,
                 "common_search_space_enable": common_search_space_enable,
+                "prach_config_index": prach_config_index,
             },
         },
     }
@@ -65,15 +81,25 @@ def configure_test_parameters(
     if sample_rate is not None:
         retina_data.test_config["ue"]["parameters"]["sample_rate"] = sample_rate
         retina_data.test_config["gnb"]["parameters"]["sample_rate"] = sample_rate
-    if _is_tdd(band):
+    if is_tdd(band):
         retina_data.test_config["ue"]["parameters"]["rx_ant"] = "rx"
+
+    metrics_server = None
+    for node_name in retina_manager.get_testbed_info().get("generic", {}).keys():
+        if "metrics-server" in node_name:
+            metrics_server = retina_manager.get_testbed_info()["generic"][node_name]
+
+    if metrics_server is not None and metrics_server.metadata.get("ip", None) is not None:
+        retina_data.test_config["gnb"]["parameters"]["metrics_hostname"] = metrics_server.metadata["ip"]
+        retina_data.test_config["gnb"]["parameters"]["metrics_port"] = metrics_server.port
+        logging.info("Metrics Server in %s:%s will be used for this test.", metrics_server.address, metrics_server.port)
 
     logging.info("Test config: \n%s", pformat(retina_data.test_config))
     retina_manager.parse_configuration(retina_data.test_config)
     retina_manager.push_all_config()
 
 
-def _is_tdd(band: int) -> bool:
+def is_tdd(band: int) -> bool:
     """
     Return True if the band is tdd
     """
@@ -93,31 +119,43 @@ def _get_ssb_arfcn(band: int, bandwidth: int) -> int:
     """
     return {  # type: ignore
         3: defaultdict(
-            lambda: 368410,
+            lambda: 368500,
             {
-                30: 367450,
-                40: 366490,
-                50: 365530,
+                5: 368410,
+                10: 367930,
+                20: 366970,
+                30: 366010,
+                40: 365050,
+                50: 364090,
             },
         ),
         7: defaultdict(
             lambda: 535930,
             {
-                30: 534970,
-                40: 534010,
-                50: 533050,
+                20: 534490,
+                30: 533530,
+                40: 532570,
+                50: 531610,
             },
         ),
         41: defaultdict(
             lambda: 519870,
             {
-                20: 520110,
-                30: 518910,
-                40: 517950,
-                50: 517230,
+                20: 518910,
+                30: 517950,
+                40: 516990,
+                50: 516030,
             },
         ),
-        78: defaultdict(lambda: 632544),
+        78: defaultdict(
+            lambda: 632544,
+            {
+                20: 632256,
+                30: 631968,
+                40: 631680,
+                50: 631296,
+            },
+        ),
     }[band][bandwidth]
 
 
@@ -128,3 +166,23 @@ def get_minimum_sample_rate_for_bandwidth(bandwidth: int) -> int:
     f_s_list = [5.76, 7.68, 11.52, 15.36, 23.04, 30.72, 61.44, 122.88, 245.76]
     f_s_min = int(1e6 * min(filter(lambda f: f > bandwidth, f_s_list)))
     return f_s_min
+
+
+def configure_metric_server_for_gnb(
+    retina_manager: RetinaTestManager, retina_data: RetinaTestData, metrics_server: MetricServerInfo
+):
+    """
+    Set parameters to set up a metrics server
+    """
+
+    if "gnb" not in retina_data.test_config:
+        retina_data.test_config["gnb"] = {}
+    if "parameters" not in retina_data.test_config["gnb"]:
+        retina_data.test_config["gnb"]["parameters"] = {}
+
+    retina_data.test_config["gnb"]["parameters"]["metrics_hostname"] = metrics_server.address
+    retina_data.test_config["gnb"]["parameters"]["metrics_port"] = metrics_server.port
+
+    logging.info("Test config: \n%s", pformat(retina_data.test_config))
+    retina_manager.parse_configuration(retina_data.test_config)
+    retina_manager.push_all_config()

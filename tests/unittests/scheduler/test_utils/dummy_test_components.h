@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,10 @@
 
 #pragma once
 
+#include "lib/scheduler/logging/scheduler_metrics_ue_configurator.h"
 #include "lib/scheduler/pdcch_scheduling/pdcch_resource_allocator.h"
 #include "lib/scheduler/uci_scheduling/uci_allocator.h"
+#include "lib/scheduler/ue_scheduling/harq_process.h"
 #include "srsran/scheduler/scheduler_metrics.h"
 #include "srsran/support/test_utils.h"
 
@@ -105,16 +107,16 @@ private:
 class dummy_uci_allocator : public uci_allocator
 {
 public:
-  uci_allocation next_uci_allocation;
+  optional<uci_allocation> next_uci_allocation;
 
-  void slot_indication(slot_point sl_tx) override {}
+  void slot_indication(slot_point sl_tx) override { next_uci_allocation.reset(); }
 
-  uci_allocation alloc_uci_harq_ue(cell_resource_allocator&     res_alloc,
-                                   rnti_t                       crnti,
-                                   const ue_cell_configuration& ue_cell_cfg,
-                                   unsigned                     k0,
-                                   span<const uint8_t>          k1_list,
-                                   const pdcch_dl_information*  fallback_dci_info = nullptr) override
+  optional<uci_allocation> alloc_uci_harq_ue(cell_resource_allocator&     res_alloc,
+                                             rnti_t                       crnti,
+                                             const ue_cell_configuration& ue_cell_cfg,
+                                             unsigned                     k0,
+                                             span<const uint8_t>          k1_list,
+                                             const pdcch_dl_information*  fallback_dci_info = nullptr) override
   {
     return next_uci_allocation;
   }
@@ -128,15 +130,13 @@ public:
 
   void uci_allocate_sr_opportunity(cell_slot_resource_allocator& slot_alloc,
                                    rnti_t                        crnti,
-                                   const ue_cell_configuration&  ue_cell_cfg,
-                                   bool                          is_fallback_mode = false) override
+                                   const ue_cell_configuration&  ue_cell_cfg) override
   {
   }
 
   void uci_allocate_csi_opportunity(cell_slot_resource_allocator& slot_alloc,
                                     rnti_t                        crnti,
-                                    const ue_cell_configuration&  ue_cell_cfg,
-                                    bool                          is_fallback_mode = false) override
+                                    const ue_cell_configuration&  ue_cell_cfg) override
   {
   }
 
@@ -168,6 +168,13 @@ public:
   du_ue_index_t last_ue_idx = INVALID_DU_UE_INDEX;
 
   void handle_harq_timeout(du_ue_index_t ue_index, bool is_dl) override { last_ue_idx = ue_index; }
+};
+
+class scheduler_ue_metrics_dummy_configurator : public sched_metrics_ue_configurator
+{
+public:
+  void handle_ue_creation(du_ue_index_t ue_index, rnti_t rnti, pci_t pcell_pci, unsigned num_prbs) override {}
+  void handle_ue_deletion(du_ue_index_t ue_index) override {}
 };
 
 } // namespace srsran

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,10 +36,9 @@ namespace srs_cu_cp {
 class ue_context_release_procedure
 {
 public:
-  ue_context_release_procedure(f1ap_ue_context_list&                  ue_ctx_list_,
-                               const f1ap_ue_context_release_command& cmd_,
-                               f1ap_message_notifier&                 f1ap_notif_,
-                               srslog::basic_logger&                  logger_);
+  ue_context_release_procedure(const f1ap_ue_context_release_command& cmd_,
+                               f1ap_ue_context&                       ue_ctxt_,
+                               f1ap_message_notifier&                 f1ap_notif_);
 
   void operator()(coro_context<async_task<ue_index_t>>& ctx);
 
@@ -52,7 +51,6 @@ private:
   /// Creates procedure result to send back to procedure caller.
   ue_index_t create_ue_context_release_complete(const asn1::f1ap::ue_context_release_complete_s& msg);
 
-  f1ap_ue_context_list&                ue_ctxt_list;
   f1ap_ue_context&                     ue_ctxt;
   asn1::f1ap::ue_context_release_cmd_s command;
   f1ap_message_notifier&               f1ap_notifier;

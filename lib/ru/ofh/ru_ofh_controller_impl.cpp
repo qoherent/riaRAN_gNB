@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,12 +25,10 @@
 
 using namespace srsran;
 
-ru_ofh_controller_impl::ru_ofh_controller_impl(srslog::basic_logger&            logger_,
-                                               std::unique_ptr<ofh::controller> timing_controller_,
-                                               std::vector<ofh::controller*>    sector_controllers_) :
-  logger(logger_), timing_controller(std::move(timing_controller_)), sector_controllers(std::move(sector_controllers_))
+ru_ofh_controller_impl::ru_ofh_controller_impl(srslog::basic_logger&         logger_,
+                                               std::vector<ofh::controller*> sector_controllers_) :
+  logger(logger_), sector_controllers(std::move(sector_controllers_))
 {
-  srsran_assert(timing_controller, "Invalid timing controller");
   srsran_assert(std::all_of(sector_controllers.begin(),
                             sector_controllers.end(),
                             [](const auto& elem) { return elem != nullptr; }),
@@ -39,24 +37,18 @@ ru_ofh_controller_impl::ru_ofh_controller_impl(srslog::basic_logger&            
 
 void ru_ofh_controller_impl::start()
 {
-  logger.info("Starting the Open Fronthaul interface");
-
-  // Start timing controller which is common to all sectors.
-  timing_controller->start();
-
+  logger.info("Starting the operation of the Open Fronthaul interface");
   for (auto* sector : sector_controllers) {
     sector->start();
   }
+  logger.info("Started the operation of the Open Fronthaul interface");
 }
 
 void ru_ofh_controller_impl::stop()
 {
-  logger.info("Stopping the Open Fronthaul interface");
-
-  // Stop timing controller which is common to all sectors.
-  timing_controller->stop();
-
+  logger.info("Stopping the operation of the Open Fronthaul interface");
   for (auto* sector : sector_controllers) {
     sector->stop();
   }
+  logger.info("Stopped the operation of the Open Fronthaul interface");
 }

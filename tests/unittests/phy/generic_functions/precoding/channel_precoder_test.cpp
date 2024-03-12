@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -305,6 +305,11 @@ INSTANTIATE_TEST_SUITE_P(RandomWeights,
                                                "avx2",
                                                "avx512"
 #endif // __x86_64__
+#ifdef __aarch64__
+                                               // Precoder types for ARM.
+                                               ,
+                                               "neon"
+#endif // __aarch64__
                                                ),
                              // Number of RB.
                              ::testing::Values(13, 51, MAX_RB),

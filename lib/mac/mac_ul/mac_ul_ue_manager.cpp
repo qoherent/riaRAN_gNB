@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,7 +31,8 @@ mac_ul_ue_manager::mac_ul_ue_manager(du_rnti_table& rnti_table_) :
 
 bool mac_ul_ue_manager::add_ue(const mac_ue_create_request& request)
 {
-  srsran_sanity_check(is_crnti(request.crnti), "Invalid C-RNTI={:#x}", request.crnti);
+  srsran_assert(is_crnti(request.crnti), "Invalid c-rnti={}", request.crnti);
+  srsran_assert(is_du_ue_index_valid(request.ue_index), "Invalid UE index={}", request.ue_index);
 
   // > Insert UE
   if (ue_db.contains(request.ue_index)) {

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "gnb_cu_configuration_update_procedure.h"
+#include "srsran/asn1/f1ap/common.h"
 #include "srsran/f1ap/common/f1ap_common.h"
 #include "srsran/f1ap/common/f1ap_message.h"
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,10 +23,13 @@
 #pragma once
 
 #include "srsran/fapi/messages.h"
+#include "srsran/fapi/slot_error_message_notifier.h"
 #include "srsran/fapi/slot_message_gateway.h"
 #include "srsran/fapi_adaptor/precoding_matrix_repository.h"
+#include "srsran/fapi_adaptor/uci_part2_correspondence_repository.h"
 #include "srsran/phy/upper/channel_processors/pdsch_processor.h"
-#include <mutex>
+#include "srsran/support/executors/task_executor.h"
+#include <atomic>
 
 namespace srsran {
 
@@ -44,30 +47,42 @@ namespace fapi_adaptor {
 struct fapi_to_phy_translator_config {
   /// Base station sector identifier.
   unsigned sector_id;
+  /// Request headroom size in slots.
+  unsigned nof_slots_request_headroom;
   /// Subcarrier spacing as per TS38.211 Section 4.2.
   subcarrier_spacing scs;
-  /// Downlink processor pool.
-  downlink_processor_pool* dl_processor_pool;
-  /// Downlink resource grid pool.
-  resource_grid_pool* dl_rg_pool;
-  /// Uplink request processor.
-  uplink_request_processor* ul_request_processor;
-  /// Uplink resource grid pool.
-  resource_grid_pool* ul_rg_pool;
-  /// Uplink slot PDU repository.
-  uplink_slot_pdu_repository* ul_pdu_repository;
-  /// Downlink PDU validator.
-  const downlink_pdu_validator* dl_pdu_validator;
-  /// Uplink PDU validator.
-  const uplink_pdu_validator* ul_pdu_validator;
   /// Common subcarrier spacing as per TS38.331 Section 6.2.2.
   subcarrier_spacing scs_common;
   /// FAPI PRACH configuration TLV as per SCF-222 v4.0 section 3.3.2.4.
   const fapi::prach_config* prach_cfg;
   /// FAPI carrier configuration TLV as per SCF-222 v4.0 section 3.3.2.4.
   const fapi::carrier_config* carrier_cfg;
+  /// PRACH port list.
+  std::vector<uint8_t> prach_ports;
+};
+
+/// FAPI-to-PHY translator dependencies.
+struct fapi_to_phy_translator_dependencies {
+  /// Logger.
+  srslog::basic_logger* logger;
+  /// Downlink processor pool.
+  downlink_processor_pool* dl_processor_pool;
+  /// Downlink resource grid pool.
+  resource_grid_pool* dl_rg_pool;
+  /// Downlink PDU validator.
+  const downlink_pdu_validator* dl_pdu_validator;
+  /// Uplink request processor.
+  uplink_request_processor* ul_request_processor;
+  /// Uplink resource grid pool.
+  resource_grid_pool* ul_rg_pool;
+  /// Uplink slot PDU repository.
+  uplink_slot_pdu_repository* ul_pdu_repository;
+  /// Uplink PDU validator.
+  const uplink_pdu_validator* ul_pdu_validator;
   /// Precoding matrix repository.
   std::unique_ptr<precoding_matrix_repository> pm_repo;
+  /// UCI Part2 correspondence repository.
+  std::unique_ptr<uci_part2_correspondence_repository> part2_repo;
 };
 
 /// \brief FAPI-to-PHY message translator.
@@ -101,8 +116,6 @@ class fapi_to_phy_translator : public fapi::slot_message_gateway
   public:
     slot_based_upper_phy_controller();
 
-    explicit slot_based_upper_phy_controller(slot_point slot_);
-
     slot_based_upper_phy_controller(downlink_processor_pool& dl_processor_pool,
                                     resource_grid_pool&      rg_pool,
                                     slot_point               slot_,
@@ -118,30 +131,75 @@ class fapi_to_phy_translator : public fapi::slot_message_gateway
     downlink_processor* operator->() { return &dl_processor.get(); }
     /// Overloaded member of pointer operator.
     const downlink_processor* operator->() const { return &dl_processor.get(); }
+  };
 
-    /// Returns the associated slot for this controller.
-    slot_point get_slot() const { return slot; }
+  /// Manages slot based controllers.
+  class slot_based_upper_phy_controller_manager
+  {
+    slot_based_upper_phy_controller              dummy;
+    downlink_processor_pool&                     dl_processor_pool;
+    resource_grid_pool&                          rg_pool;
+    const unsigned                               sector_id;
+    std::vector<slot_based_upper_phy_controller> controllers;
+
+    /// Returns the controller for the given slot.
+    slot_based_upper_phy_controller& controller(slot_point slot)
+    {
+      return controllers[slot.system_slot() % controllers.size()];
+    }
+
+    /// Returns the controller for the given slot.
+    const slot_based_upper_phy_controller& controller(slot_point slot) const
+    {
+      return controllers[slot.system_slot() % controllers.size()];
+    }
+
+  public:
+    slot_based_upper_phy_controller_manager(downlink_processor_pool& dl_processor_pool_,
+                                            resource_grid_pool&      rg_pool_,
+                                            unsigned                 sector_id_,
+                                            unsigned                 nof_slots_request_headroom);
+
+    /// Acquires and returns the controller for the given slot.
+    slot_based_upper_phy_controller& acquire_controller(slot_point slot);
+
+    /// \brief Releases the controller for the given slot.
+    ///
+    /// If the controller has already been released, this function does nothing.
+    void release_controller(slot_point slot);
+
+    /// Returns the controller for the given slot.
+    slot_based_upper_phy_controller& get_controller(slot_point slot);
+  };
+
+  /// \brief PDSCH PDU repository.
+  ///
+  /// Stores the PDSCH PDUs for later processing.
+  struct pdsch_pdu_repository {
+    slot_point                                                     slot;
+    static_vector<pdsch_processor::pdu_t, MAX_PDSCH_PDUS_PER_SLOT> pdus;
+
+    /// Returns true if the repository is empty, otherwise false.
+    bool empty() const { return pdus.empty(); }
+
+    /// Clears the repository.
+    void clear()
+    {
+      slot = slot_point();
+      pdus.clear();
+    }
+
+    /// Resets the repository by clearing the PDUs and setting the slot to the given one.
+    void reset(slot_point new_slot)
+    {
+      pdus.clear();
+      slot = new_slot;
+    }
   };
 
 public:
-  explicit fapi_to_phy_translator(fapi_to_phy_translator_config&& config, srslog::basic_logger& logger_) :
-    sector_id(config.sector_id),
-    pm_repo(std::move(config.pm_repo)),
-    dl_processor_pool(*config.dl_processor_pool),
-    dl_rg_pool(*config.dl_rg_pool),
-    ul_request_processor(*config.ul_request_processor),
-    ul_rg_pool(*config.ul_rg_pool),
-    dl_pdu_validator(*config.dl_pdu_validator),
-    ul_pdu_validator(*config.ul_pdu_validator),
-    ul_pdu_repository(*config.ul_pdu_repository),
-    scs(config.scs),
-    scs_common(config.scs_common),
-    prach_cfg(*config.prach_cfg),
-    carrier_cfg(*config.carrier_cfg),
-    logger(logger_)
-  {
-    srsran_assert(pm_repo, "Invalid precoding matrix repository");
-  }
+  fapi_to_phy_translator(const fapi_to_phy_translator_config&  config,
+                         fapi_to_phy_translator_dependencies&& dependencies);
 
   // See interface for documentation.
   void dl_tti_request(const fapi::dl_tti_request_message& msg) override;
@@ -158,52 +216,65 @@ public:
   /// \brief Handles a new slot.
   ///
   /// Handling a new slot consists of the following steps.
-  /// - Finish processing the PDUs from the previous slot.
+  /// - Finish processing the PDUs from a past slot.
   /// - Update the current slot value to the new one.
-  /// - Obtain a new resource grid and a new downlink processor from the corresponding pools.
-  /// - Configure the downlink processor with the new resource grid.
-  /// - Reset the contents of the PDSCH PDU repository.
+  /// - Reset the contents of the uplink PDU repository.
   ///
   /// \param[in] slot Identifies the new slot.
   /// \note This method is thread safe and may be called from different threads.
   void handle_new_slot(slot_point slot);
 
+  /// Configures the FAPI slot-based, error-specific notifier to the given one.
+  void set_slot_error_message_notifier(fapi::slot_error_message_notifier& fapi_error_notifier)
+  {
+    error_notifier = std::ref(fapi_error_notifier);
+  }
+
 private:
   /// Returns true if the given message arrived in time, otherwise returns false.
   template <typename T>
-  bool is_message_in_time(const T& msg) const
+  bool is_message_in_time(const T& msg) const;
+
+  /// Returns this adaptor current slot.
+  slot_point get_current_slot() const
   {
-    return (current_slot_controller.get_slot().slot_index() == msg.slot &&
-            current_slot_controller.get_slot().sfn() == msg.sfn);
+    return slot_point(scs, current_slot_count_val.load(std::memory_order_acquire));
+  }
+
+  /// Updates this adaptor current slot to the given value.
+  void update_current_slot(slot_point slot)
+  {
+    // Update the atomic variable that holds the slot point.
+    current_slot_count_val.store(slot.system_slot(), std::memory_order_release);
   }
 
 private:
   /// Sector identifier.
   const unsigned sector_id;
-  /// Precoding matrix repository.
-  std::unique_ptr<precoding_matrix_repository> pm_repo;
-  /// Downlink processor pool.
-  downlink_processor_pool& dl_processor_pool;
-  /// Downlink resource grid pool.
-  resource_grid_pool& dl_rg_pool;
+  /// Request headroom size in slots.
+  const unsigned nof_slots_request_headroom;
+  /// Logger.
+  srslog::basic_logger& logger;
+  /// Downlink PDU validator.
+  const downlink_pdu_validator& dl_pdu_validator;
   /// Uplink request processor.
   uplink_request_processor& ul_request_processor;
   /// Uplink resource grid pool.
   resource_grid_pool& ul_rg_pool;
-  /// Downlink PDU validator.
-  const downlink_pdu_validator& dl_pdu_validator;
   /// Uplink PDU validator.
   const uplink_pdu_validator& ul_pdu_validator;
-  /// Current slot task controller.
-  slot_based_upper_phy_controller current_slot_controller;
-  /// PDSCH PDU repository.
-  static_vector<pdsch_processor::pdu_t, MAX_DL_PDSCH_PDUS_PER_SLOT> pdsch_pdu_repository;
   /// Uplink slot PDU repository.
   uplink_slot_pdu_repository& ul_pdu_repository;
-  /// Protects concurrent access to shared variables.
-  //: TODO: make this lock free.
-  std::mutex mutex;
-  // :TODO: these variables should be asked to the cell configuration. Remove them when they're available.
+  /// Current slot count value.
+  std::atomic<uint32_t> current_slot_count_val;
+  /// Slot controller manager.
+  slot_based_upper_phy_controller_manager slot_controller_mngr;
+  /// Precoding matrix repository.
+  std::unique_ptr<precoding_matrix_repository> pm_repo;
+  /// UCI Part2 correspondence repository.
+  std::unique_ptr<uci_part2_correspondence_repository> part2_repo;
+  /// Error indication notifier.
+  std::reference_wrapper<fapi::slot_error_message_notifier> error_notifier;
   /// Subcarrier spacing as per TS38.211 Section 4.2.
   const subcarrier_spacing scs;
   /// Common subcarrier spacing as per TS38.331 Section 6.2.2.
@@ -212,8 +283,10 @@ private:
   const fapi::prach_config prach_cfg;
   /// Carrier configuration as per SCF-222 v4.0 section 3.3.2.4.
   const fapi::carrier_config carrier_cfg;
-  /// Logger.
-  srslog::basic_logger& logger;
+  /// PRACH receive ports.
+  const static_vector<uint8_t, MAX_PORTS> prach_ports;
+  /// PDSCH PDU repository.
+  pdsch_pdu_repository pdsch_repository;
 };
 
 } // namespace fapi_adaptor

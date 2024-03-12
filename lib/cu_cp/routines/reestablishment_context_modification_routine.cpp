@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -48,7 +48,7 @@ void reestablishment_context_modification_routine::operator()(coro_context<async
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", ue_index, name());
+  logger.debug("ue={}: \"{}\" initialized", ue_index, name());
 
   // prepare ue context release request in case of failure
   ue_context_release_request.ue_index = ue_index;
@@ -65,7 +65,7 @@ void reestablishment_context_modification_routine::operator()(coro_context<async
     // Handle BearerContextModificationResponse and fill subsequent UE context modification
     if (!generate_ue_context_modification_request(
             ue_context_mod_request, bearer_context_modification_response.pdu_session_resource_modified_list)) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", ue_index, name());
       CORO_EARLY_RETURN(false);
     }
 
@@ -84,7 +84,7 @@ void reestablishment_context_modification_routine::operator()(coro_context<async
                                               bearer_context_modification_response,
                                               ue_context_modification_response,
                                               rrc_ue_up_resource_manager)) {
-      logger.error("ue={}: \"{}\" failed to modify UE context at DU.", ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify UE context at DU", ue_index, name());
       CORO_EARLY_RETURN(false);
     }
   }
@@ -101,7 +101,7 @@ void reestablishment_context_modification_routine::operator()(coro_context<async
     // Handle BearerContextModificationResponse
     if (!generate_ue_context_modification_request(
             ue_context_mod_request, bearer_context_modification_response.pdu_session_resource_modified_list)) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", ue_index, name());
       CORO_EARLY_RETURN(false);
     }
   }
@@ -125,21 +125,26 @@ void reestablishment_context_modification_routine::operator()(coro_context<async
         pdu_sessions_to_setup_list.emplace(pdu_session_id, context_update);
       }
 
-      fill_rrc_reconfig_args(rrc_reconfig_args,
-                             srbs_to_setup_list,
-                             pdu_sessions_to_setup_list,
-                             ue_context_modification_response.du_to_cu_rrc_info,
-                             {},
-                             rrc_ue_notifier.get_rrc_ue_meas_config(),
-                             true /* Reestablish SRBs */,
-                             true /* Reestablish DRBs */);
+      if (!fill_rrc_reconfig_args(rrc_reconfig_args,
+                                  srbs_to_setup_list,
+                                  pdu_sessions_to_setup_list,
+                                  ue_context_modification_response.du_to_cu_rrc_info,
+                                  {},
+                                  {} /* TODO: include meas config in context*/,
+                                  true /* Reestablish SRBs */,
+                                  true /* Reestablish DRBs */,
+                                  false /* don't update keys */,
+                                  logger)) {
+        logger.warning("ue={}: \"{}\" Failed to fill RrcReconfiguration", ue_index, name());
+        CORO_EARLY_RETURN(false);
+      }
     }
 
     CORO_AWAIT_VALUE(rrc_reconfig_result, rrc_ue_notifier.on_rrc_reconfiguration_request(rrc_reconfig_args));
 
     // Handle RRC Reconfiguration result.
     if (not rrc_reconfig_result) {
-      logger.error("ue={}: \"{}\" RRC Reconfiguration failed.", ue_index, name());
+      logger.warning("ue={}: \"{}\" RRC reconfiguration failed", ue_index, name());
       CORO_EARLY_RETURN(false);
     }
   }
@@ -162,7 +167,7 @@ bool reestablishment_context_modification_routine::generate_bearer_context_modif
 
     const std::map<drb_id_t, up_drb_context>& drbs = rrc_ue_up_resource_manager.get_pdu_session_context(psi).drbs;
     for (const std::pair<const drb_id_t, up_drb_context>& drb : drbs) {
-      logger.debug("Requesting new UL TNL for DRB. psi={}, drb={}", psi, drb.first);
+      logger.debug("{}, {}: Requesting new UL TNL for DRB", psi, drb.first);
       e1ap_drb_to_modify_item_ng_ran drb_to_mod = {};
       drb_to_mod.drb_id                         = drb.first;
       pdu_sess_mod_item.drb_to_modify_list_ng_ran.emplace(drb_to_mod.drb_id, drb_to_mod);
@@ -198,7 +203,7 @@ bool reestablishment_context_modification_routine::generate_ue_context_modificat
 
       // verify only a single UL transport info item is present.
       if (e1ap_drb_item.ul_up_transport_params.size() != 1) {
-        logger.error("Multiple UL UP transport items not supported");
+        logger.warning("Multiple UL UP transport items not supported");
         return false;
       }
 
@@ -244,7 +249,7 @@ bool reestablishment_context_modification_routine::generate_ue_context_modificat
 
     // Fail on any DRB that fails to be setup
     if (!e1ap_item.drb_failed_list_ng_ran.empty()) {
-      logger.error("Non-empty DRB failed list not supported");
+      logger.warning("Non-empty DRB failed list not supported");
       return false;
     }
   }
@@ -256,11 +261,13 @@ bool reestablishment_context_modification_routine::generate_bearer_context_modif
     e1ap_bearer_context_modification_request&        bearer_ctxt_mod_req,
     const e1ap_bearer_context_modification_response& bearer_ctxt_mod_resp,
     const f1ap_ue_context_modification_response&     ue_context_modification_resp,
-    up_resource_manager&                             up_resource_manager)
+    up_resource_manager&                             up_resource_manager,
+    bool                                             reestablish_pdcp)
 {
   // Fail procedure if (single) DRB couldn't be setup
   if (!ue_context_modification_resp.drbs_failed_to_be_setup_mod_list.empty()) {
-    logger.error("Couldn't setup {} DRBs at DU.", ue_context_modification_resp.drbs_failed_to_be_setup_mod_list.size());
+    logger.warning("Couldn't setup {} DRBs at DU",
+                   ue_context_modification_resp.drbs_failed_to_be_setup_mod_list.size());
     return false;
   }
 
@@ -289,12 +296,12 @@ bool reestablishment_context_modification_routine::generate_bearer_context_modif
           e1ap_drb_item.dl_up_params.push_back(e1ap_dl_up_param);
         }
 
-        // set pdcp reestablishment
-        const up_drb_context& drb_ctxt = up_resource_manager.get_drb_context(drb_item.drb_id);
-        e1ap_drb_item.pdcp_cfg.emplace();
-        fill_e1ap_drb_pdcp_config(e1ap_drb_item.pdcp_cfg.value(), drb_ctxt.pdcp_cfg);
-        e1ap_drb_item.pdcp_cfg->pdcp_reest = true;
-
+        if (reestablish_pdcp) {
+          const up_drb_context& drb_ctxt = up_resource_manager.get_drb_context(drb_item.drb_id);
+          e1ap_drb_item.pdcp_cfg.emplace();
+          fill_e1ap_drb_pdcp_config(e1ap_drb_item.pdcp_cfg.value(), drb_ctxt.pdcp_cfg);
+          e1ap_drb_item.pdcp_cfg->pdcp_reest = true;
+        }
         e1ap_mod_item.drb_to_modify_list_ng_ran.emplace(drb_item.drb_id, e1ap_drb_item);
       }
     }

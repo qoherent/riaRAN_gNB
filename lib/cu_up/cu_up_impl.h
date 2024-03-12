@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,7 +32,7 @@
 #include "srsran/gateways/udp_network_gateway.h"
 #include "srsran/gtpu/gtpu_echo.h"
 #include "srsran/gtpu/gtpu_teid_pool.h"
-#include "srsran/support/async/async_task_loop.h"
+#include "srsran/support/async/fifo_async_task_scheduler.h"
 #include "srsran/support/executors/task_executor.h"
 #include <memory>
 #include <unordered_map>
@@ -50,12 +50,7 @@ public:
   void start() override;
   void stop() override;
 
-  int get_n3_bind_port() override
-  {
-    uint16_t port = {};
-    ngu_gw->get_bind_port(port);
-    return port;
-  }
+  optional<uint16_t> get_n3_bind_port() override { return ngu_gw->get_bind_port(); }
 
   // cu_up_e1ap_interface
   e1ap_message_handler& get_e1ap_message_handler() override { return *e1ap; }
@@ -77,6 +72,8 @@ public:
   gtpu_demux_rx_upper_layer_interface& get_ngu_pdu_handler() override { return *ngu_demux; }
 
 private:
+  void on_statistics_report_timer_expired();
+
   cu_up_configuration cfg;
 
   // logger
@@ -100,7 +97,9 @@ private:
   bool       running{false};
 
   // Handler for CU-UP tasks.
-  async_task_sequencer main_ctrl_loop;
+  fifo_async_task_scheduler main_ctrl_loop;
+
+  unique_timer statistics_report_timer;
 };
 
 } // namespace srs_cu_up

@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -26,9 +26,11 @@ target_link_libraries(cu_du_test srsran_cu_cp
         srsran_f1ap_cu
         mac_test_doubles
         f1ap_test_doubles
+        cu_cp_test_helpers
         srsran_rrc
         srsran_support
         srslog
+        ngap_test_helpers
         f1ap_asn1
         ngap_asn1
         gtest

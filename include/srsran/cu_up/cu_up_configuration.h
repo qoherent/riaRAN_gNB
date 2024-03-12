@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,9 +27,10 @@
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/f1u/cu_up/f1u_gateway.h"
 #include "srsran/gtpu/gtpu_config.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/support/executors/task_executor.h"
 #include "srsran/support/timers.h"
+#include <map>
 
 namespace srsran {
 
@@ -47,11 +48,19 @@ struct network_interface_config {
   /// Local port to bind for connection from UPF to receive downlink user-plane traffic (N3 interface).
   int n3_bind_port = GTPU_PORT; // TS 29.281 Sec. 4.4.2.3 Encapsulated T-PDUs
 
+  /// Maximum amount of packets received in a single syscall.
+  int n3_rx_max_mmsg = 256;
+
   /// Local IP address to bind for connection from DU to receive uplink user-plane traffic.
   std::string f1u_bind_addr = "127.0.2.1";
 
   /// Local port to bind for connection from DU to receive uplink user-plane traffic.
   int f1u_bind_port = GTPU_PORT;
+};
+
+struct n3_interface_config {
+  std::chrono::milliseconds gtpu_reordering_timer; // N3 reordering timer
+  bool                      warn_on_drop;
 };
 
 struct e1ap_config_params {
@@ -61,20 +70,27 @@ struct e1ap_config_params {
 
 /// Configuration passed to CU-UP.
 struct cu_up_configuration {
-  task_executor*     cu_up_executor    = nullptr;
-  task_executor*     gtpu_pdu_executor = nullptr;
-  task_executor*     cu_up_e2_exec     = nullptr;
+  task_executor*     ctrl_executor  = nullptr; ///< CU-UP executor for control
+  task_executor*     dl_executor    = nullptr; ///< CU-UP executor for DL data flow
+  task_executor*     ul_executor    = nullptr; ///< CU-UP executor for UL data flow
+  task_executor*     io_ul_executor = nullptr; ///< CU-UP executor for UL data IO
+  task_executor*     cu_up_e2_exec  = nullptr;
   e1ap_config_params e1ap;
   f1u_cu_up_gateway* f1u_gateway  = nullptr;
   io_broker*         epoll_broker = nullptr; ///< IO broker to receive messages from a network gateway
   timer_manager*     timers       = nullptr;
   dlt_pcap*          gtpu_pcap    = nullptr;
 
+  std::map<five_qi_t, cu_up_qos_config> qos; // 5QI as key
+
   network_interface_config net_cfg;
+  n3_interface_config      n3_cfg;
 
   unsigned    cu_up_id   = 0;
   std::string cu_up_name = "srs_cu_up_01";
   std::string plmn       = "00101"; ///< Full PLMN as string (without possible filler digit) e.g. "00101"
+
+  std::chrono::seconds statistics_report_period; // CU-UP statistics report period in seconds
 };
 
 } // namespace srs_cu_up

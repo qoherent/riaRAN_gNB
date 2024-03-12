@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -32,7 +32,7 @@ add_executable(byte_buffer_test
         byte_buffer_segment_test.cpp
         byte_buffer_test.cpp
         byte_buffer_chain_test.cpp)
-target_link_libraries(byte_buffer_test srslog gtest gtest_main)
+target_link_libraries(byte_buffer_test srslog srsran_support gtest gtest_main)
 add_test(byte_buffer_test byte_buffer_test)
 gtest_discover_tests(byte_buffer_test)
 

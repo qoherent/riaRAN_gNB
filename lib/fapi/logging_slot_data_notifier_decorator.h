@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,7 @@
 namespace srsran {
 namespace fapi {
 
+/// Adds logging information over the implemented interface.
 class logging_slot_data_notifier_decorator : public slot_data_message_notifier
 {
 public:

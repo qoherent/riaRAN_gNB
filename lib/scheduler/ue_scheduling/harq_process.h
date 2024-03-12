@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,16 +23,18 @@
 #pragma once
 
 #include "srsran/adt/static_vector.h"
+#include "srsran/ran/csi_report/csi_report_data.h"
 #include "srsran/ran/pdsch/pdsch_mcs.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
 #include "srsran/ran/rnti.h"
-#include "srsran/ran/sch_mcs.h"
+#include "srsran/ran/sch/sch_mcs.h"
 #include "srsran/ran/slot_point.h"
 #include "srsran/scheduler/config/bwp_configuration.h"
 #include "srsran/scheduler/harq_id.h"
 #include "srsran/scheduler/sched_consts.h"
 #include "srsran/scheduler/scheduler_dci.h"
 #include "srsran/support/format_utils.h"
+#include <numeric>
 
 namespace srsran {
 
@@ -45,6 +47,7 @@ class harq_timeout_handler
 public:
   virtual ~harq_timeout_handler() = default;
 
+  /// \brief Handles a HARQ process timeout.
   virtual void handle_harq_timeout(du_ue_index_t ue_index, bool is_dl) = 0;
 };
 
@@ -107,7 +110,7 @@ private:
     }
     fmt::memory_buffer fmtbuf;
     fmt::format_to(fmtbuf, fmtstr, std::forward<Args>(args)...);
-    ch("{} HARQ rnti={:#x} cell={} h_id={}: {}", is_dl ? "DL" : "UL", rnti, cell_index, h_id, to_c_str(fmtbuf));
+    ch("{} HARQ rnti={} cell={} h_id={}: {}", is_dl ? "DL" : "UL", rnti, cell_index, h_id, to_c_str(fmtbuf));
   }
 
   srslog::basic_logger& logger;
@@ -130,7 +133,7 @@ public:
   /// (implementation-defined).
   constexpr static unsigned DEFAULT_ACK_TIMEOUT_SLOTS = 256U;
 
-  constexpr static unsigned SHORT_ACK_TIMEOUT_DTX = 10U;
+  constexpr static unsigned SHORT_ACK_TIMEOUT_DTX = 4U;
 
   /// Maximum number of Transport Blocks as per TS38.321, 5.3.2.1 and 5.4.2.1.
   constexpr static size_t MAX_NOF_TBS = IsDownlink ? 2 : 1;
@@ -148,8 +151,11 @@ public:
     /// Maximum number of retransmission before Transport Block is reset.
     unsigned max_nof_harq_retxs = 0;
 
-    /// Downlink Assignment Index used in case of PDSCH.
-    uint8_t dai;
+    /// HARQ-bit index corresponding to this HARQ process in the UCI PDU indication.
+    uint8_t harq_bit_idx = 0;
+
+    /// Whether to set the HARQ as ACKed or NACKed when the timeout expires.
+    bool ack_on_timeout = false;
 
     bool empty() const { return state == state_t::empty; }
   };
@@ -202,22 +208,21 @@ public:
   }
 
   /// \brief Getter for TB parameters.
-  const transport_block& tb(unsigned tb_idx) const
-  {
-    srsran_assert(not empty(tb_idx), "TB {} is not active", tb_idx);
-    return tb_array[tb_idx];
-  }
+  const transport_block& tb(unsigned tb_idx) const { return tb_array[tb_idx]; }
 
   /// \brief Resets HARQ process state.
   void reset();
 
-  /// Forbids the HARQ from retransmitting the specified TB until the next new transmission.
-  void stop_retransmissions(unsigned tb_idx);
+  /// \brief Cancels the HARQ process by stopping retransmissions of the currently held TB.
+  void cancel_harq_retxs(unsigned tb_idx);
+
+  /// \brief Getter of the slot when the HARQ process will assume that the ACK/CRC went missing.
+  slot_point get_slot_ack_timeout() const { return slot_ack_timeout; }
 
 protected:
   void tx_common(slot_point slot_tx, slot_point slot_ack);
-  void new_tx_tb_common(unsigned tb_idx, unsigned max_nof_harq_retxs, uint8_t dai);
-  void new_retx_tb_common(unsigned tb_idx, uint8_t dai);
+  void new_tx_tb_common(unsigned tb_idx, unsigned max_nof_harq_retxs, uint8_t harq_bit_idx);
+  void new_retx_tb_common(unsigned tb_idx, uint8_t harq_bit_idx);
 
   /// \brief Updates the ACK state of the TB of the HARQ process.
   bool ack_info_common(uint32_t tb_idx, bool ack);
@@ -234,10 +239,8 @@ protected:
   /// Maximum value of time interval, in slots, before the HARQ process assumes that the ACK/CRC went missing.
   const unsigned max_ack_wait_in_slots;
 
-  /// Actual time interval, in slots, before the HARQ process assumes that the ACK/CRC went missing.
-  /// This value is shorten dynamically when the MAC returns a ACK with DTX (not correctly decoded) state; it gets
-  /// re-set to its maximum value at the beginning of each transmission or retx, and after receiving a ACK or NACK.
-  unsigned ack_wait_in_slots;
+  /// Last slot indication.
+  slot_point last_slot_ind;
 
   /// For DL, slot_tx corresponds to the slot when the TB in the HARQ process is going to be transmitted by the gNB.
   /// For UL, slot_tx corresponds to the slot when the TB in the HARQ process is going to be transmitted by the UE.
@@ -246,6 +249,9 @@ protected:
   /// For DL, slot_ack is the slot at which gNB is expected to receive the ACK via UCI.
   /// For UL, slot_ack is the slot when the PUSCH CRC will be received by the gNB. It coincides with slot_tx of UL.
   slot_point last_slot_ack;
+
+  /// Slot when the HARQ process will assume that the ACK/CRC went missing.
+  slot_point slot_ack_timeout;
 
   std::array<transport_block, MAX_NOF_TBS> tb_array;
 };
@@ -257,6 +263,9 @@ class dl_harq_process : public detail::harq_process<true>
   using base_type = detail::harq_process<true>;
 
 public:
+  /// \brief Update to the HARQ process state after a HARQ-ACK is received.
+  enum class status_update { acked, nacked, no_update, error };
+
   /// \brief Parameters relative to the last used PDSCH PDU that get stored in the HARQ process for future reuse.
   struct alloc_params {
     struct tb_params {
@@ -269,6 +278,21 @@ public:
     vrb_alloc                                               rbs;
     unsigned                                                nof_symbols;
     std::array<optional<tb_params>, base_type::MAX_NOF_TBS> tb;
+    cqi_value                                               cqi;
+    unsigned                                                nof_layers;
+  };
+
+  struct dl_ack_info_result {
+    /// \brief HARQ process ID.
+    harq_id_t h_id;
+    /// \brief mcs_table used for the last PDSCH transmission.
+    pdsch_mcs_table mcs_table;
+    /// \brief MCS used for the last PDSCH transmission.
+    sch_mcs_index mcs;
+    /// \brief Number of bytes of the last PDSCH transmission.
+    unsigned tbs_bytes;
+    /// \brief HARQ process status update.
+    dl_harq_process::status_update update;
   };
 
   using base_type::transport_block;
@@ -292,11 +316,16 @@ public:
 
   /// \brief Called on every new TB transmission, when only one TB is active. It marks this HARQ process as busy and
   /// stores respective TB information.
-  void new_tx(slot_point pdsch_slot, unsigned k1, unsigned max_harq_nof_retxs, uint8_t dai);
+  void new_tx(slot_point pdsch_slot,
+              unsigned   k1,
+              unsigned   max_harq_nof_retxs,
+              uint8_t    harq_bit_idx,
+              cqi_value  cqi,
+              unsigned   nof_layers);
 
   /// \brief Called on every TB retransmission, when only one TB is active. This function assumes that the HARQ TB is
   /// in pending new_retx state.
-  void new_retx(slot_point pdsch_slot, unsigned k1, uint8_t dai);
+  void new_retx(slot_point pdsch_slot, unsigned k1, uint8_t harq_bit_idx);
 
   /// \brief Called on every new TB transmission/retransmission, when 2 TBs are used.
   enum class tb_tx_request { newtx, retx, disabled };
@@ -304,19 +333,27 @@ public:
                unsigned                  k1,
                span<const tb_tx_request> tb_tx_req,
                unsigned                  max_harq_nof_retxs,
-               uint8_t                   dai);
+               uint8_t                   harq_bit_idx);
 
   /// \brief Updates the ACK state of the HARQ process.
-  /// \return True if harq was not empty and state was succesfully updated. False, otherwise.
-  bool ack_info(uint32_t tb_idx, mac_harq_ack_report_status ack);
+  /// \return The result of a HARQ receiving an HARQ-ACK bit.
+  status_update ack_info(uint32_t tb_idx, mac_harq_ack_report_status ack, optional<float> pucch_snr);
 
   /// \brief Stores grant parameters that are associated with the HARQ allocation (e.g. DCI format, PRBs, MCS) so that
   /// they can be later fetched and optionally reused.
   void save_alloc_params(dci_dl_rnti_config_type dci_cfg_type, const pdsch_information& pdsch);
 
+  void increment_pucch_counter();
+
 private:
   /// Parameters used for the last Tx of this HARQ process.
   alloc_params prev_tx_params;
+  /// Keeps the count of how many PUCCH grants are allocate for this harq_process.
+  unsigned pucch_ack_to_receive{0};
+  /// Chosen ACK status for this HARQ process transmission, given one or more HARQ-ACK bits received.
+  mac_harq_ack_report_status chosen_ack = mac_harq_ack_report_status::dtx;
+  /// Stores the highest recorded PUCCH SNR for this HARQ process.
+  optional<float> last_pucch_snr;
 };
 
 class ul_harq_process : private detail::harq_process<false>
@@ -336,6 +373,7 @@ public:
 
   using base_type::transport_block;
 
+  using base_type::get_slot_ack_timeout;
   using base_type::harq_process;
   using base_type::id;
   using base_type::reset;
@@ -375,8 +413,11 @@ public:
   /// they can be later fetched and optionally reused.
   void save_alloc_params(dci_ul_rnti_config_type dci_cfg_type, const pusch_information& pusch);
 
-  /// Forbids the HARQ from retransmitting the specified TB until the next new transmission.
-  void stop_retransmissions();
+  /// Cancels the HARQ and stops retransmitting the specified TB until the next new transmission.
+  void cancel_harq_retxs();
+
+  /// \brief Getter of the number of bytes of the last transmitted TB.
+  int get_tbs_bytes() const { return prev_tx_params.tbs_bytes; }
 
 private:
   /// Parameters used for the last Tx of this HARQ process.
@@ -408,18 +449,26 @@ public:
                        unsigned                 nof_dl_harq_procs,
                        unsigned                 nof_ul_harq_procs,
                        ue_harq_timeout_notifier timeout_notif,
-                       unsigned max_ack_wait_in_slots = detail::harq_process<true>::DEFAULT_ACK_TIMEOUT_SLOTS);
+                       unsigned                 ntn_cs_koffset = 0,
+                       unsigned max_ack_wait_in_slots          = detail::harq_process<true>::DEFAULT_ACK_TIMEOUT_SLOTS);
 
   /// Update slot, and checks if there are HARQ processes that have reached maxReTx with no ACK
   void slot_indication(slot_point slot_tx_);
 
   /// \brief Update the state of the DL HARQ for the specified UCI slot.
-  /// \return HARQ process whose state was updated. Nullptr, if no HARQ for which the ACK/NACK was directed was found.
-  const dl_harq_process* dl_ack_info(slot_point uci_slot, mac_harq_ack_report_status ack, uint8_t dai);
+  /// \return struct containing the HARQ process ID, MCS, TBS and status update.
+  /// ACK/NACK was directed was found.
+  dl_harq_process::dl_ack_info_result
+  dl_ack_info(slot_point uci_slot, mac_harq_ack_report_status ack, uint8_t harq_bit_idx, optional<float> pucch_snr);
 
   /// Update UL HARQ state given the received CRC indication.
   /// \return Transport Block size of the HARQ whose state was updated.
   int ul_crc_info(harq_id_t h_id, bool ack, slot_point pusch_slot);
+
+  /// \brief The UCI scheduling associated with a given slot was cancelled. The associated DL HARQs will be NACKEd.
+  ///
+  /// This function can be called for instance when there is an error indication coming from lower layers.
+  void dl_ack_info_cancelled(slot_point uci_slot);
 
   uint32_t               nof_dl_harqs() const { return dl_harqs.size(); }
   uint32_t               nof_ul_harqs() const { return ul_harqs.size(); }
@@ -479,6 +528,28 @@ public:
     return h_id == INVALID_HARQ_ID ? nullptr : &ul_harqs[h_id];
   }
 
+  dl_harq_process* find_dl_harq_waiting_ack_slot(slot_point sl_ack, unsigned harq_bit_idx)
+  {
+    // For the time being, we assume 1 TB only.
+    static const size_t tb_index = 0;
+
+    for (unsigned i = 0; i != dl_harqs.size(); ++i) {
+      if (dl_harqs[i].tb(tb_index).harq_bit_idx == harq_bit_idx and dl_harqs[i].is_waiting_ack(tb_index) and
+          dl_harqs[i].slot_ack() == sl_ack) {
+        return &dl_harqs[to_harq_id(i)];
+      }
+    }
+    return nullptr;
+  }
+
+  unsigned ntn_get_tbs_pending_crcs() const
+  {
+    if (ntn_harq.active()) {
+      return ntn_harq.get_total_tbs();
+    }
+    return 0;
+  }
+
 private:
   template <typename HarqVector>
   harq_id_t find_oldest_harq_retx(const HarqVector& harqs) const
@@ -514,6 +585,83 @@ private:
     return harq_id_t::INVALID_HARQ_ID;
   }
 
+  class ntn_tbs_history
+  {
+  public:
+    /// \brief This class is used to store the TBS of the HARQ processes that have to be released before they have been
+    /// completed by an ACK or a PUSCH.
+    explicit ntn_tbs_history(unsigned ntn_cs_koffset_);
+
+    bool active() const { return ntn_cs_koffset != 0; }
+
+    /// \brief This function is used to save the TBS of the HARQ process.
+    void save_dl_harq_info(const dl_harq_process& harq, const slot_point& _slot_tx)
+    {
+      if (harq.empty()) {
+        return;
+      }
+      if (harq.get_slot_ack_timeout() <= _slot_tx) {
+        int idx                         = (harq.slot_ack().to_uint() + ntn_cs_koffset) % slot_ack_info.size();
+        slot_ack_info.at(idx).tbs_bytes = harq.last_alloc_params().tb[0]->tbs_bytes;
+        slot_ack_info.at(idx).h_id      = harq.id;
+        slot_ack_info.at(idx).mcs       = harq.last_alloc_params().tb[0]->mcs;
+        slot_ack_info.at(idx).mcs_table = harq.last_alloc_params().tb[0]->mcs_table;
+        slot_ack_info.at(idx).update    = dl_harq_process::status_update::acked;
+      }
+    }
+
+    /// \brief This function is used to save the ack info of the HARQ process.
+    void save_ul_harq_info(const ul_harq_process& harq, const slot_point& _slot_tx)
+    {
+      if (harq.empty()) {
+        return;
+      }
+      if (harq.get_slot_ack_timeout() <= _slot_tx) {
+        int idx          = (harq.slot_ack().to_uint() + ntn_cs_koffset) % slot_tbs.size();
+        slot_tbs.at(idx) = harq.get_tbs_bytes();
+      }
+    }
+
+    /// \brief This function is used to pop the ack info of the HARQ process saved at the slot _slot_tx.
+    dl_harq_process::dl_ack_info_result pop_ack_info(const slot_point& _slot_tx, mac_harq_ack_report_status ack)
+    {
+      auto ret = slot_ack_info.at(_slot_tx.to_uint() % slot_ack_info.size());
+      if (ret.tbs_bytes) {
+        slot_ack_info.at(_slot_tx.to_uint() % slot_ack_info.size()) = {};
+      } else {
+        return {};
+      }
+      ret.update = ack == mac_harq_ack_report_status::ack ? dl_harq_process::status_update::acked
+                                                          : dl_harq_process::status_update::nacked;
+      return ret;
+    }
+
+    /// \brief This function is used to pop the TBS of the HARQ process saved at the slot _slot_tx.
+    int pop_tbs(const slot_point& _slot_tx)
+    {
+      unsigned ret = slot_tbs.at(_slot_tx.to_uint() % slot_tbs.size());
+      if (ret) {
+        slot_tbs.at(_slot_tx.to_uint() % slot_tbs.size()) = 0;
+      } else {
+        return -1;
+      }
+      return ret;
+    }
+
+    /// \brief This function is used to clear the TBS of the HARQ process saved at the slot _slot_tx.
+    void clear_tbs(slot_point _slot_tx) { slot_tbs.at(_slot_tx.to_uint() % slot_tbs.size()) = 0; }
+    /// \brief This function is used to get the total TBS of the HARQ processes saved.
+    int get_total_tbs() const { return std::accumulate(slot_tbs.begin(), slot_tbs.end(), 0); }
+    // We timeout the HARQ since we need to reuse the process before the PUSCH arrives.
+    const unsigned ntn_harq_timeout = 1;
+    /// \brief The function is used to get the ntn koffset.
+    unsigned get_ntn_koffset() const { return ntn_cs_koffset; }
+
+  private:
+    std::vector<unsigned>                            slot_tbs;
+    std::vector<dl_harq_process::dl_ack_info_result> slot_ack_info;
+    unsigned                                         ntn_cs_koffset;
+  };
   rnti_t                rnti;
   srslog::basic_logger& logger;
   harq_logger           dl_h_logger;
@@ -523,6 +671,8 @@ private:
   slot_point                   slot_tx;
   std::vector<dl_harq_process> dl_harqs;
   std::vector<ul_harq_process> ul_harqs;
+  ue_harq_timeout_notifier     nop_timeout_notifier;
+  ntn_tbs_history              ntn_harq;
 };
 
 } // namespace srsran

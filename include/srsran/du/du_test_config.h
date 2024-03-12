@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,6 +31,8 @@ namespace srs_du {
 struct du_test_config {
   struct test_ue_config {
     rnti_t             rnti;
+    uint16_t           nof_ues;
+    optional<unsigned> auto_ack_indication_delay;
     bool               pdsch_active;
     bool               pusch_active;
     unsigned           cqi;

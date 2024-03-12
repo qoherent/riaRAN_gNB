@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,6 +32,10 @@ namespace srsran {
 ///
 /// It generates PRACH frequency-domain signals on demand instead of generating and storing them off-line. It minimizes
 /// memory footprint at the cost of longer processing time.
+///
+/// More details about the generation algorithm can be found in
+/// > D. Gregoratti, X. Arteaga, and J. Broquetas, "Mathematical Properties of the Zadoff-Chu Sequences,"
+/// > online: https://arxiv.org/abs/2311.01035
 class prach_generator_impl : public prach_generator
 {
 private:

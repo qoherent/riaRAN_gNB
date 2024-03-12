@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,6 @@
 #include "srsran/adt/optional.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/lcid.h"
-#include "srsran/rlc/rlc_config_messages.h"
 
 /*
  * This file will hold the interfaces and notifiers for the RLC entity.
@@ -57,8 +56,9 @@ namespace srsran {
 /// can optionally be accompanied with the corresponding PDCP sequence number (SN)
 /// so that RLC AM can notify the PDCP of ACKs, and PDCP can notify RLC AM/UM to discard PDCP PDUs
 struct rlc_sdu {
-  byte_buffer        buf = {};
-  optional<uint32_t> pdcp_sn;
+  byte_buffer                           buf = {};
+  optional<uint32_t>                    pdcp_sn;
+  std::chrono::system_clock::time_point time_of_arrival;
   rlc_sdu() = default;
   rlc_sdu(byte_buffer buf_, optional<uint32_t> pdcp_sn_) : buf(std::move(buf_)), pdcp_sn(pdcp_sn_) {}
 };
@@ -141,10 +141,11 @@ public:
   rlc_tx_lower_layer_interface& operator=(const rlc_tx_lower_layer_interface&&) = delete;
 
   /// \brief Pulls a PDU from the lower end of the RLC TX entity
-  /// An empty PDU is returned if nof_bytes is insufficient or the TX buffer is empty.
-  /// \param grant_len Limits the maximum size of the requested PDU.
-  /// \return One PDU
-  virtual byte_buffer_chain pull_pdu(uint32_t grant_len) = 0;
+  /// No PDU is written if the size of \c rlc_pdu_buf is insufficient or the TX buffer is empty.
+  /// \param rlc_pdu_buf TX buffer where to encode an RLC Tx PDU. The encoded PDU size cannot exceed the size of the
+  /// buffer.
+  /// \return Number of bytes taken by the written RLC PDU.
+  virtual size_t pull_pdu(span<uint8_t> rlc_pdu_buf) = 0;
 
   /// \brief Get the buffer status information
   /// This function provides the current buffer state of the RLC TX entity.

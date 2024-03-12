@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,8 +24,8 @@
 
 #include "rlc_bearer_logger.h"
 #include "rlc_rx_metrics_container.h"
+#include "srsran/pcap/rlc_pcap.h"
 #include "srsran/rlc/rlc_rx.h"
-#include "srsran/rlc/rlc_tx.h"
 
 namespace srsran {
 
@@ -34,14 +34,20 @@ namespace srsran {
 class rlc_rx_entity : public rlc_rx_lower_layer_interface, public rlc_rx_metrics
 {
 protected:
-  rlc_rx_entity(du_ue_index_t du_index, rb_id_t rb_id, rlc_rx_upper_layer_data_notifier& upper_dn_) :
-    logger("RLC", {du_index, rb_id, "UL"}), upper_dn(upper_dn_)
+  rlc_rx_entity(uint32_t                          du_index,
+                du_ue_index_t                     ue_index,
+                rb_id_t                           rb_id,
+                rlc_rx_upper_layer_data_notifier& upper_dn_,
+                bool                              metrics_enable,
+                rlc_pcap&                         pcap_) :
+    logger("RLC", {du_index, ue_index, rb_id, "UL"}), upper_dn(upper_dn_), metrics(metrics_enable), pcap(pcap_)
   {
   }
 
   rlc_bearer_logger                 logger;
-  rlc_rx_metrics_container          metrics;
   rlc_rx_upper_layer_data_notifier& upper_dn;
+  rlc_rx_metrics_container          metrics;
+  rlc_pcap&                         pcap;
 
 public:
   rlc_rx_metrics get_metrics() { return metrics.get_metrics(); }

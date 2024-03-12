@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -26,13 +26,14 @@ set(SOURCES
         clip.cpp
         compare.cpp
         conversion.cpp
+        convolution.cpp
         division.cpp
         dot_prod.cpp
         modulus_square.cpp
         prod.cpp
         sc_prod.cpp
         subtract.cpp
-        )
+)
 
 add_library(srsvec STATIC ${SOURCES})
 target_link_libraries(srsvec srslog)

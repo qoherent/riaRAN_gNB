@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -21,10 +21,7 @@
 set_directory_properties(PROPERTIES LABELS "support")
 
 add_subdirectory(network)
-
-add_executable(task_worker_test task_worker_test.cpp task_execution_manager_test.cpp)
-target_link_libraries(task_worker_test srslog srsran_support gtest gtest_main)
-gtest_discover_tests(task_worker_test)
+add_subdirectory(executors)
 
 add_executable(timer_test timer_test.cpp)
 target_link_libraries(timer_test srslog srsran_support gtest gtest_main)
@@ -35,7 +32,7 @@ add_executable(function_signature_test function_signature_test.cpp)
 add_test(function_signature_test function_signature_test)
 
 add_executable(async_event_test async_event_test.cpp)
-target_link_libraries(async_event_test srslog)
+target_link_libraries(async_event_test srslog gtest gtest_main)
 add_test(async_event_test async_event_test)
 
 add_executable(async_task_test async_task_test.cpp)
@@ -50,9 +47,9 @@ add_executable(async_queue_test async_queue_test.cpp)
 target_link_libraries(async_queue_test srslog srsran_support gtest gtest_main)
 add_test(async_queue_test async_queue_test)
 
-add_executable(async_task_sequencer_test async_task_sequencer_test.cpp)
-target_link_libraries(async_task_sequencer_test srslog srsran_support)
-add_test(async_task_sequencer_test async_task_sequencer_test)
+add_executable(fifo_async_task_scheduler_test fifo_async_task_scheduler_test.cpp)
+target_link_libraries(fifo_async_task_scheduler_test srslog srsran_support)
+add_test(fifo_async_task_scheduler_test fifo_async_task_scheduler_test)
 
 add_executable(unique_thread_test unique_thread_test.cpp)
 target_link_libraries(unique_thread_test srslog srsran_support)
@@ -82,6 +79,7 @@ add_test(ring_buffer_pool_test ring_buffer_pool_test)
 add_executable(fixed_size_memory_pool_test fixed_size_memory_pool_test.cpp)
 target_link_libraries(fixed_size_memory_pool_test srsran_support gtest gtest_main)
 add_test(fixed_size_memory_pool_test fixed_size_memory_pool_test)
+set_tests_properties(fixed_size_memory_pool_test PROPERTIES LABELS "tsan")
 
 add_executable(units_test units_test.cpp)
 target_link_libraries(units_test srslog srsran_support gtest gtest_main)

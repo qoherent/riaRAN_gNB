@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,9 +25,10 @@
 #include "srsran/adt/static_vector.h"
 #include "srsran/ofh/compression/compression_params.h"
 #include "srsran/ofh/ethernet/ethernet_mac_address.h"
+#include "srsran/ofh/ethernet/ethernet_receiver.h"
 #include "srsran/ofh/ofh_constants.h"
-#include "srsran/ofh/ofh_receiver_configuration.h"
 #include "srsran/ofh/ofh_uplane_rx_symbol_notifier.h"
+#include "srsran/ofh/receiver/ofh_receiver_configuration.h"
 #include "srsran/ofh/transmitter/ofh_transmitter_configuration.h"
 #include "srsran/ran/bs_channel_bandwidth.h"
 #include "srsran/ran/cyclic_prefix.h"
@@ -41,19 +42,14 @@ namespace ofh {
 
 /// Open Fronthaul sector configuration.
 struct sector_configuration {
-  /// Logger.
-  srslog::basic_logger* logger = nullptr;
-  /// Downlink task executors.
-  std::vector<task_executor*> downlink_executors;
-  /// Transmitter task executor.
-  task_executor* transmitter_executor = nullptr;
-  /// Receiver task executor.
-  task_executor* receiver_executor = nullptr;
-  /// User-Plane received symbol notifier.
-  uplane_rx_symbol_notifier* notifier = nullptr;
-
-  /// Ethernet interface name.
+  /// Radio sector identifier.
+  unsigned sector_id;
+  /// Ethernet interface name or identifier.
   std::string interface;
+  /// Promiscuous mode flag.
+  bool is_promiscuous_mode_enabled;
+  /// MTU size.
+  units::bytes mtu_size;
   /// Destination MAC address, corresponds to the Radio Unit MAC address.
   ether::mac_address mac_dst_address;
   /// Source MAC address, corresponds to the Distributed Unit MAC address.
@@ -92,6 +88,10 @@ struct sector_configuration {
   bool is_downlink_broadcast_enabled = false;
   /// If set to true, the payload size encoded in a eCPRI header is ignored.
   bool ignore_ecpri_payload_size_field = false;
+  /// If set to true, the sequence id encoded in a eCPRI packet is ignored.
+  bool ignore_ecpri_seq_id_field = false;
+  /// If set to true, warn of unreceived Radio Unit frames.
+  bool warn_unreceived_ru_frames = true;
   /// Uplink compression parameters.
   ofh::ru_compression_params ul_compression_params;
   /// Downlink compression parameters.
@@ -117,6 +117,24 @@ struct sector_configuration {
   bool uses_dpdk;
   /// Optional TDD configuration.
   optional<tdd_ul_dl_config_common> tdd_config;
+};
+
+/// Open Fronthaul sector dependencies.
+struct sector_dependencies {
+  /// Logger.
+  srslog::basic_logger* logger = nullptr;
+  /// Downlink task executor.
+  task_executor* downlink_executor;
+  /// Transmitter task executor.
+  task_executor* transmitter_executor = nullptr;
+  /// Receiver task executor.
+  task_executor* receiver_executor = nullptr;
+  /// User-Plane received symbol notifier.
+  std::shared_ptr<ofh::uplane_rx_symbol_notifier> notifier;
+  /// Optional Ethernet gateway.
+  optional<std::unique_ptr<ether::gateway>> eth_gateway;
+  /// Optional  Ethernet receiver.
+  optional<std::unique_ptr<ether::receiver>> eth_receiver;
 };
 
 } // namespace ofh

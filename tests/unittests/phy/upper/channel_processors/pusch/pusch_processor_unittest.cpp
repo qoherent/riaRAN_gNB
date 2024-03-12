@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,16 +21,16 @@
  */
 
 #include "../../../support/resource_grid_test_doubles.h"
-#include "../../rx_softbuffer_test_doubles.h"
+#include "../../rx_buffer_test_doubles.h"
 #include "../../signal_processors/dmrs_pusch_estimator_test_doubles.h"
-#include "../uci_decoder_test_doubles.h"
+#include "../uci/uci_decoder_test_doubles.h"
 #include "pusch_decoder_test_doubles.h"
 #include "pusch_demodulator_test_doubles.h"
 #include "pusch_processor_result_test_doubles.h"
 #include "ulsch_demultiplex_test_doubles.h"
-#include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
+#include "srsran/phy/upper/channel_processors/pusch/factories.h"
 #include "srsran/ran/pusch/ulsch_info.h"
-#include "srsran/ran/sch_dmrs_power.h"
+#include "srsran/ran/sch/sch_dmrs_power.h"
 #include "srsran/srsvec/compare.h"
 #include <fmt/ostream.h>
 #include <gtest/gtest.h>
@@ -63,6 +63,12 @@ std::ostream& operator<<(std::ostream& os, cyclic_prefix value)
   return os;
 }
 
+std::ostream& operator<<(std::ostream& os, uci_status value)
+{
+  fmt::print(os, "{}", to_string(value));
+  return os;
+}
+
 static bool operator==(span<const log_likelihood_ratio> left, span<const log_likelihood_ratio> right)
 {
   return srsvec::equal(left, right);
@@ -72,7 +78,8 @@ static bool operator==(span<const log_likelihood_ratio> left, span<const log_lik
 
 namespace {
 
-using PuschProcessorParams = std::tuple<subcarrier_spacing, cyclic_prefix, modulation_scheme, bool, unsigned, unsigned>;
+using PuschProcessorParams =
+    std::tuple<subcarrier_spacing, cyclic_prefix, modulation_scheme, bool, unsigned, unsigned, unsigned>;
 
 class PuschProcessorFixture : public ::testing::TestWithParam<PuschProcessorParams>
 {
@@ -114,6 +121,7 @@ protected:
     proc_factory_config.ch_estimate_dimensions.nof_symbols   = MAX_NSYMB_PER_SLOT;
     proc_factory_config.ch_estimate_dimensions.nof_rx_ports  = MAX_PORTS;
     proc_factory_config.ch_estimate_dimensions.nof_tx_layers = 1;
+    proc_factory_config.max_nof_concurrent_threads           = 1;
     std::shared_ptr<pusch_processor_factory> pusch_proc_factory =
         create_pusch_processor_factory_sw(proc_factory_config);
 
@@ -136,11 +144,13 @@ protected:
     validator        = pusch_proc_factory->create_validator();
 
     // Select spies.
-    estimator_spy   = estimator_factory_spy->get_entries().front();
-    demodulator_spy = demodulator_factory_spy->get_entries().front();
-    demux_spy       = demux_factory_spy->get_entries().front();
-    decoder_spy     = decoder_factory_spy->get_entries().front();
-    uci_dec_spy     = uci_dec_factory_spy->get_entries().front();
+    estimator_spy     = estimator_factory_spy->get_entries().front();
+    demodulator_spy   = demodulator_factory_spy->get_entries().front();
+    demux_spy         = demux_factory_spy->get_entries().front();
+    decoder_spy       = decoder_factory_spy->get_entries()[0];
+    decoder_spy_debug = decoder_factory_spy->get_entries()[1];
+    decoder_spy_info  = decoder_factory_spy->get_entries()[2];
+    uci_dec_spy       = uci_dec_factory_spy->get_entries().front();
   }
 
   void SetUp() override
@@ -151,7 +161,8 @@ protected:
     modulation_scheme  modulation         = std::get<2>(GetParam());
     bool               codeword_present   = std::get<3>(GetParam());
     unsigned           nof_harq_ack_bits  = std::get<4>(GetParam());
-    unsigned           nof_rx_ports       = std::get<5>(GetParam());
+    unsigned           nof_csi_part1_bits = std::get<5>(GetParam());
+    unsigned           nof_rx_ports       = std::get<6>(GetParam());
 
     unsigned numerology             = to_numerology_value(scs);
     unsigned nof_slots_per_subframe = get_nof_slots_per_subframe(scs);
@@ -174,7 +185,7 @@ protected:
 
     // Fill UCI configuration.
     pdu.uci.nof_harq_ack          = nof_harq_ack_bits;
-    pdu.uci.nof_csi_part1         = 0;
+    pdu.uci.nof_csi_part1         = nof_csi_part1_bits;
     pdu.uci.csi_part2_size        = {};
     pdu.uci.alpha_scaling         = 1.0F;
     pdu.uci.beta_offset_harq_ack  = 20.0F;
@@ -231,6 +242,8 @@ protected:
   static pusch_demodulator_spy*    demodulator_spy;
   static ulsch_demultiplex_spy*    demux_spy;
   static pusch_decoder_spy*        decoder_spy;
+  static pusch_decoder_spy*        decoder_spy_info;
+  static pusch_decoder_spy*        decoder_spy_debug;
   static uci_decoder_spy*          uci_dec_spy;
 
   static std::unique_ptr<pusch_processor>     pusch_proc;
@@ -258,11 +271,13 @@ protected:
   pusch_processor::pdu_t pdu;
 };
 
-dmrs_pusch_estimator_spy* PuschProcessorFixture::estimator_spy   = nullptr;
-pusch_demodulator_spy*    PuschProcessorFixture::demodulator_spy = nullptr;
-ulsch_demultiplex_spy*    PuschProcessorFixture::demux_spy       = nullptr;
-pusch_decoder_spy*        PuschProcessorFixture::decoder_spy     = nullptr;
-uci_decoder_spy*          PuschProcessorFixture::uci_dec_spy     = nullptr;
+dmrs_pusch_estimator_spy* PuschProcessorFixture::estimator_spy     = nullptr;
+pusch_demodulator_spy*    PuschProcessorFixture::demodulator_spy   = nullptr;
+ulsch_demultiplex_spy*    PuschProcessorFixture::demux_spy         = nullptr;
+pusch_decoder_spy*        PuschProcessorFixture::decoder_spy       = nullptr;
+pusch_decoder_spy*        PuschProcessorFixture::decoder_spy_info  = nullptr;
+pusch_decoder_spy*        PuschProcessorFixture::decoder_spy_debug = nullptr;
+uci_decoder_spy*          PuschProcessorFixture::uci_dec_spy       = nullptr;
 
 std::unique_ptr<pusch_processor>     PuschProcessorFixture::pusch_proc       = nullptr;
 std::unique_ptr<pusch_processor>     PuschProcessorFixture::pusch_proc_info  = nullptr;
@@ -315,11 +330,6 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
   // Generate resource block mask.
   bounded_bitset<MAX_RB> rb_mask = pdu.freq_alloc.get_prb_mask(pdu.bwp_start_rb, pdu.bwp_size_rb);
 
-  // Generate DM-RS symbol mask.
-  std::array<bool, MAX_NSYMB_PER_SLOT> dmrs_symbol_mask = {};
-  pdu.dmrs_symbol_mask.for_each(
-      0, pdu.dmrs_symbol_mask.size(), [&dmrs_symbol_mask](unsigned i_symb) { dmrs_symbol_mask[i_symb] = true; });
-
   // Generate transport block.
   std::vector<uint8_t> transport_block(tbs_dist(rgen));
   std::generate(transport_block.begin(), transport_block.end(), [&]() { return static_cast<uint8_t>(rgen()); });
@@ -347,22 +357,22 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
   // Calculate the number of LLR.
   unsigned nof_codeword_llr = nof_re * get_bits_per_symbol(pdu.mcs_descr.modulation) * pdu.nof_tx_layers;
   demodulator_spy->set_codeword_size(nof_codeword_llr);
-  decoder_spy->set_codeword_length(ulsch_info.nof_ul_sch_bits.value());
   demux_spy->set_ulsch_config(nof_codeword_llr,
                               ulsch_info.nof_ul_sch_bits.value(),
                               ulsch_info.nof_harq_ack_bits.value(),
                               ulsch_info.nof_csi_part1_bits.value(),
                               ulsch_info.nof_csi_part2_bits.value());
 
-  // Create receive softbuffer.
-  rx_softbuffer_spy softbuffer_spy;
+  // Create receive buffer.
+  rx_buffer_spy    rm_buffer_spy;
+  unique_rx_buffer rm_buffer(rm_buffer_spy);
 
   // Resource grid spy.
   resource_grid_reader_spy rg_spy;
 
   // Process PDU.
   pusch_processor_result_notifier_spy result_notifier;
-  pusch_proc->process(transport_block, softbuffer_spy, result_notifier, rg_spy, pdu);
+  pusch_proc->process(transport_block, std::move(rm_buffer), result_notifier, rg_spy, pdu);
 
   // Extract results.
   const auto& sch_entries = result_notifier.get_sch_entries();
@@ -371,9 +381,9 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
   // Make sure PDU is valid.
   ASSERT_TRUE(validator->is_valid(pdu));
 
-  // Calling resource grid and softbuffer methods are not permitted.
+  // Calling resource grid and buffer methods are not permitted.
   ASSERT_EQ(0, rg_spy.get_count());
-  ASSERT_EQ(0, softbuffer_spy.get_total_count());
+  ASSERT_EQ(0, rm_buffer_spy.get_total_count());
 
   // Assert channel estimator inputs.
   ASSERT_EQ(1, estimator_spy->get_entries().size());
@@ -403,7 +413,7 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
   ASSERT_EQ(pdu.mcs_descr.modulation, demodulator_entry.config.modulation);
   ASSERT_EQ(pdu.start_symbol_index, demodulator_entry.config.start_symbol_index);
   ASSERT_EQ(pdu.nof_symbols, demodulator_entry.config.nof_symbols);
-  ASSERT_EQ(dmrs_symbol_mask, demodulator_entry.config.dmrs_symb_pos);
+  ASSERT_EQ(pdu.dmrs_symbol_mask, demodulator_entry.config.dmrs_symb_pos);
   ASSERT_EQ(pdu.dmrs, demodulator_entry.config.dmrs_config_type);
   ASSERT_EQ(pdu.nof_cdm_groups_without_data, demodulator_entry.config.nof_cdm_groups_without_data);
   ASSERT_EQ(pdu.n_id, demodulator_entry.config.n_id);
@@ -431,7 +441,7 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
     const pusch_decoder_spy::entry_t& decoder_entry = decoder_spy->get_entries().front();
     ASSERT_EQ(decoder_entry.transport_block.data(), transport_block.data());
     ASSERT_EQ(decoder_entry.transport_block.size(), transport_block.size());
-    ASSERT_EQ(&softbuffer_spy, decoder_entry.soft_codeword);
+    ASSERT_EQ(&rm_buffer_spy, &decoder_entry.rm_buffer.get());
     ASSERT_EQ(span<const log_likelihood_ratio>(demux_entry.sch_data), decoder_entry.input.get_data());
     ASSERT_EQ(pdu.codeword.value().ldpc_base_graph, decoder_entry.config.base_graph);
     ASSERT_EQ(pdu.mcs_descr.modulation, decoder_entry.config.mod);
@@ -445,30 +455,55 @@ TEST_P(PuschProcessorFixture, PuschProcessorUnittest)
     const auto& sch_entry = sch_entries.back();
     ASSERT_EQ(decoder_entry.stats.tb_crc_ok, sch_entry.data.tb_crc_ok);
     ASSERT_EQ(decoder_entry.stats.nof_codeblocks_total, sch_entry.data.nof_codeblocks_total);
+
+    // Clear decoder spy entries - It makes sure the soft buffer is unlocked before destroying the pool.
+    decoder_spy->clear();
   } else {
     ASSERT_EQ(0, decoder_spy->get_entries().size());
     ASSERT_TRUE(sch_entries.empty());
   }
 
+  // Calculate the number of UCI decoded fields.
+  unsigned nof_uci_fields  = ((pdu.uci.nof_harq_ack > 0) ? 1 : 0) + ((pdu.uci.nof_csi_part1 > 0) ? 1 : 0);
+  unsigned uci_decoder_idx = 0;
+  ASSERT_EQ(nof_uci_fields, uci_dec_spy->get_entries().size());
+
   // Assert HARQ-ACK decoder inputs.
   if (pdu.uci.nof_harq_ack > 0) {
-    ASSERT_EQ(1, uci_dec_spy->get_entries().size());
-    const uci_decoder_spy::entry_t& uci_dec_entry = uci_dec_spy->get_entries().front();
+    const uci_decoder_spy::entry_t& uci_dec_entry = uci_dec_spy->get_entries()[uci_decoder_idx++];
     ASSERT_EQ(span<const log_likelihood_ratio>(demux_entry.harq_ack),
               span<const log_likelihood_ratio>(uci_dec_entry.llr));
     ASSERT_EQ(pdu.mcs_descr.modulation, uci_dec_entry.config.modulation);
 
+    uci_payload_type packed_harq_ack(uci_dec_entry.message.begin(), uci_dec_entry.message.end());
+
     ASSERT_EQ(uci_entries.size(), 1);
     const auto& uci_entry = uci_entries.back();
-    ASSERT_EQ(span<const uint8_t>(uci_entry.harq_ack.payload), span<const uint8_t>(uci_dec_entry.message));
+    ASSERT_EQ(uci_entry.harq_ack.payload, packed_harq_ack);
     ASSERT_EQ(uci_entry.harq_ack.status, uci_dec_entry.status);
-  } else {
-    ASSERT_EQ(0, uci_dec_spy->get_entries().size());
-    if (!uci_entries.empty()) {
-      const auto& uci_entry = uci_entries.back();
-      ASSERT_EQ(uci_status::unknown, uci_entry.harq_ack.status);
-      ASSERT_TRUE(uci_entry.harq_ack.payload.empty());
-    }
+  } else if (!uci_entries.empty()) {
+    const auto& uci_entry = uci_entries.back();
+    ASSERT_EQ(uci_status::unknown, uci_entry.harq_ack.status);
+    ASSERT_TRUE(uci_entry.harq_ack.payload.empty());
+  }
+
+  // Assert CSI Part 1 decoder inputs.
+  if (pdu.uci.nof_csi_part1 > 0) {
+    const uci_decoder_spy::entry_t& uci_dec_entry = uci_dec_spy->get_entries()[uci_decoder_idx++];
+    ASSERT_EQ(span<const log_likelihood_ratio>(demux_entry.csi_part1),
+              span<const log_likelihood_ratio>(uci_dec_entry.llr));
+    ASSERT_EQ(pdu.mcs_descr.modulation, uci_dec_entry.config.modulation);
+
+    uci_payload_type packed_csi_part1(uci_dec_entry.message.begin(), uci_dec_entry.message.end());
+
+    ASSERT_EQ(uci_entries.size(), 1);
+    const auto& uci_entry = uci_entries.back();
+    ASSERT_EQ(uci_entry.csi_part1.payload, packed_csi_part1);
+    ASSERT_EQ(uci_entry.csi_part1.status, uci_dec_entry.status);
+  } else if (!uci_entries.empty()) {
+    const auto& uci_entry = uci_entries.back();
+    ASSERT_EQ(uci_status::unknown, uci_entry.csi_part1.status);
+    ASSERT_TRUE(uci_entry.csi_part1.payload.empty());
   }
 }
 
@@ -478,15 +513,19 @@ TEST_P(PuschProcessorFixture, HealthTestFormatterInfo)
   std::vector<uint8_t> transport_block(tbs_dist(rgen));
   std::generate(transport_block.begin(), transport_block.end(), [&]() { return static_cast<uint8_t>(rgen()); });
 
-  // Create receive softbuffer.
-  rx_softbuffer_spy softbuffer_spy;
+  // Create receive buffer.
+  rx_buffer_spy    rm_buffer_spy;
+  unique_rx_buffer rm_buffer(rm_buffer_spy);
 
   // Resource grid spy.
   resource_grid_reader_spy rg_spy;
 
   // Process PDU.
   pusch_processor_result_notifier_spy result_notifier;
-  pusch_proc_info->process(transport_block, softbuffer_spy, result_notifier, rg_spy, pdu);
+  pusch_proc_info->process(transport_block, std::move(rm_buffer), result_notifier, rg_spy, pdu);
+
+  // Clear decoder spy entries - It makes sure the soft buffer is unlocked before destroying the pool.
+  decoder_spy_info->clear();
 }
 
 TEST_P(PuschProcessorFixture, HealthTestFormatterDebug)
@@ -495,15 +534,19 @@ TEST_P(PuschProcessorFixture, HealthTestFormatterDebug)
   std::vector<uint8_t> transport_block(tbs_dist(rgen));
   std::generate(transport_block.begin(), transport_block.end(), [&]() { return static_cast<uint8_t>(rgen()); });
 
-  // Create receive softbuffer.
-  rx_softbuffer_spy softbuffer_spy;
+  // Create receive buffer.
+  rx_buffer_spy    rm_buffer_spy;
+  unique_rx_buffer rm_buffer(rm_buffer_spy);
 
   // Resource grid spy.
   resource_grid_reader_spy rg_spy;
 
   // Process PDU.
   pusch_processor_result_notifier_spy result_notifier;
-  pusch_proc_debug->process(transport_block, softbuffer_spy, result_notifier, rg_spy, pdu);
+  pusch_proc_debug->process(transport_block, std::move(rm_buffer), result_notifier, rg_spy, pdu);
+
+  // Clear decoder spy entries - It makes sure the soft buffer is unlocked before destroying the pool.
+  decoder_spy_debug->clear();
 }
 
 // Creates test suite that combines all possible parameters.
@@ -524,6 +567,8 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::Values(true, false),
         // Number of HARQ-ACK bits.
         ::testing::Values(0, 1, 2, 10),
+        // Number of CSI Part1 bits.
+        ::testing::Values(0, 4),
         // Number of receive antenna ports.
         ::testing::Values(1, 2, 4)));
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,12 +37,33 @@ transmitter_impl::transmitter_impl(const gw_config& config, srslog::basic_logger
 {
   socket_fd = ::socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_RAW);
   if (socket_fd < 0) {
-    report_error("Unable to open socket for Ethernet gateway");
+    report_error("Unable to open raw socket for Ethernet transmitter: {}", strerror(errno));
+  }
+
+  if (config.interface.size() > (IFNAMSIZ - 1)) {
+    report_error("The Ethernet transmitter interface name '{}' exceeds the maximum allowed length");
+  }
+
+  ::ifreq if_idx = {};
+  ::strncpy(if_idx.ifr_name, config.interface.c_str(), IFNAMSIZ - 1);
+
+  // Set requested MTU size.
+  if_idx.ifr_mtu = config.mtu_size.value();
+  if (::ioctl(socket_fd, SIOCSIFMTU, &if_idx) < 0) {
+    // Get the MTU size of the NIC.
+    int current_mtu = -1;
+    if (::ioctl(socket_fd, SIOCGIFMTU, &if_idx) < 0) {
+      logger.warning("Could not check MTU of the NIC interface in the Ethernet transmitter");
+    } else {
+      current_mtu = if_idx.ifr_mtu;
+    }
+    report_error("Unable to set MTU size to '{}' bytes for NIC interface in the Ethernet transmitter, current MTU size "
+                 "set to '{}' bytes",
+                 config.mtu_size,
+                 current_mtu);
   }
 
   // Get the index of the NIC.
-  ::ifreq if_idx = {};
-  ::strncpy(if_idx.ifr_name, config.interface.c_str(), IFNAMSIZ - 1);
   if (::ioctl(socket_fd, SIOCGIFINDEX, &if_idx) < 0) {
     report_error("Unable to get index for NIC interface in the Ethernet transmitter");
   }
@@ -70,7 +91,8 @@ void transmitter_impl::send(span<span<const uint8_t>> frames)
                  0,
                  reinterpret_cast<::sockaddr*>(&socket_address),
                  sizeof(socket_address)) < 0) {
-      logger.warning("sendto failed to transmit {} bytes, consider tuning the NIC for higher performance",
+      logger.warning("Ethernet transmitter call to sendto failed as it could not transmit '{}' bytes, consider tuning "
+                     "the NIC system settings to obtain higher performance or use DPDK",
                      frame.size());
     }
   }

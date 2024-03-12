@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,9 +24,9 @@
 
 #include "../mac_ctrl/mac_config.h"
 #include "../mac_ctrl/mac_scheduler_configurator.h"
-#include "../mac_dl/rlf_detector.h"
 #include "../rnti_manager.h"
 #include "mac_scheduler_adapter.h"
+#include "rlf_detector.h"
 #include "uci_cell_decoder.h"
 #include "srsran/scheduler/mac_scheduler.h"
 #include "srsran/support/async/manual_event.h"
@@ -40,7 +40,7 @@ namespace srsran {
 class srsran_scheduler_adapter final : public mac_scheduler_adapter
 {
 public:
-  explicit srsran_scheduler_adapter(const mac_config& params, rnti_manager& rnti_mng_, rlf_detector& rlf_handler_);
+  explicit srsran_scheduler_adapter(const mac_config& params, rnti_manager& rnti_mng_);
 
   void add_cell(const mac_cell_creation_request& msg) override;
 
@@ -66,9 +66,15 @@ public:
 
   void handle_ul_phr_indication(const mac_phr_ce_info& phr) override;
 
+  void handle_crnti_ce_indication(du_ue_index_t old_ue_index, du_cell_index_t cell_index) override;
+
   void handle_paging_information(const paging_information& msg) override;
 
   const sched_result& slot_indication(slot_point slot_tx, du_cell_index_t cell_idx) override;
+
+  void handle_error_indication(slot_point                         slot_tx,
+                               du_cell_index_t                    cell_idx,
+                               mac_cell_slot_handler::error_event event) override;
 
   mac_cell_rach_handler& get_cell_rach_handler(du_cell_index_t cell_index) override
   {
@@ -115,8 +121,11 @@ private:
     srsran_scheduler_adapter& parent;
   };
 
-  rnti_manager&         rnti_mng;
-  rlf_detector&         rlf_handler;
+  // Allocator for TC-RNTIs.
+  rnti_manager& rnti_mng;
+
+  /// Detector of UE RLFs.
+  rlf_detector          rlf_handler;
   task_executor&        ctrl_exec;
   srslog::basic_logger& logger;
 
@@ -125,9 +134,6 @@ private:
 
   /// srsGNB scheduler.
   std::unique_ptr<mac_scheduler> sched_impl;
-
-  /// Allocator of TC-RNTI values.
-  rnti_manager rnti_alloc;
 
   /// List of event flags used by scheduler to notify that the configuration is complete.
   struct ue_notification_context {

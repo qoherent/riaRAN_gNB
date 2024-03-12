@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,8 @@
 #include "prach_buffer_impl.h"
 #include "prach_buffer_pool_impl.h"
 #include "resource_grid_impl.h"
-#include "resource_grid_pool_impl.h"
+#include "resource_grid_pool_asynchronous_impl.h"
+#include "resource_grid_pool_generic_impl.h"
 #include "srsran/phy/generic_functions/precoding/precoding_factories.h"
 #include "srsran/ran/prach/prach_constants.h"
 
@@ -61,11 +62,17 @@ private:
 } // namespace
 
 std::unique_ptr<resource_grid_pool>
-srsran::create_resource_grid_pool(unsigned                                      nof_sectors,
-                                  unsigned                                      nof_slots,
-                                  std::vector<std::unique_ptr<resource_grid>>&& grids)
+srsran::create_generic_resource_grid_pool(std::vector<std::unique_ptr<resource_grid>> grids)
 {
-  return std::make_unique<resource_grid_pool_impl>(nof_sectors, nof_slots, std::move(grids));
+  return std::make_unique<resource_grid_pool_generic_impl>(std::move(grids));
+}
+
+std::unique_ptr<resource_grid_pool>
+srsran::create_asynchronous_resource_grid_pool(unsigned                                    expire_timeout_slots,
+                                               task_executor&                              async_executor,
+                                               std::vector<std::unique_ptr<resource_grid>> grids)
+{
+  return std::make_unique<resource_grid_pool_asynchronous_impl>(expire_timeout_slots, async_executor, std::move(grids));
 }
 
 std::unique_ptr<prach_buffer_pool>
@@ -76,6 +83,17 @@ srsran::create_prach_buffer_pool(std::vector<std::unique_ptr<prach_buffer>>&& el
 
 std::unique_ptr<prach_buffer> srsran::create_prach_buffer_long(unsigned max_nof_antennas, unsigned max_nof_fd_occasions)
 {
+  static constexpr interval<unsigned, true> nof_rx_ports_range(1, MAX_PORTS);
+  static constexpr interval<unsigned, true> max_nof_fd_prach_occasions_range(
+      1, prach_constants::MAX_NOF_PRACH_FD_OCCASIONS);
+  srsran_assert(nof_rx_ports_range.contains(max_nof_antennas),
+                "The maximum number of antennas (i.e., {}) is out of range {}·",
+                max_nof_antennas,
+                nof_rx_ports_range);
+  srsran_assert(max_nof_fd_prach_occasions_range.contains(max_nof_fd_occasions),
+                "The maximum number of frequency domain occasions (i.e., {}) is out of range {}·",
+                max_nof_fd_occasions,
+                max_nof_fd_prach_occasions_range);
   return std::make_unique<prach_buffer_impl>(max_nof_antennas,
                                              1,
                                              max_nof_fd_occasions,
@@ -87,6 +105,23 @@ std::unique_ptr<prach_buffer> srsran::create_prach_buffer_short(unsigned max_nof
                                                                 unsigned max_nof_td_occasions,
                                                                 unsigned max_nof_fd_occasions)
 {
+  static constexpr interval<unsigned, true> nof_rx_ports_range(1, MAX_PORTS);
+  static constexpr interval<unsigned, true> max_nof_td_prach_occasions_range(
+      1, prach_constants::MAX_NOF_PRACH_TD_OCCASIONS);
+  static constexpr interval<unsigned, true> max_nof_fd_prach_occasions_range(
+      1, prach_constants::MAX_NOF_PRACH_FD_OCCASIONS);
+  srsran_assert(nof_rx_ports_range.contains(max_nof_antennas),
+                "The maximum number of antennas (i.e., {}) is out of range {}·",
+                max_nof_antennas,
+                nof_rx_ports_range);
+  srsran_assert(max_nof_td_prach_occasions_range.contains(max_nof_td_occasions),
+                "The maximum number of time domain occasions (i.e., {}) is out of range {}·",
+                max_nof_td_occasions,
+                max_nof_td_prach_occasions_range);
+  srsran_assert(max_nof_fd_prach_occasions_range.contains(max_nof_fd_occasions),
+                "The maximum number of frequency domain occasions (i.e., {}) is out of range {}·",
+                max_nof_fd_occasions,
+                max_nof_fd_prach_occasions_range);
   return std::make_unique<prach_buffer_impl>(max_nof_antennas,
                                              max_nof_td_occasions,
                                              max_nof_fd_occasions,
@@ -112,7 +147,7 @@ public:
   // See interface for documentation.
   void apply_precoding(re_buffer_writer&              output,
                        const re_buffer_reader&        input,
-                       const precoding_weight_matrix& precoding) override
+                       const precoding_weight_matrix& precoding) const override
   {
     unsigned nof_ports  = precoding.get_nof_ports();
     unsigned nof_layers = precoding.get_nof_layers();
@@ -147,7 +182,7 @@ public:
   // See interface for documentation.
   void apply_layer_map_and_precoding(re_buffer_writer&              output,
                                      span<const ci8_t>              input,
-                                     const precoding_weight_matrix& precoding) override
+                                     const precoding_weight_matrix& precoding) const override
   {
     unsigned nof_layers = precoding.get_nof_layers();
     unsigned nof_ports  = precoding.get_nof_layers();
@@ -182,11 +217,9 @@ public:
   }
 };
 
-std::unique_ptr<resource_grid_mapper> srsran::create_resource_grid_mapper(unsigned                      nof_ports,
-                                                                          unsigned                      nof_symbols,
-                                                                          unsigned                      nof_subc,
-                                                                          srsran::resource_grid_writer& writer)
+std::unique_ptr<resource_grid_mapper>
+srsran::create_resource_grid_mapper(unsigned nof_ports, unsigned nof_subc, srsran::resource_grid_writer& writer)
 {
   return std::make_unique<resource_grid_mapper_impl>(
-      nof_ports, nof_symbols, nof_subc, writer, std::make_unique<channel_precoder_dummy>());
+      nof_ports, nof_subc, writer, std::make_unique<channel_precoder_dummy>());
 }

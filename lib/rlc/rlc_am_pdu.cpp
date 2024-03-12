@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -64,23 +64,19 @@ bool rlc_am_status_pdu::can_be_merged(const rlc_am_status_nack& left, const rlc_
   // cumulated NACK range must not exceed 255
   uint16_t left_range  = (left.has_nack_range ? left.nack_range : 1);
   uint16_t right_range = (right.has_nack_range ? right.nack_range : 1);
-  if (left_range + right_range > 255) {
-    return false;
-  }
-
-  return true;
+  return left_range + right_range <= 255;
 }
 
 void rlc_am_status_pdu::push_nack(const rlc_am_status_nack& nack)
 {
-  if (nacks.size() == 0) {
+  if (nacks.empty()) {
     nacks.push_back(nack);
     packed_size += nack_size(nack);
     return;
   }
 
   rlc_am_status_nack& prev = nacks.back();
-  if (can_be_merged(prev, nack) == false) {
+  if (!can_be_merged(prev, nack)) {
     nacks.push_back(nack);
     packed_size += nack_size(nack);
     return;
@@ -91,8 +87,8 @@ void rlc_am_status_pdu::push_nack(const rlc_am_status_nack& nack)
   packed_size -= nack_size(prev);
 
   // enable and update NACK range
-  if (nack.has_nack_range == true) {
-    if (prev.has_nack_range == true) {
+  if (nack.has_nack_range) {
+    if (prev.has_nack_range) {
       // [NACK range][NACK range]
       prev.nack_range += nack.nack_range;
     } else {
@@ -101,7 +97,7 @@ void rlc_am_status_pdu::push_nack(const rlc_am_status_nack& nack)
       prev.has_nack_range = true;
     }
   } else {
-    if (prev.has_nack_range == true) {
+    if (prev.has_nack_range) {
       // [NACK range][NACK SDU]
       prev.nack_range++;
     } else {
@@ -112,8 +108,8 @@ void rlc_am_status_pdu::push_nack(const rlc_am_status_nack& nack)
   }
 
   // enable and update segment offsets (if required)
-  if (nack.has_so == true) {
-    if (prev.has_so == false) {
+  if (nack.has_so) {
+    if (!prev.has_so) {
       // [NACK SDU][NACK segm]
       prev.has_so   = true;
       prev.so_start = 0;
@@ -121,7 +117,7 @@ void rlc_am_status_pdu::push_nack(const rlc_am_status_nack& nack)
     // [NACK SDU][NACK segm] or [NACK segm][NACK segm]
     prev.so_end = nack.so_end;
   } else {
-    if (prev.has_so == true) {
+    if (prev.has_so) {
       // [NACK segm][NACK SDU]
       prev.so_end = rlc_am_status_nack::so_end_of_sdu;
     }
@@ -148,7 +144,7 @@ bool rlc_am_status_pdu::trim(uint32_t max_packed_size)
   // see TS 38.322 Sec. 5.3.4:
   //   "set the ACK_SN to the SN of the next not received RLC SDU
   //   which is not indicated as missing in the resulting STATUS PDU."
-  while (nacks.size() > 0 && (max_packed_size < packed_size || nacks.back().nack_sn == ack_sn)) {
+  while (!nacks.empty() && (max_packed_size < packed_size || nacks.back().nack_sn == ack_sn)) {
     packed_size -= nack_size(nacks.back());
     ack_sn = nacks.back().nack_sn;
     nacks.pop_back();
@@ -431,112 +427,129 @@ bool rlc_am_status_pdu::unpack(const byte_buffer_view& pdu)
   return false;
 }
 
-bool rlc_am_status_pdu::pack_12bit(byte_buffer& pdu) const
+size_t rlc_am_status_pdu::pack_12bit(span<uint8_t> buf) const
 {
-  byte_buffer        hdr_buf;
-  byte_buffer_writer hdr_writer = hdr_buf;
+  span<uint8_t>::iterator buf_it = buf.begin();
 
   // fixed header part
-  hdr_writer.append(0U); // 1 bit D/C field and 3 bit CPT are all zero
+  *buf_it = 0U; // 1 bit D/C field and 3 bit CPT are all zero
 
-  // write first 4 bit of ACK_SN
-  hdr_writer.back() |= (ack_sn >> 8U) & 0x0fU; // 4 bits ACK_SN
-  hdr_writer.append(ack_sn & 0xffU);           // remaining 8 bits of SN
+  // write ACK_SN
+  *buf_it |= (ack_sn >> 8U) & 0x0fU; // 4 bits ACK_SN
+  ++buf_it;
+  *buf_it = ack_sn & 0xffU; // remaining 8 bits of SN
+  ++buf_it;
 
   // write E1 flag in octet 3
-  if (nacks.size() > 0) {
-    hdr_writer.append(0x80U);
+  if (!nacks.empty()) {
+    *buf_it = 0x80U;
   } else {
-    hdr_writer.append(0x00U);
+    *buf_it = 0x00U;
   }
+  ++buf_it;
 
-  if (nacks.size() > 0) {
+  if (!nacks.empty()) {
     for (uint32_t i = 0; i < nacks.size(); i++) {
-      hdr_writer.append((nacks[i].nack_sn >> 4U) & 0xffU); // upper 8 bits of SN
-      hdr_writer.append((nacks[i].nack_sn & 0x0fU) << 4U); // lower 4 bits of SN
+      *buf_it = (nacks[i].nack_sn >> 4U) & 0xffU; // upper 8 bits of SN
+      ++buf_it;
+      *buf_it = (nacks[i].nack_sn & 0x0fU) << 4U; // lower 4 bits of SN
 
       if (i < (uint32_t)(nacks.size() - 1)) {
-        hdr_writer.back() |= 0x08U; // Set E1
+        *buf_it |= 0x08U; // Set E1
       }
       if (nacks[i].has_so) {
-        hdr_writer.back() |= 0x04U; // Set E2
+        *buf_it |= 0x04U; // Set E2
       }
       if (nacks[i].has_nack_range) {
-        hdr_writer.back() |= 0x02U; // Set E3
+        *buf_it |= 0x02U; // Set E3
       }
+      ++buf_it;
 
       if (nacks[i].has_so) {
-        hdr_writer.append(nacks[i].so_start >> 8U);
-        hdr_writer.append(nacks[i].so_start);
-        hdr_writer.append(nacks[i].so_end >> 8U);
-        hdr_writer.append(nacks[i].so_end);
+        *buf_it = nacks[i].so_start >> 8U;
+        ++buf_it;
+        *buf_it = nacks[i].so_start;
+        ++buf_it;
+        *buf_it = nacks[i].so_end >> 8U;
+        ++buf_it;
+        *buf_it = nacks[i].so_end;
+        ++buf_it;
       }
       if (nacks[i].has_nack_range) {
-        hdr_writer.append(nacks[i].nack_range);
+        *buf_it = nacks[i].nack_range;
+        ++buf_it;
       }
     }
   }
-  pdu.prepend(std::move(hdr_buf));
-  return true;
+  return std::distance(buf.begin(), buf_it);
 }
 
-bool rlc_am_status_pdu::pack_18bit(byte_buffer& pdu) const
+size_t rlc_am_status_pdu::pack_18bit(span<uint8_t> buf) const
 {
-  byte_buffer        hdr_buf;
-  byte_buffer_writer hdr_writer = hdr_buf;
+  span<uint8_t>::iterator buf_it = buf.begin();
 
   // fixed header part
-  hdr_writer.append(0U); // 1 bit D/C field and 3 bit CPT are all zero
+  *buf_it = 0U; // 1 bit D/C field and 3 bit CPT are all zero
 
-  hdr_writer.back() |= (ack_sn >> 14U) & 0x0fU; // upper 4 bits of SN
-  hdr_writer.append((ack_sn >> 6U) & 0xffU);    // center 8 bits of SN
-  hdr_writer.append((ack_sn << 2U) & 0xfcU);    // lower 6 bits of SN
+  // write ACK_SN
+  *buf_it |= (ack_sn >> 14U) & 0x0fU; // upper 4 bits of ACK_SN
+  ++buf_it;
+  *buf_it = (ack_sn >> 6U) & 0xffU; // center 8 bits of ACK_ SN
+  ++buf_it;
+  *buf_it = (ack_sn << 2U) & 0xfcU; // lower 6 bits of SN
 
   // set E1 flag if necessary
-  if (nacks.size() > 0) {
-    hdr_writer.back() |= 0x02;
+  if (!nacks.empty()) {
+    *buf_it |= 0x02;
   }
+  ++buf_it;
 
-  if (nacks.size() > 0) {
+  if (!nacks.empty()) {
     for (uint32_t i = 0; i < nacks.size(); i++) {
-      hdr_writer.append((nacks[i].nack_sn >> 10) & 0xffU); // upper 8 bits of SN
-      hdr_writer.append((nacks[i].nack_sn >> 2) & 0xffU);  // center 8 bits of SN
-      hdr_writer.append((nacks[i].nack_sn << 6) & 0xc0U);  // lower 2 bits of SN
+      *buf_it = (nacks[i].nack_sn >> 10) & 0xffU; // upper 8 bits of SN
+      ++buf_it;
+      *buf_it = (nacks[i].nack_sn >> 2) & 0xffU; // center 8 bits of SN
+      ++buf_it;
+      *buf_it = (nacks[i].nack_sn << 6) & 0xc0U; // lower 2 bits of SN
 
       if (i < (uint32_t)(nacks.size() - 1)) {
-        hdr_writer.back() |= 0x20U; // Set E1
+        *buf_it |= 0x20U; // Set E1
       }
       if (nacks[i].has_so) {
-        hdr_writer.back() |= 0x10U; // Set E2
+        *buf_it |= 0x10U; // Set E2
       }
       if (nacks[i].has_nack_range) {
-        hdr_writer.back() |= 0x08U; // Set E3
+        *buf_it |= 0x08U; // Set E3
       }
+      ++buf_it;
 
       if (nacks[i].has_so) {
-        hdr_writer.append(nacks[i].so_start >> 8);
-        hdr_writer.append(nacks[i].so_start);
-        hdr_writer.append(nacks[i].so_end >> 8);
-        hdr_writer.append(nacks[i].so_end);
+        *buf_it = nacks[i].so_start >> 8U;
+        ++buf_it;
+        *buf_it = nacks[i].so_start;
+        ++buf_it;
+        *buf_it = nacks[i].so_end >> 8U;
+        ++buf_it;
+        *buf_it = nacks[i].so_end;
+        ++buf_it;
       }
       if (nacks[i].has_nack_range) {
-        hdr_writer.append(nacks[i].nack_range);
+        *buf_it = nacks[i].nack_range;
+        ++buf_it;
       }
     }
   }
-
-  pdu.prepend(std::move(hdr_buf));
-  return true;
+  return std::distance(buf.begin(), buf_it);
 }
 
-bool rlc_am_status_pdu::pack(byte_buffer& pdu) const
+size_t rlc_am_status_pdu::pack(span<uint8_t> buf) const
 {
   switch (sn_size) {
     case rlc_am_sn_size::size12bits:
-      return pack_12bit(pdu);
+      return pack_12bit(buf);
       break;
     case rlc_am_sn_size::size18bits:
-      return pack_18bit(pdu);
+      return pack_18bit(buf);
       break;
   }
 

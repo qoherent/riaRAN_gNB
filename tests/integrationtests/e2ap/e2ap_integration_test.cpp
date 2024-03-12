@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -53,7 +53,11 @@ public:
     packer(*gw, *this, pcap)
   {
     gw->create_and_connect();
-    epoll_broker->register_fd(gw->get_socket_fd(), [this](int fd) { gw->receive(); });
+    bool success = epoll_broker->register_fd(gw->get_socket_fd(), [this](int fd) { gw->receive(); });
+    if (!success) {
+      report_fatal_error("Failed to register E2 (SCTP) network gateway at IO broker. socket_fd={}",
+                         gw->get_socket_fd());
+    }
   }
 
   ~dummy_e2ap_network_adapter() {}
@@ -197,9 +201,9 @@ protected:
     du_metrics            = std::make_unique<dummy_e2_du_metrics>();
     f1ap_ue_id_mapper     = std::make_unique<dummy_f1ap_ue_id_translator>();
     e2_client             = std::make_unique<e2_gateway_remote_connector>(*epoll_broker, nw_config, *pcap);
-    rc_param_configurator = std::make_unique<dummy_e2sm_param_configurator>();
+    du_param_configurator = std::make_unique<dummy_du_configurator>();
     e2ap                  = create_e2_entity(
-        cfg, e2_client.get(), *du_metrics, *f1ap_ue_id_mapper, *rc_param_configurator, factory, ctrl_worker);
+        cfg, e2_client.get(), *du_metrics, *f1ap_ue_id_mapper, *du_param_configurator, factory, ctrl_worker);
   }
 
   e2ap_configuration                           cfg;
@@ -210,7 +214,7 @@ protected:
   std::unique_ptr<dummy_e2ap_pcap>             pcap;
   std::unique_ptr<e2_du_metrics_interface>     du_metrics;
   std::unique_ptr<dummy_f1ap_ue_id_translator> f1ap_ue_id_mapper;
-  std::unique_ptr<e2sm_param_configurator>     rc_param_configurator;
+  std::unique_ptr<du_configurator>             du_param_configurator;
   std::unique_ptr<e2_gateway_remote_connector> e2_client;
   std::unique_ptr<e2_interface>                e2ap;
   srslog::basic_logger&                        test_logger = srslog::fetch_basic_logger("TEST");

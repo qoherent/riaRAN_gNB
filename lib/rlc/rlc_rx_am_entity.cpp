@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,25 +21,33 @@
  */
 
 #include "rlc_rx_am_entity.h"
+#include "../support/sdu_window_impl.h"
 #include "srsran/adt/scope_exit.h"
+#include "srsran/instrumentation/traces/up_traces.h"
 
 using namespace srsran;
 
-rlc_rx_am_entity::rlc_rx_am_entity(du_ue_index_t                     du_index,
+rlc_rx_am_entity::rlc_rx_am_entity(uint32_t                          du_index,
+                                   du_ue_index_t                     ue_index,
                                    rb_id_t                           rb_id,
                                    const rlc_rx_am_config&           config,
                                    rlc_rx_upper_layer_data_notifier& upper_dn_,
                                    timer_factory                     timers,
-                                   task_executor&                    ue_executor_) :
-  rlc_rx_entity(du_index, rb_id, upper_dn_),
+                                   task_executor&                    ue_executor_,
+                                   bool                              metrics_enabled,
+                                   rlc_pcap&                         pcap_) :
+  rlc_rx_entity(du_index, ue_index, rb_id, upper_dn_, metrics_enabled, pcap_),
   cfg(config),
   mod(cardinality(to_number(cfg.sn_field_length))),
   am_window_size(window_size(to_number(cfg.sn_field_length))),
   rx_window(create_rx_window(cfg.sn_field_length)),
-  status_report(cfg.sn_field_length),
+  status_buf({rlc_am_status_pdu(cfg.sn_field_length),
+              rlc_am_status_pdu(cfg.sn_field_length),
+              rlc_am_status_pdu(cfg.sn_field_length)}),
   status_prohibit_timer(timers.create_timer()),
   reassembly_timer(timers.create_timer()),
-  ue_executor(ue_executor_)
+  ue_executor(ue_executor_),
+  pcap_context(ue_index, rb_id, config)
 {
   metrics.metrics_set_mode(rlc_mode::am);
 
@@ -60,9 +68,21 @@ rlc_rx_am_entity::rlc_rx_am_entity(du_ue_index_t                     du_index,
                          [this](timer_id_t tid) { on_expired_reassembly_timer(); });
   }
 
+  // configure status report limits
+  if (cfg.max_sn_per_status.has_value()) {
+    uint32_t max_sn_per_status = cfg.max_sn_per_status.value();
+    srsran_assert(max_sn_per_status <= window_size(to_number(cfg.sn_field_length)),
+                  "Cannot create RLC RX AM, max_sn_per_status exceeds window_size. {}",
+                  cfg);
+    srsran_assert(max_sn_per_status > 0, "Cannot create RLC RX AM, max_sn_per_status must not be zero. {}", cfg);
+    max_nof_sn_per_status_report = max_sn_per_status;
+  } else {
+    max_nof_sn_per_status_report = window_size(to_number(cfg.sn_field_length));
+  }
+
   // initialize status report
-  status_report.ack_sn = st.rx_next_highest;
-  status_report_size.store(status_report.get_packed_size(), std::memory_order_relaxed);
+  status_cached->ack_sn = st.rx_next_highest;
+  status_report_size.store(status_cached->get_packed_size(), std::memory_order_relaxed);
 
   logger.log_info("RLC AM configured. {}", cfg);
 }
@@ -70,17 +90,22 @@ rlc_rx_am_entity::rlc_rx_am_entity(du_ue_index_t                     du_index,
 // Interfaces for lower layers
 void rlc_rx_am_entity::handle_pdu(byte_buffer_slice buf)
 {
+  trace_point rx_tp = up_tracer.now();
   metrics.metrics_add_pdus(1, buf.length());
   if (buf.empty()) {
     logger.log_warning("Dropped empty PDU.");
     return;
   }
+
+  pcap.push_pdu(pcap_context, buf);
+
   if (rlc_am_status_pdu::is_control_pdu(buf.view())) {
     metrics.metrics_add_ctrl_pdus(1, buf.length());
     handle_control_pdu(std::move(buf));
   } else {
     handle_data_pdu(std::move(buf));
   }
+  up_tracer << trace_event{"rlc_rx_pdu", rx_tp};
 }
 
 void rlc_rx_am_entity::handle_control_pdu(byte_buffer_slice buf)
@@ -462,15 +487,21 @@ void rlc_rx_am_entity::update_segment_inventory(rlc_rx_am_sdu_info& rx_sdu) cons
 
 void rlc_rx_am_entity::refresh_status_report()
 {
-  rlc_am_status_pdu tmp_status_report = {cfg.sn_field_length};
+  status_builder->reset();
   /*
    * - for the RLC SDUs with SN such that RX_Next <= SN < RX_Highest_Status that has not been completely
    *   received yet, in increasing SN order of RLC SDUs and increasing byte segment order within RLC SDUs,
    *   starting with SN = RX_Next up to the point where the resulting STATUS PDU still fits to the total size of RLC
    *   PDU(s) indicated by lower layer:
    */
-  logger.log_debug("Generating status PDU. rx_next={} rx_highest_status={}", st.rx_next, st.rx_highest_status);
-  for (uint32_t i = st.rx_next; rx_mod_base(i) < rx_mod_base(st.rx_highest_status); i = (i + 1) % mod) {
+  uint32_t stop_sn = st.rx_highest_status;
+  // Restrict execution time by limiting the number of visited SNs in the RX window
+  if (rx_mod_base(st.rx_highest_status) > rx_mod_base((st.rx_next + max_nof_sn_per_status_report) % mod)) {
+    stop_sn = (st.rx_next + max_nof_sn_per_status_report) % mod;
+  }
+  logger.log_debug(
+      "Generating status PDU. rx_next={} rx_highest_status={} stop_sn={}", st.rx_next, st.rx_highest_status, stop_sn);
+  for (uint32_t i = st.rx_next; rx_mod_base(i) < rx_mod_base(stop_sn); i = (i + 1) % mod) {
     if ((rx_window->has_sn(i) && (*rx_window)[i].fully_received)) {
       logger.log_debug("SDU complete. sn={}", i);
     } else {
@@ -480,7 +511,7 @@ void rlc_rx_am_entity::refresh_status_report()
         nack.nack_sn = i;
         nack.has_so  = false;
         logger.log_debug("Adding nack={}.", nack);
-        tmp_status_report.push_nack(nack);
+        status_builder->push_nack(nack);
       } else if (not(*rx_window)[i].fully_received) {
         // Some segments were received, but not all.
         // NACK non consecutive missing bytes
@@ -495,7 +526,7 @@ void rlc_rx_am_entity::refresh_status_report()
             nack.so_start = last_so;
             nack.so_end   = segm->so - 1; // set to last missing byte
             logger.log_debug("Adding nack={}.", nack);
-            tmp_status_report.push_nack(nack);
+            status_builder->push_nack(nack);
 
             // Sanity check
             if (nack.so_start > nack.so_end) {
@@ -525,7 +556,7 @@ void rlc_rx_am_entity::refresh_status_report()
           nack.so_start = last_so;
           nack.so_end   = rlc_am_status_nack::so_end_of_sdu;
           logger.log_debug("Adding nack={}.", nack);
-          tmp_status_report.push_nack(nack);
+          status_builder->push_nack(nack);
           // Sanity check
           srsran_assert(nack.so_start <= nack.so_end, "Invalid segment offsets in nack={}.", nack);
         }
@@ -537,21 +568,19 @@ void rlc_rx_am_entity::refresh_status_report()
    * - set the ACK_SN to the SN of the next not received RLC SDU which is not
    * indicated as missing in the resulting STATUS PDU.
    */
-  tmp_status_report.ack_sn = st.rx_highest_status;
-
-  store_status_report(std::move(tmp_status_report));
-
-  logger.log_debug("Refreshed status_report. {}", status_report);
+  status_builder->ack_sn = stop_sn;
+  logger.log_debug("Refreshed status_report. {}", *status_builder);
+  store_status_report();
 }
 
-void rlc_rx_am_entity::store_status_report(rlc_am_status_pdu&& status)
+void rlc_rx_am_entity::store_status_report()
 {
   std::unique_lock<std::mutex> lock(status_report_mutex);
-  status_report = std::move(status);
-  status_report_size.store(status_report.get_packed_size(), std::memory_order_relaxed);
+  std::swap(status_builder, status_cached);
+  status_report_size.store(status_cached->get_packed_size(), std::memory_order_relaxed);
 }
 
-rlc_am_status_pdu rlc_rx_am_entity::get_status_pdu()
+rlc_am_status_pdu& rlc_rx_am_entity::get_status_pdu()
 {
   do_status.store(false, std::memory_order_relaxed);
   if (status_prohibit_timer.is_valid() && cfg.t_status_prohibit > 0) {
@@ -561,7 +590,8 @@ rlc_am_status_pdu rlc_rx_am_entity::get_status_pdu()
     status_prohibit_timer_is_running.store(true, std::memory_order_relaxed);
   }
   std::unique_lock<std::mutex> lock(status_report_mutex);
-  return status_report;
+  std::swap(status_shared, status_cached);
+  return *status_shared;
 }
 
 uint32_t rlc_rx_am_entity::get_status_pdu_length()
@@ -583,19 +613,19 @@ void rlc_rx_am_entity::notify_status_report_changed()
   }
 }
 
-std::unique_ptr<rlc_sdu_window_base<rlc_rx_am_sdu_info>> rlc_rx_am_entity::create_rx_window(rlc_am_sn_size sn_size)
+std::unique_ptr<sdu_window<rlc_rx_am_sdu_info>> rlc_rx_am_entity::create_rx_window(rlc_am_sn_size sn_size)
 {
-  std::unique_ptr<rlc_sdu_window_base<rlc_rx_am_sdu_info>> rx_window_;
+  std::unique_ptr<sdu_window<rlc_rx_am_sdu_info>> rx_window_;
   switch (sn_size) {
     case rlc_am_sn_size::size12bits:
-      rx_window_ =
-          std::make_unique<rlc_sdu_window<rlc_rx_am_sdu_info, window_size(to_number(rlc_am_sn_size::size12bits))>>(
-              logger);
+      rx_window_ = std::make_unique<
+          sdu_window_impl<rlc_rx_am_sdu_info, window_size(to_number(rlc_am_sn_size::size12bits)), rlc_bearer_logger>>(
+          logger);
       break;
     case rlc_am_sn_size::size18bits:
-      rx_window_ =
-          std::make_unique<rlc_sdu_window<rlc_rx_am_sdu_info, window_size(to_number(rlc_am_sn_size::size18bits))>>(
-              logger);
+      rx_window_ = std::make_unique<
+          sdu_window_impl<rlc_rx_am_sdu_info, window_size(to_number(rlc_am_sn_size::size18bits)), rlc_bearer_logger>>(
+          logger);
       break;
     default:
       srsran_assertion_failure("Cannot create rx_window for unsupported sn_size={}.", to_number(sn_size));

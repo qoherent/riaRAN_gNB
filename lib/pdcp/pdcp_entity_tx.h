@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,11 +29,12 @@
 #include "pdcp_tx_metrics_impl.h"
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/adt/byte_buffer_chain.h"
+#include "srsran/adt/expected.h"
 #include "srsran/pdcp/pdcp_config.h"
 #include "srsran/pdcp/pdcp_tx.h"
 #include "srsran/security/security.h"
+#include "srsran/support/sdu_window.h"
 #include "srsran/support/timers.h"
-#include <map>
 
 namespace srsran {
 
@@ -48,6 +49,17 @@ struct pdcp_tx_state {
   /// it means we are not currently waiting for any TX notification.
   /// NOTE: This is a custom state variable, not specified by the standard.
   uint32_t tx_trans = 0;
+  /// This state variable indicates the lower edge of the TX window, i.e. the COUNT value of the oldest PDCP SDU in the
+  /// TX window for which the discard timer is expected to expire soonest. If TX_NEXT_ACK == TX_NEXT, it means we are
+  /// not currently having any discard timers running.
+  /// For UM bearers this value is the same as TX_TRANS.
+  /// NOTE: This is a custom state variable, not specified by the standard.
+  uint32_t tx_next_ack = 0;
+
+  bool operator==(const pdcp_tx_state& other) const
+  {
+    return tx_next == other.tx_next && tx_trans == other.tx_trans && tx_next_ack == other.tx_next_ack;
+  }
 };
 
 /// Base class used for transmitting PDCP bearers.
@@ -71,7 +83,8 @@ public:
     cfg(cfg_),
     lower_dn(lower_dn_),
     upper_cn(upper_cn_),
-    timers(timers_)
+    timers(timers_),
+    tx_window(create_tx_window(cfg.sn_size))
   {
     // Validate configuration
     if (is_srb() && (cfg.sn_size != pdcp_sn_size::size12bits)) {
@@ -81,7 +94,7 @@ public:
       report_error("PDCP SRB cannot be used with RLC UM. {}", cfg);
     }
     if (is_srb() && cfg.discard_timer.has_value()) {
-      logger.log_error("Invalid SRB config with discard_timer={}", cfg.discard_timer.value());
+      logger.log_error("Invalid SRB config with discard_timer={}", cfg.discard_timer);
     }
     if (is_drb() && !cfg.discard_timer.has_value()) {
       logger.log_error("Invalid DRB config, discard_timer is not configured");
@@ -123,13 +136,20 @@ public:
   /// \brief Writes the header of a PDCP data PDU according to the content of the associated object
   /// \param[out] buf Reference to a byte_buffer that is appended by the header bytes
   /// \param[in] hdr Reference to a pdcp_data_pdu_header that represents the header content
-  void write_data_pdu_header(byte_buffer& buf, const pdcp_data_pdu_header& hdr) const;
+  SRSRAN_NODISCARD bool write_data_pdu_header(byte_buffer& buf, const pdcp_data_pdu_header& hdr) const;
 
   /*
    * Testing helpers
    */
-  void     set_state(pdcp_tx_state st_) { st = st_; };
-  uint32_t nof_discard_timers() { return discard_timers_map.size(); }
+  void set_state(pdcp_tx_state st_)
+  {
+    reset();
+    st = st_;
+  };
+
+  const pdcp_tx_state& get_state() const { return st; };
+
+  uint32_t nof_discard_timers() { return st.tx_next - st.tx_next_ack; }
 
   /*
    * Security configuration
@@ -191,8 +211,8 @@ public:
   /// Performs data recovery, as specified in TS 38.323, Sec. 5.5.
   void data_recovery() override;
 
-  /// Discard all PDUs, delivery information and discard timers.
-  void discard_all_pdus();
+  /// \brief Reset state variables to their initial state and drop all discard timers with all stored SDUs.
+  void reset();
 
   /// Retransmits all PDUs. Integrity protection and ciphering is re-applied.
   void retransmit_all_pdus();
@@ -217,9 +237,9 @@ private:
   void write_control_pdu_to_lower_layers(byte_buffer buf);
 
   /// Apply ciphering and integrity protection to the payload
-  byte_buffer apply_ciphering_and_integrity_protection(byte_buffer hdr, const byte_buffer& sdu, uint32_t count);
-  void        integrity_generate(security::sec_mac& mac, byte_buffer_view buf, uint32_t count);
-  byte_buffer cipher_encrypt(byte_buffer_view buf, uint32_t count);
+  expected<byte_buffer> apply_ciphering_and_integrity_protection(byte_buffer sdu_plus_header, uint32_t count);
+  void                  integrity_generate(security::sec_mac& mac, byte_buffer_view buf, uint32_t count);
+  void                  cipher_encrypt(byte_buffer_view& buf, uint32_t count);
 
   uint32_t notification_count_estimation(uint32_t notification_sn);
 
@@ -227,19 +247,32 @@ private:
   /// \param highest_count Highest PDCP PDU COUNT to which all discard timers shall be stopped.
   void stop_discard_timer(uint32_t highest_count);
 
-  /// Discard timer information. We keep both the discard timer
-  /// and a copy of the SDU for the data recovery procedure (for AM only).
-  struct discard_info {
+  /// \brief Discard one PDU.
+  ///
+  /// This will notify lower layers of the discard and remove the element from the tx_window, i.e. stop the discard
+  /// timer and delete the associated SDU.
+  ///
+  /// \param count The COUNT value of the PDU to be discarded.
+  void discard_pdu(uint32_t count);
+
+  /// \brief Discard timer information and, only for AM, a copy of the SDU for data recovery procedure.
+  struct pdcp_tx_sdu_info {
     uint32_t     count;
     byte_buffer  sdu;
     unique_timer discard_timer;
   };
 
-  /// \brief discardTimer
-  /// This map is used to store the discard timers that are used by the transmitting side of an PDCP entity
-  /// to order lower layers to discard PDCP PDUs if the timer expired. See section 5.2.1 and 7.3 of TS 38.323.
-  /// Currently, this is only supported when using RLC AM, as only AM has the ability to stop the timers.
-  std::map<uint32_t, discard_info> discard_timers_map;
+  /// \brief Tx window.
+  /// This container is used to store discard timers of transmitted SDUs and, only for AM, a copy of the SDU for data
+  /// recovery procedure. Upon expiry of a discard timer, the PDCP Tx entity instructs the lower layers to discard the
+  /// associated PDCP PDU. See section 5.2.1 and 7.3 of TS 38.323.
+  std::unique_ptr<sdu_window<pdcp_tx_sdu_info>> tx_window;
+
+  /// Creates the tx_window according to sn_size
+  /// \param sn_size Size of the sequence number (SN)
+  /// \return unique pointer to tx_window instance
+  std::unique_ptr<sdu_window<pdcp_tx_sdu_info>> create_tx_window(pdcp_sn_size sn_size_);
+
   class discard_callback;
 };
 
@@ -267,7 +300,7 @@ struct formatter<srsran::pdcp_tx_state> {
   template <typename FormatContext>
   auto format(const srsran::pdcp_tx_state& st, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
   {
-    return format_to(ctx.out(), "tx_trans={} tx_next={}", st.tx_trans, st.tx_next);
+    return format_to(ctx.out(), "tx_next_ack={} tx_trans={} tx_next={}", st.tx_next_ack, st.tx_trans, st.tx_next);
   }
 };
 } // namespace fmt

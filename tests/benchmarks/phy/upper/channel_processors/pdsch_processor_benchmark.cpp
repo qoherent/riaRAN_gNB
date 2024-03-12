@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,15 +20,23 @@
  *
  */
 
-#include "../../../lib/phy/upper/rx_softbuffer_pool_impl.h"
-#include "../../../lib/scheduler/support/tbs_calculator.h"
+#include "../../../../unittests/phy/upper/channel_processors/pdsch_processor_test_doubles.h"
 #include "srsran/phy/support/support_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
 #include "srsran/ran/precoding/precoding_codebooks.h"
+#include "srsran/ran/sch/tbs_calculator.h"
 #include "srsran/support/benchmark_utils.h"
 #include "srsran/support/executors/task_worker_pool.h"
+#include "srsran/support/math_utils.h"
 #include "srsran/support/srsran_test.h"
 #include "srsran/support/unique_thread.h"
+#ifdef HWACC_PDSCH_ENABLED
+#include "srsran/hal/dpdk/bbdev/bbdev_acc.h"
+#include "srsran/hal/dpdk/bbdev/bbdev_acc_factory.h"
+#include "srsran/hal/dpdk/dpdk_eal_factory.h"
+#include "srsran/hal/phy/upper/channel_processors/hw_accelerator_factories.h"
+#include "srsran/hal/phy/upper/channel_processors/hw_accelerator_pdsch_enc_factory.h"
+#endif // HWACC_PDSCH_ENABLED
 #include <condition_variable>
 #include <getopt.h>
 #include <mutex>
@@ -85,12 +93,12 @@ static std::string                        ldpc_encoder_type           = "auto";
 static std::string                        pdsch_processor_type        = "generic";
 static benchmark_modes                    benchmark_mode              = benchmark_modes::throughput_total;
 static dmrs_type                          dmrs                        = dmrs_type::TYPE1;
-static unsigned                           nof_cdm_groups_without_data = 1;
+static unsigned                           nof_cdm_groups_without_data = 2;
 static bounded_bitset<MAX_NSYMB_PER_SLOT> dmrs_symbol_mask =
     {false, false, true, false, false, false, false, true, false, false, false, true, false, false};
-static unsigned                                   nof_pdsch_processor_concurrent_threads = 4;
-static std::unique_ptr<task_worker_pool>          worker_pool                            = nullptr;
-static std::unique_ptr<task_worker_pool_executor> executor                               = nullptr;
+static unsigned nof_pdsch_processor_concurrent_threads                                               = 4;
+static std::unique_ptr<task_worker_pool<concurrent_queue_policy::locking_mpmc>>          worker_pool = nullptr;
+static std::unique_ptr<task_worker_pool_executor<concurrent_queue_policy::locking_mpmc>> executor    = nullptr;
 
 // Thread shared variables.
 static std::mutex              mutex_pending_count;
@@ -99,6 +107,13 @@ static std::condition_variable cvar_count;
 static std::atomic<bool>       thread_quit   = {};
 static unsigned                pending_count = 0;
 static unsigned                finish_count  = 0;
+
+#ifdef HWACC_PDSCH_ENABLED
+static bool        cb_mode       = false;
+static bool        std_out_sink  = true;
+static std::string hal_log_level = "error";
+static std::string eal_arguments = "";
+#endif // HWACC_PDSCH_ENABLED
 
 // Test profile structure, initialized with default profile values.
 struct test_profile {
@@ -266,7 +281,7 @@ static void usage(const char* prog)
 {
   fmt::print("Usage: {} [-m benchmark mode] [-R repetitions] [-B Batch size per thread] [-T number of threads] [-D "
              "LDPC type] [-M rate "
-             "matcher type] [-P profile]\n",
+             "matcher type] [-P profile] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n",
              prog);
   fmt::print("\t-m Benchmark mode. [Default {}]\n", to_string(benchmark_mode));
   fmt::print("\t\t {:<20}It does not print any result.\n", to_string(benchmark_modes::silent));
@@ -284,13 +299,52 @@ static void usage(const char* prog)
   for (const test_profile& profile : profile_set) {
     fmt::print("\t\t {:<30}{}\n", profile.name, profile.description);
   }
+#ifdef HWACC_PDSCH_ENABLED
+  fmt::print("\t-x       Force TB mode [Default {}]\n", cb_mode ? "cb_mode" : "tb_mode");
+  fmt::print("\t-y       Force logging output written to a file [Default {}]\n", std_out_sink ? "std_out" : "file");
+  fmt::print("\t-z       Set logging level for the HAL [Default {}]\n", hal_log_level);
+  fmt::print("\teal_args EAL arguments\n");
+#endif // HWACC_PDSCH_ENABLED
   fmt::print("\t-h Show this message\n");
 }
+
+#ifdef HWACC_PDSCH_ENABLED
+// Separates EAL and non-EAL arguments.
+// The function assumes that 'eal_arg' flags the start of the EAL arguments and that no more non-EAL arguments follow.
+static std::string capture_eal_args(int* argc, char*** argv)
+{
+  // Searchs for the EAL args (if any), flagged by 'eal_args', while removing all the rest (except argv[0]).
+  bool        eal_found = false;
+  char**      mod_argv  = *argv;
+  std::string eal_argv  = {mod_argv[0]};
+  int         opt_ind   = *argc;
+  for (int j = 1; j < opt_ind; ++j) {
+    // Search for the 'eal_args' flag (if any).
+    if (!eal_found) {
+      if (strcmp(mod_argv[j], "eal_args") == 0) {
+        // 'eal_args' flag found.
+        eal_found = true;
+        // Remove all main app arguments starting from that point, while copying them to the EAL argument string.
+        mod_argv[j] = NULL;
+        for (int k = j + 1; k < opt_ind; ++k) {
+          eal_argv += " ";
+          eal_argv += mod_argv[k];
+          mod_argv[k] = NULL;
+        }
+        *argc = j;
+      }
+    }
+  }
+  *argv = mod_argv;
+
+  return eal_argv;
+}
+#endif // HWACC_PDSCH_ENABLED
 
 static int parse_args(int argc, char** argv)
 {
   int opt = 0;
-  while ((opt = getopt(argc, argv, "R:T:B:D:P:m:t:h")) != -1) {
+  while ((opt = getopt(argc, argv, "R:T:B:D:P:m:t:xyz:h")) != -1) {
     switch (opt) {
       case 'R':
         nof_repetitions = std::strtol(optarg, nullptr, 10);
@@ -318,6 +372,17 @@ static int parse_args(int argc, char** argv)
           return -1;
         }
         break;
+#ifdef HWACC_PDSCH_ENABLED
+      case 'x':
+        cb_mode = true;
+        break;
+      case 'y':
+        std_out_sink = false;
+        break;
+      case 'z':
+        hal_log_level = std::string(optarg);
+        break;
+#endif // HWACC_PDSCH_ENABLED
       case 'h':
       default:
         usage(argv[0]);
@@ -407,6 +472,85 @@ static std::vector<test_case_type> generate_test_cases(const test_profile& profi
   return test_case_set;
 }
 
+static std::shared_ptr<pdsch_encoder_factory>
+create_sw_pdsch_encoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory)
+{
+  std::shared_ptr<ldpc_encoder_factory> ldpc_encoder_factory = create_ldpc_encoder_factory_sw(ldpc_encoder_type);
+  TESTASSERT(ldpc_encoder_factory);
+
+  std::shared_ptr<ldpc_rate_matcher_factory> ldpc_rate_matcher_factory = create_ldpc_rate_matcher_factory_sw();
+  TESTASSERT(ldpc_rate_matcher_factory);
+
+  std::shared_ptr<ldpc_segmenter_tx_factory> segmenter_factory =
+      create_ldpc_segmenter_tx_factory_sw(crc_calculator_factory);
+  TESTASSERT(segmenter_factory);
+
+  pdsch_encoder_factory_sw_configuration encoder_factory_config;
+  encoder_factory_config.encoder_factory      = ldpc_encoder_factory;
+  encoder_factory_config.rate_matcher_factory = ldpc_rate_matcher_factory;
+  encoder_factory_config.segmenter_factory    = segmenter_factory;
+  return create_pdsch_encoder_factory_sw(encoder_factory_config);
+}
+
+static std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> create_hw_accelerator_pdsch_enc_factory()
+{
+#ifdef HWACC_PDSCH_ENABLED
+  // Intefacing to the bbdev-based hardware-accelerator.
+  srslog::basic_logger& logger = srslog::fetch_basic_logger("HWACC", false);
+  logger.set_level(srslog::str_to_basic_level(hal_log_level));
+  dpdk::bbdev_acc_configuration bbdev_config;
+  bbdev_config.id                                    = 0;
+  bbdev_config.nof_ldpc_enc_lcores                   = nof_threads;
+  bbdev_config.nof_ldpc_dec_lcores                   = 0;
+  bbdev_config.nof_fft_lcores                        = 0;
+  bbdev_config.nof_mbuf                              = static_cast<unsigned>(pow2(log2_ceil(MAX_NOF_SEGMENTS)));
+  std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = create_bbdev_acc(bbdev_config, logger);
+  TESTASSERT(bbdev_accelerator);
+
+  // Set the hardware-accelerator configuration.
+  hw_accelerator_pdsch_enc_configuration hw_encoder_config;
+  hw_encoder_config.acc_type          = "acc100";
+  hw_encoder_config.bbdev_accelerator = bbdev_accelerator;
+
+  // ACC100 hardware-accelerator implementation.
+  return create_hw_accelerator_pdsch_enc_factory(hw_encoder_config);
+#else  // HWACC_PDSCH_ENABLED
+  return nullptr;
+#endif // HWACC_PDSCH_ENABLED
+}
+
+static std::shared_ptr<pdsch_encoder_factory>
+create_acc100_pdsch_encoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory)
+{
+  std::shared_ptr<ldpc_segmenter_tx_factory> segmenter_factory =
+      create_ldpc_segmenter_tx_factory_sw(crc_calculator_factory);
+  TESTASSERT(segmenter_factory);
+
+  std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> hw_encoder_factory = create_hw_accelerator_pdsch_enc_factory();
+  TESTASSERT(hw_encoder_factory, "Failed to create a HW acceleration encoder factory.");
+
+  // Set the hardware-accelerated PDSCH encoder configuration.
+  pdsch_encoder_factory_hw_configuration encoder_hw_factory_config;
+#ifdef HWACC_PDSCH_ENABLED
+  encoder_hw_factory_config.cb_mode     = cb_mode;
+  encoder_hw_factory_config.max_tb_size = RTE_BBDEV_LDPC_E_MAX_MBUF;
+#endif // HWACC_PDSCH_ENABLED
+  encoder_hw_factory_config.crc_factory        = crc_calculator_factory;
+  encoder_hw_factory_config.segmenter_factory  = segmenter_factory;
+  encoder_hw_factory_config.hw_encoder_factory = hw_encoder_factory;
+  return create_pdsch_encoder_factory_hw(encoder_hw_factory_config);
+}
+
+static std::shared_ptr<pdsch_encoder_factory>
+create_pdsch_encoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory)
+{
+  if (ldpc_encoder_type == "acc100") {
+    return create_acc100_pdsch_encoder_factory(crc_calculator_factory);
+  }
+
+  return create_sw_pdsch_encoder_factory(crc_calculator_factory);
+}
+
 static pdsch_processor_factory& get_processor_factory()
 {
   static std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory = nullptr;
@@ -451,11 +595,7 @@ static pdsch_processor_factory& get_processor_factory()
   TESTASSERT(pdsch_mod_factory);
 
   // Create PDSCH encoder factory.
-  pdsch_encoder_factory_sw_configuration pdsch_enc_config;
-  pdsch_enc_config.encoder_factory                         = ldpc_enc_factory;
-  pdsch_enc_config.rate_matcher_factory                    = ldpc_rm_factory;
-  pdsch_enc_config.segmenter_factory                       = ldpc_segm_tx_factory;
-  std::shared_ptr<pdsch_encoder_factory> pdsch_enc_factory = create_pdsch_encoder_factory_sw(pdsch_enc_config);
+  std::shared_ptr<pdsch_encoder_factory> pdsch_enc_factory = create_pdsch_encoder_factory(crc_calc_factory);
   TESTASSERT(pdsch_enc_factory);
 
   // Create generic PDSCH processor.
@@ -464,7 +604,8 @@ static pdsch_processor_factory& get_processor_factory()
         create_pdsch_processor_factory_sw(pdsch_enc_factory, pdsch_mod_factory, dmrs_pdsch_gen_factory);
   }
 
-  if (pdsch_processor_type == "lite") {
+  // Note that currently hardware-acceleration is limited to "generic" processor types.
+  if (pdsch_processor_type == "lite" && ldpc_encoder_type != "acc100") {
     pdsch_proc_factory = create_pdsch_lite_processor_factory_sw(ldpc_segm_tx_factory,
                                                                 ldpc_enc_factory,
                                                                 ldpc_rm_factory,
@@ -474,18 +615,19 @@ static pdsch_processor_factory& get_processor_factory()
   }
 
   // Create concurrent PDSCH processor.
-  if (pdsch_processor_type.find("concurrent") != std::string::npos) {
+  // Note that currently hardware-acceleration is limited to "generic" processor types.
+  if ((pdsch_processor_type.find("concurrent") != std::string::npos) && ldpc_encoder_type != "acc100") {
     std::size_t pos = pdsch_processor_type.find(":");
     if (pos < pdsch_processor_type.size() - 1) {
       std::string str                        = pdsch_processor_type.substr(pos + 1);
       nof_pdsch_processor_concurrent_threads = std::strtol(str.c_str(), nullptr, 10);
     }
 
-    worker_pool = std::make_unique<task_worker_pool>(
-        nof_pdsch_processor_concurrent_threads, 1024, "pdsch_proc", os_thread_realtime_priority::max());
-    executor = std::make_unique<task_worker_pool_executor>(*worker_pool);
+    worker_pool = std::make_unique<task_worker_pool<concurrent_queue_policy::locking_mpmc>>(
+        nof_pdsch_processor_concurrent_threads, 1024, "pdsch_proc");
+    executor = std::make_unique<task_worker_pool_executor<concurrent_queue_policy::locking_mpmc>>(*worker_pool);
 
-    pdsch_proc_factory = create_pdsch_concurrent_processor_factory_sw(ldpc_segm_tx_factory,
+    pdsch_proc_factory = create_pdsch_concurrent_processor_factory_sw(crc_calc_factory,
                                                                       ldpc_enc_factory,
                                                                       ldpc_rm_factory,
                                                                       prg_factory,
@@ -494,6 +636,10 @@ static pdsch_processor_factory& get_processor_factory()
                                                                       *executor,
                                                                       nof_pdsch_processor_concurrent_threads);
   }
+  TESTASSERT(pdsch_proc_factory);
+
+  // Create PDSCH processor pool.
+  pdsch_proc_factory = create_pdsch_processor_pool(std::move(pdsch_proc_factory), nof_threads);
   TESTASSERT(pdsch_proc_factory);
 
   return *pdsch_proc_factory;
@@ -522,12 +668,11 @@ static std::unique_ptr<resource_grid> create_resource_grid(unsigned nof_ports, u
   return rg_factory->create(nof_ports, nof_symbols, nof_subc);
 }
 
-static void thread_process(const pdsch_processor::pdu_t& config, span<const uint8_t> data)
+static void thread_process(pdsch_processor& proc, const pdsch_processor::pdu_t& config, span<const uint8_t> data)
 {
-  std::unique_ptr<pdsch_processor> proc = create_processor();
-
   // Create grid.
-  std::unique_ptr<resource_grid> grid = create_resource_grid(MAX_PORTS, MAX_NSYMB_PER_SLOT, MAX_RB * NRE);
+  std::unique_ptr<resource_grid> grid =
+      create_resource_grid(config.precoding.get_nof_ports(), MAX_NSYMB_PER_SLOT, MAX_RB * NRE);
   TESTASSERT(grid);
 
   // Notify finish count.
@@ -537,12 +682,14 @@ static void thread_process(const pdsch_processor::pdu_t& config, span<const uint
     cvar_count.notify_all();
   }
 
+  pdsch_processor_notifier_spy notifier;
+
   while (!thread_quit) {
     // Wait for pending.
     {
       std::unique_lock<std::mutex> lock(mutex_pending_count);
       while (pending_count == 0) {
-        cvar_count.wait_until(lock, std::chrono::system_clock::now() + std::chrono::milliseconds(2));
+        cvar_count.wait_until(lock, std::chrono::system_clock::now() + std::chrono::microseconds(10));
 
         // Quit if signaled.
         if (thread_quit) {
@@ -552,8 +699,21 @@ static void thread_process(const pdsch_processor::pdu_t& config, span<const uint
       pending_count--;
     }
 
+    // Reset any notification.
+    notifier.reset();
+
     // Process PDU.
-    proc->process(grid->get_mapper(), {data}, config);
+    if (worker_pool) {
+      bool success = worker_pool->push_task([&proc, &grid, &notifier, &data, &config]() mutable {
+        proc.process(grid->get_mapper(), notifier, {data}, config);
+      });
+      (void)success;
+    } else {
+      proc.process(grid->get_mapper(), notifier, {data}, config);
+    }
+
+    // Wait for the processor to finish.
+    notifier.wait_for_finished();
 
     // Notify finish count.
     {
@@ -566,10 +726,30 @@ static void thread_process(const pdsch_processor::pdu_t& config, span<const uint
 
 int main(int argc, char** argv)
 {
+#ifdef HWACC_PDSCH_ENABLED
+  // Separate EAL and non-EAL arguments.
+  eal_arguments = capture_eal_args(&argc, &argv);
+#endif // HWACC_PDSCH_ENABLED
+
   int ret = parse_args(argc, argv);
   if (ret < 0) {
     return ret;
   }
+
+#ifdef HWACC_PDSCH_ENABLED
+  // Check if we actually need to initialize the EAL.
+  static std::unique_ptr<dpdk::dpdk_eal> dpdk_interface = nullptr;
+  if (ldpc_encoder_type == "acc100") {
+    srslog::sink* log_sink =
+        std_out_sink ? srslog::create_stdout_sink() : srslog::create_file_sink("pdsch_processor_benchmark.log");
+    srslog::set_default_sink(*log_sink);
+    srslog::init();
+    srslog::basic_logger& logger = srslog::fetch_basic_logger("EAL", false);
+    logger.set_level(srslog::str_to_basic_level(hal_log_level));
+    dpdk_interface = dpdk::create_dpdk_eal(eal_arguments, logger);
+    TESTASSERT(dpdk_interface, "Failed to open DPDK EAL with arguments.");
+  }
+#endif // HWACC_PDSCH_ENABLED
 
   // Inform of the benchmark configuration.
   if (benchmark_mode != benchmark_modes::silent) {
@@ -589,6 +769,9 @@ int main(int argc, char** argv)
 
   // Generate the test cases.
   std::vector<test_case_type> test_case_set = generate_test_cases(selected_profile);
+
+  // Create processor.
+  std::unique_ptr<pdsch_processor> proc = create_processor();
 
   for (const test_case_type& test_case : test_case_set) {
     // Get the PDSCH configuration.
@@ -615,16 +798,9 @@ int main(int argc, char** argv)
       // Select thread.
       unique_thread& thread = threads[thread_id];
 
-      // Prepare priority.
-      os_thread_realtime_priority prio = os_thread_realtime_priority::no_realtime() + 1;
-
-      // Prepare affinity mask.
-      os_sched_affinity_bitmask cpuset;
-      cpuset.set(thread_id);
-
       // Create thread.
-      thread = unique_thread(
-          "thread_" + std::to_string(thread_id), prio, cpuset, [&config, &data] { thread_process(config, data); });
+      thread = unique_thread("thread_" + std::to_string(thread_id),
+                             [&proc, &config, &data] { thread_process(*proc, config, data); });
     }
 
     // Wait for finish thread init.

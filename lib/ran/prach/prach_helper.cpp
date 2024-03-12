@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -66,7 +66,7 @@ error_type<std::string> srsran::prach_helper::zero_correlation_zone_is_valid(uin
     if ((prach_config.format == prach_format_type::B4) && (zero_correlation_zone != 0) &&
         (zero_correlation_zone != 14)) {
       return fmt::format(
-          "PRACH Zero Correlation Zone index (i.e., {}) with Format B4 is not supported for FDD. Use 0 or 14.\n",
+          "PRACH Zero Correlation Zone index (i.e., {}) with Format B4 is not supported for TDD. Use 0 or 14.\n",
           zero_correlation_zone);
     }
   }
@@ -105,7 +105,8 @@ error_type<interval<uint8_t>> srsran::prach_helper::prach_fits_in_tdd_pattern(su
   return {};
 }
 
-optional<uint8_t> srsran::prach_helper::find_valid_prach_config_index(subcarrier_spacing             pusch_scs,
+optional<uint8_t> srsran::prach_helper::find_valid_prach_config_index(subcarrier_spacing pusch_scs,
+                                                                      uint8_t            zero_correlation_zone,
                                                                       const tdd_ul_dl_config_common& tdd_cfg)
 {
   static constexpr size_t NOF_PRACH_CONFIG_INDEXES = 256;
@@ -113,9 +114,51 @@ optional<uint8_t> srsran::prach_helper::find_valid_prach_config_index(subcarrier
   // Iterate over different PRACH configuration indexes until a valid one is found.
   for (unsigned prach_cfg_idx = 0; prach_cfg_idx != NOF_PRACH_CONFIG_INDEXES; ++prach_cfg_idx) {
     if (prach_config_index_is_valid(prach_cfg_idx, duplex_mode::TDD).has_value() and
+        zero_correlation_zone_is_valid(zero_correlation_zone, prach_cfg_idx, duplex_mode::TDD).has_value() and
         prach_fits_in_tdd_pattern(pusch_scs, prach_cfg_idx, tdd_cfg).has_value()) {
       return prach_cfg_idx;
     }
   }
   return nullopt;
+}
+
+error_type<std::string>
+srsran::prach_helper::nof_ssb_per_ro_and_nof_cb_preambles_per_ssb_is_valid(float   nof_ssb_per_ro,
+                                                                           uint8_t nof_cb_preambles_per_ssb)
+{
+  bool is_valid = true;
+
+  if (nof_ssb_per_ro == 1 / 8 or nof_ssb_per_ro == 1 / 4 or nof_ssb_per_ro == 1 / 2 or nof_ssb_per_ro == 1) {
+    // As per TS 38.331, ssb-perRACH-OccasionAndCB-PreamblesPerSSB, valid values are {4, 8, 12, 16, 20, 24, 28, 32, 36,
+    // 40, 44, 48, 52, 56, 60, 64}.
+    if (nof_cb_preambles_per_ssb < 4 or nof_cb_preambles_per_ssb > 64 or nof_cb_preambles_per_ssb % 4 != 0) {
+      is_valid = false;
+    }
+  } else if (nof_ssb_per_ro == 2) {
+    // As per TS 38.331, ssb-perRACH-OccasionAndCB-PreamblesPerSSB, valid values are {4, 8, 12, 16, 20, 24, 28, 32}.
+    if (nof_cb_preambles_per_ssb < 4 or nof_cb_preambles_per_ssb > 32 or nof_cb_preambles_per_ssb % 4 != 0) {
+      is_valid = false;
+    }
+  } else if (nof_ssb_per_ro == 4) {
+    // As per TS 38.331, ssb-perRACH-OccasionAndCB-PreamblesPerSSB, valid values are {1,...,16}.
+    if (nof_cb_preambles_per_ssb < 1 or nof_cb_preambles_per_ssb > 16) {
+      is_valid = false;
+    }
+  } else if (nof_ssb_per_ro == 8) {
+    // As per TS 38.331, ssb-perRACH-OccasionAndCB-PreamblesPerSSB, valid values are {1,...,8}.
+    if (nof_cb_preambles_per_ssb < 1 or nof_cb_preambles_per_ssb > 8) {
+      is_valid = false;
+    }
+  } else if (nof_ssb_per_ro == 16) {
+    // As per TS 38.331, ssb-perRACH-OccasionAndCB-PreamblesPerSSB, valid values are {1,...,4}.
+    is_valid = false;
+  }
+
+  if (not is_valid) {
+    return fmt::format("Invalid nof. contention based preambles per SSB ({}) for nof. SSB per RACH occasion ({}).\n",
+                       nof_cb_preambles_per_ssb,
+                       nof_ssb_per_ro);
+  }
+
+  return {};
 }

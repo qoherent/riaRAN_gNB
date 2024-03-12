@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,7 @@
 #include "../../support/resource_grid_test_doubles.h"
 #include "../signal_processors/dmrs_pucch_processor_test_doubles.h"
 #include "pucch_detector_test_doubles.h"
-#include "uci_decoder_test_doubles.h"
+#include "uci/uci_decoder_test_doubles.h"
 #include <gtest/gtest.h>
 
 using namespace srsran;

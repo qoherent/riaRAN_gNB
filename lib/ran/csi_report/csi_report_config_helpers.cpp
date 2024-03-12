@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
  */
 
 #include "srsran/ran/csi_report/csi_report_config_helpers.h"
-#include "csi_report_on_puxch_helpers.h"
+#include "srsran/ran/csi_report/csi_report_on_puxch_utils.h"
 
 using namespace srsran;
 
@@ -120,4 +120,11 @@ bool srsran::is_valid(const csi_report_configuration& config)
   }
 
   return true;
+}
+
+bool srsran::is_pusch_configured(const csi_meas_config& csi_meas)
+{
+  srsran_assert(csi_meas.csi_report_cfg_list.size() == 1, "Only one CSI report configuration is supported");
+  return not variant_holds_alternative<csi_report_config::periodic_or_semi_persistent_report_on_pucch>(
+      csi_meas.csi_report_cfg_list[0].report_cfg_type);
 }

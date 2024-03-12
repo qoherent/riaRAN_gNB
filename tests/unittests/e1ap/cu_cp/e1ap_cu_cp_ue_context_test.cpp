@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,8 @@
 
 #include "../common/test_helpers.h"
 #include "lib/e1ap/cu_cp/ue_context/e1ap_cu_cp_ue_context.h"
+#include "srsran/cu_cp/cu_cp_types.h"
+#include "srsran/srslog/logger.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/test_utils.h"
 
@@ -34,7 +36,12 @@ using namespace srs_cu_cp;
 class e1ap_cu_cp_ue_context_test : public ::testing::Test
 {
 protected:
-  e1ap_cu_cp_ue_context_test() { srslog::init(); };
+  e1ap_cu_cp_ue_context_test()
+  {
+    e1ap_logger.set_level(srslog::basic_levels::debug);
+    srslog::init();
+  };
+
   ~e1ap_cu_cp_ue_context_test()
   {
     // flush logger after each test
@@ -47,10 +54,12 @@ protected:
         test_rgen::uniform_int<uint64_t>(ue_index_to_uint(ue_index_t::min), ue_index_to_uint(ue_index_t::max) - 1));
   };
 
-  timer_manager        timer_mng;
-  manual_task_worker   ctrl_worker{128};
-  timer_factory        timers{timer_mng, ctrl_worker};
-  e1ap_ue_context_list ue_ctxt_list{timers};
+  timer_manager         timer_mng;
+  srslog::basic_logger& e1ap_logger = srslog::fetch_basic_logger("CU-CP-E1");
+  manual_task_worker    ctrl_worker{128};
+  timer_factory         timers{timer_mng, ctrl_worker};
+  unsigned              max_nof_supported_ues = 1024 * 4;
+  e1ap_ue_context_list  ue_ctxt_list{timers, max_nof_supported_ues, e1ap_logger};
 };
 
 TEST_F(e1ap_cu_cp_ue_context_test, when_ue_added_then_ue_exists)
@@ -63,10 +72,10 @@ TEST_F(e1ap_cu_cp_ue_context_test, when_ue_added_then_ue_exists)
   ASSERT_TRUE(ue_ctxt_list.contains(cu_cp_ue_e1ap_id));
   ASSERT_TRUE(ue_ctxt_list.contains(ue_index));
 
-  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
-  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_index, ue_index);
-  ASSERT_EQ(ue_ctxt_list[ue_index].cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
-  ASSERT_EQ(ue_ctxt_list[ue_index].ue_index, ue_index);
+  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_ids.cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
+  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_ids.ue_index, ue_index);
+  ASSERT_EQ(ue_ctxt_list[ue_index].ue_ids.cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
+  ASSERT_EQ(ue_ctxt_list[ue_index].ue_ids.ue_index, ue_index);
 }
 
 TEST_F(e1ap_cu_cp_ue_context_test, when_ue_not_added_then_ue_doesnt_exist)
@@ -81,8 +90,9 @@ TEST_F(e1ap_cu_cp_ue_context_test, when_ue_not_added_then_ue_doesnt_exist)
 TEST_F(e1ap_cu_cp_ue_context_test, when_unsupported_number_of_ues_addeded_then_ue_not_added)
 {
   // Add maximum number of supported UEs
-  for (unsigned it = 0; it < MAX_NOF_CU_UES; ++it) {
-    gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id = ue_ctxt_list.next_gnb_cu_cp_ue_e1ap_id();
+  e1ap_logger.set_level(srslog::basic_levels::error);
+  for (unsigned it = 0; it < max_nof_supported_ues; ++it) {
+    gnb_cu_cp_ue_e1ap_id_t cu_cp_ue_e1ap_id = ue_ctxt_list.allocate_gnb_cu_cp_ue_e1ap_id();
     ASSERT_NE(cu_cp_ue_e1ap_id, gnb_cu_cp_ue_e1ap_id_t::invalid);
     ue_index_t ue_index = uint_to_ue_index(it);
 
@@ -91,9 +101,10 @@ TEST_F(e1ap_cu_cp_ue_context_test, when_unsupported_number_of_ues_addeded_then_u
     ASSERT_TRUE(ue_ctxt_list.contains(cu_cp_ue_e1ap_id));
     ASSERT_TRUE(ue_ctxt_list.contains(ue_index));
   }
+  e1ap_logger.set_level(srslog::basic_levels::debug);
 
   // Try to get another cu_cp_ue_e1ap_id (should fail)
-  ASSERT_EQ(ue_ctxt_list.next_gnb_cu_cp_ue_e1ap_id(), gnb_cu_cp_ue_e1ap_id_t::invalid);
+  ASSERT_EQ(ue_ctxt_list.allocate_gnb_cu_cp_ue_e1ap_id(), gnb_cu_cp_ue_e1ap_id_t::invalid);
 }
 
 TEST_F(e1ap_cu_cp_ue_context_test, when_ue_exists_then_removal_succeeds)
@@ -103,15 +114,6 @@ TEST_F(e1ap_cu_cp_ue_context_test, when_ue_exists_then_removal_succeeds)
 
   ue_ctxt_list.add_ue(ue_index, cu_cp_ue_e1ap_id);
 
-  // test removal by gnb_cu_cp_ue_e1ap_id_t
-  ue_ctxt_list.remove_ue(cu_cp_ue_e1ap_id);
-
-  ASSERT_FALSE(ue_ctxt_list.contains(cu_cp_ue_e1ap_id));
-  ASSERT_FALSE(ue_ctxt_list.contains(ue_index));
-
-  ue_ctxt_list.add_ue(ue_index, cu_cp_ue_e1ap_id);
-
-  // test removal by ue_index
   ue_ctxt_list.remove_ue(ue_index);
 
   ASSERT_FALSE(ue_ctxt_list.contains(cu_cp_ue_e1ap_id));
@@ -134,10 +136,10 @@ TEST_F(e1ap_cu_cp_ue_context_test, when_ue_index_is_old_ue_index_then_ue_index_n
   ASSERT_TRUE(ue_ctxt_list.contains(old_ue_index));
   ASSERT_TRUE(ue_ctxt_list.contains(cu_cp_ue_e1ap_id));
 
-  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
-  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_index, old_ue_index);
-  ASSERT_EQ(ue_ctxt_list[old_ue_index].cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
-  ASSERT_EQ(ue_ctxt_list[old_ue_index].ue_index, old_ue_index);
+  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_ids.cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
+  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_ids.ue_index, old_ue_index);
+  ASSERT_EQ(ue_ctxt_list[old_ue_index].ue_ids.cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
+  ASSERT_EQ(ue_ctxt_list[old_ue_index].ue_ids.ue_index, old_ue_index);
 }
 
 TEST_F(e1ap_cu_cp_ue_context_test, when_ue_exists_then_ue_index_update_succeeds)
@@ -162,8 +164,8 @@ TEST_F(e1ap_cu_cp_ue_context_test, when_ue_exists_then_ue_index_update_succeeds)
   ASSERT_TRUE(ue_ctxt_list.contains(cu_cp_ue_e1ap_id));
   ASSERT_FALSE(ue_ctxt_list.contains(old_ue_index));
 
-  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
-  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_index, ue_index);
-  ASSERT_EQ(ue_ctxt_list[ue_index].cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
-  ASSERT_EQ(ue_ctxt_list[ue_index].ue_index, ue_index);
+  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_ids.cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
+  ASSERT_EQ(ue_ctxt_list[cu_cp_ue_e1ap_id].ue_ids.ue_index, ue_index);
+  ASSERT_EQ(ue_ctxt_list[ue_index].ue_ids.cu_cp_ue_e1ap_id, cu_cp_ue_e1ap_id);
+  ASSERT_EQ(ue_ctxt_list[ue_index].ue_ids.ue_index, ue_index);
 }

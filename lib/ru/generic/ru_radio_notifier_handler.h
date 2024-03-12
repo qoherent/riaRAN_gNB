@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -115,8 +115,10 @@ public:
     ++slot_counter;
 
     if (slot_counter == print_interval_in_slots) {
-      slot_counter = 0;
-      executor.defer([this]() { print_statistics(); });
+      slot_counter    = 0;
+      bool dispatched = executor.defer([this]() { print_statistics(); });
+      // TODO: handle failure to dispatch print statistics task.
+      (void)dispatched;
     }
   }
 

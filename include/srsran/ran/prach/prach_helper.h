@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -50,7 +50,14 @@ error_type<interval<uint8_t>>
 prach_fits_in_tdd_pattern(subcarrier_spacing pusch_scs, uint8_t prach_cfg_idx, const tdd_ul_dl_config_common& tdd_cfg);
 
 /// \brief Finds a PRACH configuration index that ensures that PRACH falls in an TDD UL slot.
-optional<uint8_t> find_valid_prach_config_index(subcarrier_spacing pusch_scs, const tdd_ul_dl_config_common& tdd_cfg);
+optional<uint8_t> find_valid_prach_config_index(subcarrier_spacing             pusch_scs,
+                                                uint8_t                        zero_correlation_zone,
+                                                const tdd_ul_dl_config_common& tdd_cfg);
+
+/// \brief Checks whether the nof. SSB per RACH occasion and nof. contention based preambles per SSB is valid.
+/// \return In case config is not supported, a string with an error message is returned.
+error_type<std::string> nof_ssb_per_ro_and_nof_cb_preambles_per_ssb_is_valid(float   nof_ssb_per_ro,
+                                                                             uint8_t nof_cb_preambles_per_ssb);
 
 } // namespace prach_helper
 } // namespace srsran

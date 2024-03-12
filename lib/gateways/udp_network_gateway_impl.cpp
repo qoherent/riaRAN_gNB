@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,9 +36,25 @@
 using namespace srsran;
 
 udp_network_gateway_impl::udp_network_gateway_impl(udp_network_gateway_config                   config_,
-                                                   network_gateway_data_notifier_with_src_addr& data_notifier_) :
-  config(std::move(config_)), data_notifier(data_notifier_), logger(srslog::fetch_basic_logger("UDP-GW"))
+                                                   network_gateway_data_notifier_with_src_addr& data_notifier_,
+                                                   task_executor&                               io_tx_executor_) :
+  config(std::move(config_)),
+  data_notifier(data_notifier_),
+  logger(srslog::fetch_basic_logger("UDP-GW")),
+  io_tx_executor(io_tx_executor_)
 {
+  logger.info("UDP GW configured. rx_max_mmsg={}", config.rx_max_mmsg);
+
+  // Allocate RX buffers
+  rx_mem.resize(config.rx_max_mmsg);
+  for (uint32_t i = 0; i < config.rx_max_mmsg; ++i) {
+    rx_mem[i].resize(network_gateway_udp_max_len);
+  }
+
+  // Allocate context for recv_mmsg
+  rx_srcaddr.resize(config.rx_max_mmsg);
+  rx_msghdr.resize(config.rx_max_mmsg);
+  rx_iovecs.resize(config.rx_max_mmsg);
 }
 
 bool udp_network_gateway_impl::is_initialized()
@@ -46,7 +62,15 @@ bool udp_network_gateway_impl::is_initialized()
   return sock_fd != -1;
 }
 
-void udp_network_gateway_impl::handle_pdu(const byte_buffer& pdu, const sockaddr_storage& dest_addr)
+void udp_network_gateway_impl::handle_pdu(byte_buffer pdu, const sockaddr_storage& dest_addr)
+{
+  auto fn = [this, p = std::move(pdu), dest_addr]() mutable { handle_pdu_impl(std::move(p), dest_addr); };
+  if (not io_tx_executor.execute(std::move(fn))) {
+    logger.info("Dropped PDU, queue is full.");
+  }
+}
+
+void udp_network_gateway_impl::handle_pdu_impl(const byte_buffer& pdu, const sockaddr_storage& dest_addr)
 {
   logger.debug("Sending PDU of {} bytes", pdu.length());
 
@@ -60,10 +84,7 @@ void udp_network_gateway_impl::handle_pdu(const byte_buffer& pdu, const sockaddr
     return;
   }
 
-  // Fixme: consider class member on heap when sequential access is guaranteed
-  std::array<uint8_t, network_gateway_udp_max_len> tmp_mem; // no init
-
-  span<const uint8_t> pdu_span = to_span(pdu, tmp_mem);
+  span<const uint8_t> pdu_span = to_span(pdu, tx_mem);
 
   int bytes_sent =
       sendto(sock_fd, pdu_span.data(), pdu_span.size_bytes(), 0, (sockaddr*)&dest_addr, sizeof(sockaddr_storage));
@@ -117,7 +138,8 @@ bool udp_network_gateway_impl::create_and_bind()
       continue;
     }
 
-    char ip_addr[NI_MAXHOST], port_nr[NI_MAXSERV];
+    char ip_addr[NI_MAXHOST];
+    char port_nr[NI_MAXSERV];
     getnameinfo(
         result->ai_addr, result->ai_addrlen, ip_addr, NI_MAXHOST, port_nr, NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
     logger.debug("Binding to {} port {}", ip_addr, port_nr);
@@ -176,24 +198,40 @@ void udp_network_gateway_impl::receive()
     logger.error("Cannot receive on UDP gateway: Socket is not initialized.");
   }
 
-  // Fixme: consider class member on heap when sequential access is guaranteed
-  std::array<uint8_t, network_gateway_udp_max_len> tmp_mem; // no init
+  socklen_t src_addr_len = sizeof(struct sockaddr_storage);
 
-  sockaddr_storage src_addr     = {};
-  socklen_t        src_addr_len = sizeof(struct sockaddr_storage);
-  int rx_bytes = recvfrom(sock_fd, tmp_mem.data(), network_gateway_udp_max_len, 0, (sockaddr*)&src_addr, &src_addr_len);
+  for (unsigned i = 0; i < config.rx_max_mmsg; ++i) {
+    rx_msghdr[i].msg_hdr             = {};
+    rx_msghdr[i].msg_hdr.msg_name    = &rx_srcaddr[i];
+    rx_msghdr[i].msg_hdr.msg_namelen = src_addr_len;
 
-  if (rx_bytes == -1 && errno != EAGAIN) {
+    rx_iovecs[i].iov_base           = rx_mem[i].data();
+    rx_iovecs[i].iov_len            = network_gateway_udp_max_len;
+    rx_msghdr[i].msg_hdr.msg_iov    = &rx_iovecs[i];
+    rx_msghdr[i].msg_hdr.msg_iovlen = 1;
+  }
+
+  int rx_msgs = recvmmsg(sock_fd, rx_msghdr.data(), config.rx_max_mmsg, MSG_WAITFORONE, nullptr);
+  if (rx_msgs == -1 && errno != EAGAIN) {
     logger.error("Error reading from UDP socket: {}", strerror(errno));
-  } else if (rx_bytes == -1 && errno == EAGAIN) {
+    return;
+  }
+  if (rx_msgs == -1 && errno == EAGAIN) {
     if (!config.non_blocking_mode) {
       logger.debug("Socket timeout reached");
     }
-  } else {
-    logger.debug("Received {} bytes on UDP socket", rx_bytes);
-    span<uint8_t> payload(tmp_mem.data(), rx_bytes);
-    byte_buffer   pdu = {payload};
-    data_notifier.on_new_pdu(std::move(pdu), src_addr);
+    return;
+  }
+
+  for (int i = 0; i < rx_msgs; ++i) {
+    span<uint8_t> payload(rx_mem[i].data(), rx_msghdr[i].msg_len);
+    byte_buffer   pdu = {};
+    if (pdu.append(payload)) {
+      logger.debug("Received {} bytes on UDP socket", rx_msghdr[i].msg_len);
+      data_notifier.on_new_pdu(std::move(pdu), *(sockaddr_storage*)rx_msghdr[i].msg_hdr.msg_name);
+    } else {
+      logger.error("Could not allocate byte buffer. Received {} bytes on UDP socket", rx_msghdr[i].msg_len);
+    }
   }
 }
 
@@ -202,11 +240,11 @@ int udp_network_gateway_impl::get_socket_fd()
   return sock_fd;
 }
 
-bool udp_network_gateway_impl::get_bind_port(uint16_t& gw_bind_port)
+optional<uint16_t> udp_network_gateway_impl::get_bind_port()
 {
   if (not is_initialized()) {
     logger.error("Socket of UDP network gateway not initialized.");
-    return false;
+    return {};
   }
 
   sockaddr_storage gw_addr_storage;
@@ -216,9 +254,10 @@ bool udp_network_gateway_impl::get_bind_port(uint16_t& gw_bind_port)
   int ret = getsockname(sock_fd, gw_addr, &gw_addr_len);
   if (ret != 0) {
     logger.error("Failed `getsockname` in UDP network gateway with sock_fd={}: {}", sock_fd, strerror(errno));
-    return false;
+    return {};
   }
 
+  uint16_t gw_bind_port;
   if (gw_addr->sa_family == AF_INET) {
     gw_bind_port = ntohs(((sockaddr_in*)gw_addr)->sin_port);
   } else if (gw_addr->sa_family == AF_INET6) {
@@ -226,11 +265,11 @@ bool udp_network_gateway_impl::get_bind_port(uint16_t& gw_bind_port)
   } else {
     logger.error(
         "Unhandled address family in UDP network gateway with sock_fd={}, family={}", sock_fd, gw_addr->sa_family);
-    return false;
+    return {};
   }
 
   logger.debug("Read bind port of UDP network gateway: {}", gw_bind_port);
-  return true;
+  return gw_bind_port;
 }
 
 bool udp_network_gateway_impl::get_bind_address(std::string& ip_address)

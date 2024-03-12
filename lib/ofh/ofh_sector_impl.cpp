@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,4 +38,9 @@ transmitter& sector_impl::get_transmitter()
 controller& sector_impl::get_controller()
 {
   return ofh_sector_controller;
+}
+
+void sector_impl::set_error_notifier(error_notifier& notifier)
+{
+  ofh_transmitter->set_error_notifier(notifier);
 }

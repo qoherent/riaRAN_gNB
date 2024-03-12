@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,13 +22,14 @@
 
 #pragma once
 
-#include "lib/du_manager/converters/mac_config_helpers.h"
 #include "lib/mac/mac_sched/mac_scheduler_adapter.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/mac/config/mac_cell_group_config_factory.h"
+#include "srsran/mac/config/mac_config_helpers.h"
 #include "srsran/mac/mac_cell_result.h"
 #include "srsran/mac/mac_ue_configurator.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
+#include "srsran/pcap/rlc_pcap.h"
 #include "srsran/scheduler/mac_scheduler.h"
 #include "srsran/support/test_utils.h"
 #include "srsran/support/timers.h"
@@ -54,25 +55,24 @@ inline mac_cell_creation_request make_default_mac_cell_config(const cell_config_
 
   byte_buffer dummy_sib1;
   for (unsigned i = 0; i != 100; ++i) {
-    dummy_sib1.append(i);
+    report_fatal_error_if_not(dummy_sib1.append(i), "Failed to append to create dummy SIB1");
   }
-  req.bcch_dl_sch_payload = std::move(dummy_sib1);
+  req.bcch_dl_sch_payloads.push_back(std::move(dummy_sib1));
   return req;
 }
 
 class dummy_ue_rlf_notifier : public mac_ue_radio_link_notifier
 {
 public:
-  bool rlf_detected = false;
+  bool rlf_detected      = false;
+  bool crnti_ce_detected = false;
 
-  bool on_rlf_detected() override
-  {
-    rlf_detected = true;
-    return true;
-  }
+  void on_rlf_detected() override { rlf_detected = true; }
+
+  void on_crnti_ce_received() override { crnti_ce_detected = true; }
 };
 
-inline mac_ue_create_request make_default_ue_creation_request()
+inline mac_ue_create_request make_default_ue_creation_request(const cell_config_builder_params& params = {})
 {
   mac_ue_create_request msg{};
 
@@ -88,7 +88,7 @@ inline mac_ue_create_request make_default_ue_creation_request()
   pcg_cfg.pdsch_harq_codebook         = pdsch_harq_ack_codebook::dynamic;
 
   msg.sched_cfg.cells.emplace();
-  msg.sched_cfg.cells->push_back(config_helpers::create_default_initial_ue_spcell_cell_config());
+  msg.sched_cfg.cells->push_back(config_helpers::create_default_initial_ue_spcell_cell_config(params));
 
   return msg;
 }
@@ -126,6 +126,11 @@ public:
   {
     return next_sched_result;
   }
+  void handle_error_indication(slot_point                         slot_tx,
+                               du_cell_index_t                    cell_idx,
+                               mac_cell_slot_handler::error_event event) override
+  {
+  }
 };
 
 class dummy_mac_cell_result_notifier : public mac_cell_result_notifier
@@ -156,11 +161,16 @@ public:
   unsigned    next_bs = 0;
   byte_buffer previous_tx_sdu;
 
-  byte_buffer_chain on_new_tx_sdu(unsigned nof_bytes) override
+  size_t on_new_tx_sdu(span<uint8_t> mac_sdu_buf) override
   {
-    previous_tx_sdu = test_rgen::random_vector<uint8_t>(nof_bytes);
-    return byte_buffer_chain{previous_tx_sdu.copy()};
+    previous_tx_sdu = test_rgen::random_vector<uint8_t>(mac_sdu_buf.size());
+    auto out_it     = mac_sdu_buf.begin();
+    for (span<const uint8_t> seg : previous_tx_sdu.segments()) {
+      out_it = std::copy(seg.begin(), seg.end(), out_it);
+    }
+    return mac_sdu_buf.size();
   }
+
   unsigned on_buffer_state_update() override { return next_bs; }
 };
 
@@ -177,18 +187,6 @@ struct mac_test_ue {
 
   void                  add_bearer(lcid_t lcid);
   mac_ue_create_request make_ue_create_request();
-};
-
-class dummy_mac_pcap : public mac_pcap
-{
-public:
-  ~dummy_mac_pcap() override = default;
-
-  void open(const std::string& filename_) override {}
-  void close() override {}
-  bool is_write_enabled() override { return false; }
-  void push_pdu(mac_nr_context_info context, const_span<uint8_t> pdu) override {}
-  void push_pdu(mac_nr_context_info context, byte_buffer pdu) override {}
 };
 
 } // namespace test_helpers

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -161,7 +161,7 @@ struct pucch_format_4_cfg {
 
 /// \c PUCCH-Resource, in \c PUCCH-Config, TS 38.331.
 struct pucch_resource {
-  unsigned                                                                                  res_id;
+  pucch_res_id_t                                                                            res_id = {0, 0};
   unsigned                                                                                  starting_prb;
   optional<unsigned>                                                                        second_hop_prb;
   pucch_format                                                                              format;
@@ -182,7 +182,7 @@ struct pucch_resource_set {
   /// \c PUCCH-ResourceSetId.
   uint8_t pucch_res_set_id;
   /// \c resourceList.
-  static_vector<unsigned, MAX_NOF_PUCCH_RESOURCES_PER_PUCCH_RESOURCE_SET> pucch_res_id_list;
+  static_vector<pucch_res_id_t, MAX_NOF_PUCCH_RESOURCES_PER_PUCCH_RESOURCE_SET> pucch_res_id_list;
   /// \c maxPayloadSize.
   optional<unsigned> max_payload_size;
 

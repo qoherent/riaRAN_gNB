@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "../cell/cell_configuration.h"
 #include "../cell/resource_grid.h"
+#include "../config/cell_configuration.h"
 
 namespace srsran {
 

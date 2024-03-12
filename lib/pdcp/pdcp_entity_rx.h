@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,9 +31,9 @@
 #include "srsran/adt/byte_buffer_chain.h"
 #include "srsran/pdcp/pdcp_config.h"
 #include "srsran/pdcp/pdcp_rx.h"
+#include "srsran/support/sdu_window.h"
 #include "srsran/support/timers.h"
 #include "fmt/format.h"
-#include <map>
 
 namespace srsran {
 
@@ -48,6 +48,11 @@ struct pdcp_rx_state {
   /// RX_REORD indicates the COUNT value following the COUNT value associated with the PDCP Data PDU which
   /// triggered t-Reordering.
   uint32_t rx_reord;
+};
+
+struct pdcp_rx_sdu_info {
+  byte_buffer sdu   = {};
+  uint32_t    count = {};
 };
 
 /// Base class used for receiving PDCP bearers.
@@ -89,7 +94,7 @@ public:
   /// \param[out] hdr Reference to a pdcp_data_pdu_header that is filled with the header content
   /// \param[in] buf Reference to the PDU bytes
   /// \return True if header was read successfully, false otherwise
-  bool read_data_pdu_header(pdcp_data_pdu_header& hdr, const byte_buffer_chain& buf) const;
+  bool read_data_pdu_header(pdcp_data_pdu_header& hdr, const byte_buffer& buf) const;
   void discard_data_header(byte_buffer& buf) const;
   void extract_mac(byte_buffer& buf, security::sec_mac& mac) const;
 
@@ -166,9 +171,11 @@ private:
 
   pdcp_rx_state st = {};
 
-  // Reordering queue and timer.
-  std::map<uint32_t, byte_buffer> reorder_queue;
-  unique_timer                    reordering_timer;
+  /// Rx window
+  std::unique_ptr<sdu_window<pdcp_rx_sdu_info>> rx_window;
+
+  /// Rx reordering timer
+  unique_timer reordering_timer;
   class reordering_callback;
   void handle_t_reordering_expire();
 
@@ -176,7 +183,7 @@ private:
 
   /// \brief Handles a received data PDU.
   /// \param buf The data PDU to be handled (including header and payload)
-  void handle_data_pdu(byte_buffer_chain buf);
+  void handle_data_pdu(byte_buffer buf);
 
   /// \brief Handles a received control PDU.
   /// \param buf The control PDU to be handled (including header and payload)
@@ -187,9 +194,7 @@ private:
   void discard_all_sdus();
 
   bool        integrity_verify(byte_buffer_view buf, uint32_t count, const security::sec_mac& mac);
-  byte_buffer cipher_decrypt(byte_buffer_chain::const_iterator msg_begin,
-                             byte_buffer_chain::const_iterator msg_end,
-                             uint32_t                          count);
+  byte_buffer cipher_decrypt(byte_buffer_view& msg, uint32_t count);
 
   /*
    * Notifiers and handlers
@@ -199,6 +204,11 @@ private:
   pdcp_rx_upper_control_notifier& upper_cn;
 
   timer_factory timers;
+
+  /// Creates the rx_window according to sn_size
+  /// \param sn_size Size of the sequence number (SN)
+  /// \return unique pointer to rx_window instance
+  std::unique_ptr<sdu_window<pdcp_rx_sdu_info>> create_rx_window(pdcp_sn_size sn_size_);
 
   void log_state(srslog::basic_levels level) { logger.log(level, "RX entity state. {}", st); }
 };

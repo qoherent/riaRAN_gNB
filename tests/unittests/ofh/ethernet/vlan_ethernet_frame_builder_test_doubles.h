@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,7 +36,7 @@ class vlan_frame_builder_spy : public vlan_frame_builder
 
 public:
   // See interface for documentation.
-  units::bytes get_header_size() const override { return units::bytes(0); }
+  units::bytes get_header_size() const override { return units::bytes(18); }
 
   // See interface for documentation.
   void build_vlan_frame(span<uint8_t> buffer, const vlan_frame_params& eth_params) override

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -51,9 +51,9 @@ public:
     };
 
     /// Codeblock configuration.
-    codeblock_metadata block_conf = {};
+    codeblock_metadata block_conf;
     /// LDPC decoding algorithm configuration.
-    algorithm_details algorithm_conf = {};
+    algorithm_details algorithm_conf;
   };
 
   /// \brief Decodes a codeblock.

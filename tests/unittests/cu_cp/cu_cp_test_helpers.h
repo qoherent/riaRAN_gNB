@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -43,6 +43,11 @@ protected:
   cu_cp_test();
   ~cu_cp_test() override;
 
+  void test_amf_connection();
+
+  void test_e1ap_attach();
+  void test_du_attach(du_index_t du_index, gnb_du_id_t gnb_du_id, unsigned nrcell_id, pci_t pci);
+
   void attach_ue(gnb_du_ue_f1ap_id_t du_ue_id, gnb_cu_ue_f1ap_id_t cu_ue_id, rnti_t crnti, du_index_t du_index);
   void authenticate_ue(amf_ue_id_t         amf_ue_id,
                        ran_ue_id_t         ran_ue_id,
@@ -79,8 +84,9 @@ protected:
 
   dummy_ngap_amf_notifier        ngap_amf_notifier;
   std::unique_ptr<timer_manager> timers = std::make_unique<timer_manager>(256);
+  manual_task_worker             ctrl_worker{128};
 
-  manual_task_worker ctrl_worker{128};
+  std::unique_ptr<ngap_message_handler> dummy_amf;
 
   std::unique_ptr<cu_cp_impl> cu_cp_obj;
 

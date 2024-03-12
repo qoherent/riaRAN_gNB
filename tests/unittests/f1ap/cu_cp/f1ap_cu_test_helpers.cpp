@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "f1ap_cu_test_helpers.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents_ue.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/ran/five_qi.h"
 #include "srsran/ran/nr_cgi.h"
@@ -42,7 +43,8 @@ f1ap_cu_test::f1ap_cu_test()
   f1ap_logger.set_level(srslog::basic_levels::debug);
   srslog::init();
 
-  f1ap = create_f1ap(f1ap_pdu_notifier, du_processor_notifier, f1ap_du_mgmt_notifier, timers, ctrl_worker);
+  f1ap = create_f1ap(
+      f1ap_pdu_notifier, du_processor_notifier, f1ap_du_mgmt_notifier, f1ap_cu_cp_notifier, timers, ctrl_worker);
 }
 
 f1ap_cu_test::~f1ap_cu_test()
@@ -56,7 +58,7 @@ f1ap_cu_test::test_ue& f1ap_cu_test::create_ue(gnb_du_ue_f1ap_id_t du_ue_id)
   f1ap_message msg = generate_init_ul_rrc_message_transfer(du_ue_id, to_rnti(0x4601), {0x1, 0x2, 0x3, 0x4});
   f1ap->handle_message(msg);
   ue_index_t ue_index = *du_processor_notifier.last_created_ue_index;
-  test_ues.emplace(ue_index);
+  test_ues.emplace(ue_index, test_ue{ue_index});
   test_ues[ue_index].ue_index = ue_index;
   test_ues[ue_index].du_ue_id = du_ue_id;
   return test_ues[ue_index];
@@ -67,7 +69,7 @@ f1ap_cu_test::test_ue& f1ap_cu_test::run_ue_context_setup()
   f1ap_ue_context_setup_request req = create_ue_context_setup_request({});
 
   // Start procedure in CU.
-  async_task<f1ap_ue_context_setup_response>         t = f1ap->handle_ue_context_setup_request(req);
+  async_task<f1ap_ue_context_setup_response>         t = f1ap->handle_ue_context_setup_request(req, {});
   lazy_task_launcher<f1ap_ue_context_setup_response> t_launcher(t);
 
   // Take allocated CU ID from UE context setup request.
@@ -85,7 +87,7 @@ f1ap_cu_test::test_ue& f1ap_cu_test::run_ue_context_setup()
 
   // Create test UE using identifiers allocated from precedure.
   ue_index_t ue_index = t.get().ue_index;
-  test_ues.emplace(ue_index);
+  test_ues.emplace(ue_index, test_ue{ue_index});
   test_ues[ue_index].ue_index = ue_index;
   test_ues[ue_index].cu_ue_id = cu_ue_id;
   test_ues[ue_index].du_ue_id = du_ue_id;

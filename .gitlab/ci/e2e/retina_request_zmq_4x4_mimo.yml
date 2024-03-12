@@ -1,5 +1,5 @@
 #
-# Copyright 2013-2023 Software Radio Systems Limited
+# Copyright 2013-2024 Software Radio Systems Limited
 #
 # By using this file, you agree to the terms and conditions set
 # forth in the LICENSE file which can be found at the top level of
@@ -15,11 +15,9 @@
       requests: 1
     memory:
       requests: "8G"
-      limits: "8G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"
   resources:
     - type: zmq
       nof_ant: 4
@@ -38,15 +36,16 @@
     cpu:
       requests: 1
     memory:
-      requests: "3G"
-      limits: "3G"
+      requests: "8G"
+      limits: "8G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
-  mode: grpc
+      requests: "6G"
+      limits: "6G"
   resources:
     - type: zmq
       nof_ant: 4
+  environment:
+    - PATH: ${PATH}:/builds/softwareradiosystems/srsgnb/build/apps/gnb
   shared_files:
     - local_path: ../../build/apps/gnb/gnb
       remote_path: /usr/local/bin
@@ -60,9 +59,7 @@
       requests: 1
     memory:
       requests: "4G"
-      limits: "4G"
     ephemeral-storage:
-      requests: "3G"
-      limit: "3G"
+      requests: "6G"
+      limits: "6G"
   image: ${RETINA_REGISTRY_PREFIX}/open5gs:${OPEN5GS_VERSION}_${RETINA_VERSION}
-  mode: grpc

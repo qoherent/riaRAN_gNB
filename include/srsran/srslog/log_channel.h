@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,14 @@
 #include <atomic>
 
 namespace srslog {
+
+/// Type trait to indicate if a type that is going to be passed through a log channel is unsafe to be copied with the
+/// default implementation and requires a user defined copy implementation.
+template <typename T>
+struct copy_loggable_type {
+  static constexpr bool is_copyable = true;
+  // static void copy (fmt::dynamic_format_arg_store<fmt::format_context>* store, <user-defined-type> a)
+};
 
 /// Log channel configuration settings.
 struct log_channel_config {
@@ -57,6 +65,22 @@ struct log_channel_config {
 /// NOTE: Thread safe class.
 class log_channel
 {
+  /// This push_back implementation wrapper takes into account types that cannot be safely copied and requires user
+  /// defined implementation.
+  template <typename T, std::enable_if_t<copy_loggable_type<T>::is_copyable, int> = 0>
+  void push_back(fmt::dynamic_format_arg_store<fmt::format_context>* store, T&& arg)
+  {
+    store->push_back(std::forward<T>(arg));
+  }
+  template <typename T, std::enable_if_t<!copy_loggable_type<T>::is_copyable, int> = 0>
+  void push_back(fmt::dynamic_format_arg_store<fmt::format_context>* store, T&& arg)
+  {
+    copy_loggable_type<T>::copy(store, std::forward<T>(arg));
+  }
+
+  /// Context value encoding.
+  static uint64_t encode_context(uint32_t a, uint32_t b) { return ((uint64_t(a) << 32) | uint64_t(b)); }
+
 public:
   log_channel(std::string id, sink& s, detail::log_backend& backend_) : log_channel(std::move(id), s, backend_, {}) {}
 
@@ -87,7 +111,7 @@ public:
   const std::string& id() const { return log_id; }
 
   /// Set the log channel context to the specified value.
-  void set_context(uint32_t a, uint32_t b) { ctx_value64 = ((uint64_t(a) << 32) | uint64_t(b)); }
+  void set_context(uint32_t a, uint32_t b) { ctx_value64 = encode_context(a, b); }
 
   /// Set the maximum number of bytes to can be printed in a hex dump.
   /// Set to -1 to indicate no hex dump limit.
@@ -107,7 +131,7 @@ public:
     if (!store) {
       return;
     }
-    (void)std::initializer_list<int>{(store->push_back(std::forward<Args>(args)), 0)...};
+    (void)std::initializer_list<int>{(push_back(store, std::forward<Args>(args)), 0)...};
 
     // Send the log entry to the backend.
     log_formatter&    formatter = log_sink.get_formatter();
@@ -117,6 +141,37 @@ public:
                                },
                                    {std::chrono::high_resolution_clock::now(),
                                     {ctx_value64, should_print_context},
+                                    fmtstr,
+                                    store,
+                                    log_name,
+                                    log_tag}};
+    backend.push(std::move(entry));
+  }
+
+  /// Builds the provided log entry and passes it to the backend. When the
+  /// channel is disabled the log entry will be discarded.
+  template <typename... Args>
+  void operator()(uint32_t a, uint32_t b, const char* fmtstr, Args&&... args)
+  {
+    if (!enabled()) {
+      return;
+    }
+
+    // Populate the store with all incoming arguments.
+    auto* store = backend.alloc_arg_store();
+    if (!store) {
+      return;
+    }
+    (void)std::initializer_list<int>{(push_back(store, std::forward<Args>(args)), 0)...};
+
+    // Send the log entry to the backend.
+    log_formatter&    formatter = log_sink.get_formatter();
+    detail::log_entry entry     = {&log_sink,
+                                   [&formatter](detail::log_entry_metadata&& metadata, fmt::memory_buffer& buffer) {
+                                 formatter.format(std::move(metadata), buffer);
+                               },
+                                   {std::chrono::high_resolution_clock::now(),
+                                    {encode_context(a, b), should_print_context},
                                     fmtstr,
                                     store,
                                     log_name,
@@ -138,7 +193,7 @@ public:
     if (!store) {
       return;
     }
-    (void)std::initializer_list<int>{(store->push_back(std::forward<Args>(args)), 0)...};
+    (void)std::initializer_list<int>{(push_back(store, std::forward<Args>(args)), 0)...};
 
     // Calculate the length to capture in the buffer.
     if (hex_max_size >= 0) {
@@ -163,6 +218,43 @@ public:
 
   /// Builds the provided log entry and passes it to the backend. When the
   /// channel is disabled the log entry will be discarded.
+  template <typename... Args>
+  void operator()(uint32_t a, uint32_t b, const uint8_t* buffer, size_t len, const char* fmtstr, Args&&... args)
+  {
+    if (!enabled()) {
+      return;
+    }
+
+    // Populate the store with all incoming arguments.
+    auto* store = backend.alloc_arg_store();
+    if (!store) {
+      return;
+    }
+    (void)std::initializer_list<int>{(push_back(store, std::forward<Args>(args)), 0)...};
+
+    // Calculate the length to capture in the buffer.
+    if (hex_max_size >= 0) {
+      len = std::min<size_t>(len, hex_max_size);
+    }
+
+    // Send the log entry to the backend.
+    log_formatter&    formatter = log_sink.get_formatter();
+    detail::log_entry entry     = {&log_sink,
+                                   [&formatter](detail::log_entry_metadata&& metadata, fmt::memory_buffer& buffer_) {
+                                 formatter.format(std::move(metadata), buffer_);
+                               },
+                                   {std::chrono::high_resolution_clock::now(),
+                                    {encode_context(a, b), should_print_context},
+                                    fmtstr,
+                                    store,
+                                    log_name,
+                                    log_tag,
+                                    std::vector<uint8_t>(buffer, buffer + len)}};
+    backend.push(std::move(entry));
+  }
+
+  /// Builds the provided log entry and passes it to the backend. When the
+  /// channel is disabled the log entry will be discarded.
   template <typename It, typename... Args, typename std::enable_if<detail::is_byte_iterable<It>::value, int>::type = 0>
   void operator()(It it_begin, It it_end, const char* fmtstr, Args&&... args)
   {
@@ -175,7 +267,7 @@ public:
     if (!store) {
       return;
     }
-    (void)std::initializer_list<int>{(store->push_back(std::forward<Args>(args)), 0)...};
+    (void)std::initializer_list<int>{(push_back(store, std::forward<Args>(args)), 0)...};
 
     // Calculate the length to capture in the buffer.
     if (hex_max_size >= 0 && hex_max_size < std::distance(it_begin, it_end)) {
@@ -236,7 +328,7 @@ public:
     if (!store) {
       return;
     }
-    (void)std::initializer_list<int>{(store->push_back(std::forward<Args>(args)), 0)...};
+    (void)std::initializer_list<int>{(push_back(store, std::forward<Args>(args)), 0)...};
 
     // Send the log entry to the backend.
     log_formatter&    formatter = log_sink.get_formatter();

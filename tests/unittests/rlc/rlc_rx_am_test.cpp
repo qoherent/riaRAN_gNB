@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,6 +30,27 @@
 
 using namespace srsran;
 
+// Config params
+rlc_rx_am_config cfg_12bit = {/*sn_field_length=*/rlc_am_sn_size::size12bits,
+                              /*t_reassembly=*/35,
+                              /*t_status_prohibit=*/8,
+                              /*max_sn_per_status=*/{}};
+
+rlc_rx_am_config cfg_18bit = {/*sn_field_length=*/rlc_am_sn_size::size18bits,
+                              /*t_reassembly=*/35,
+                              /*t_status_prohibit=*/8,
+                              /*max_sn_per_status=*/{}};
+
+rlc_rx_am_config cfg_12bit_status_limit = {/*sn_field_length=*/rlc_am_sn_size::size12bits,
+                                           /*t_reassembly=*/35,
+                                           /*t_status_prohibit=*/8,
+                                           /*max_sn_per_status=*/1024};
+
+rlc_rx_am_config cfg_18bit_status_limit = {/*sn_field_length=*/rlc_am_sn_size::size18bits,
+                                           /*t_reassembly=*/35,
+                                           /*t_status_prohibit=*/8,
+                                           /*max_sn_per_status=*/2048};
+
 /// Mocking class of the surrounding layers invoked by the RLC AM Rx entity.
 class rlc_rx_am_test_frame : public rlc_rx_upper_layer_data_notifier,
                              public rlc_tx_am_status_handler,
@@ -52,14 +73,16 @@ public:
   }
 
   // rlc_tx_am_status_handler interface
-  virtual void on_status_pdu(rlc_am_status_pdu status_) override { this->status = status_; }
+  virtual void on_status_pdu(rlc_am_status_pdu status_) override { this->status = std::move(status_); }
   // rlc_tx_am_status_notifier interface
   virtual void on_status_report_changed() override { this->status_trigger_counter++; }
 };
 
 /// Fixture class for RLC AM Rx tests.
-/// It requires TEST_P() and INSTANTIATE_TEST_SUITE_P() to create/spawn tests for each supported SN size
-class rlc_rx_am_test : public ::testing::Test, public ::testing::WithParamInterface<rlc_am_sn_size>, public rlc_trx_test
+/// It requires TEST_P() and INSTANTIATE_TEST_SUITE_P() to create/spawn tests for each config
+class rlc_rx_am_test : public ::testing::Test,
+                       public ::testing::WithParamInterface<rlc_rx_am_config>,
+                       public rlc_trx_test
 {
 protected:
   void SetUp() override
@@ -72,19 +95,21 @@ protected:
     srslog::fetch_basic_logger("RLC", false).set_level(srslog::basic_levels::debug);
     srslog::fetch_basic_logger("RLC", false).set_hex_dump_max_size(100);
 
-    logger.info("Creating RLC Rx AM entity ({} bit)", to_number(sn_size));
-
-    // Set Rx config
-    config.sn_field_length   = sn_size;
-    config.t_reassembly      = 35;
-    config.t_status_prohibit = 8;
+    logger.info("Creating RLC Rx AM entity ({})", config);
 
     // Create test frame
     tester = std::make_unique<rlc_rx_am_test_frame>(config.sn_field_length);
 
     // Create RLC AM RX entity
-    rlc = std::make_unique<rlc_rx_am_entity>(
-        du_ue_index_t::MIN_DU_UE_INDEX, srb_id_t::srb0, config, *tester, timer_factory{timers, ue_worker}, ue_worker);
+    rlc = std::make_unique<rlc_rx_am_entity>(0,
+                                             du_ue_index_t::MIN_DU_UE_INDEX,
+                                             srb_id_t::srb0,
+                                             config,
+                                             *tester,
+                                             timer_factory{timers, ue_worker},
+                                             ue_worker,
+                                             true,
+                                             pcap);
 
     // Bind AM Tx/Rx interconnect
     rlc->set_status_handler(tester.get());
@@ -95,6 +120,15 @@ protected:
   {
     // flush logger after each test
     srslog::flush();
+  }
+
+  size_t copy_bytes(span<uint8_t> dst, byte_buffer_view src) const
+  {
+    auto* it = dst.begin();
+    for (span<const uint8_t> seg : src.segments()) {
+      it = std::copy(seg.begin(), seg.end(), it);
+    }
+    return src.length();
   }
 
   /// \brief Creates a list of RLC AMD PDU(s) containing either one RLC SDU or multiple RLC SDU segments
@@ -111,12 +145,12 @@ protected:
   /// \param[in] sdu_size Size of the SDU
   /// \param[in] segment_size Maximum payload size of each SDU or SDU segment.
   /// \param[in] first_byte Value of the first SDU payload byte
-  void create_pdus(std::list<byte_buffer>& pdu_list,
-                   byte_buffer&            sdu,
-                   uint32_t                sn,
-                   uint32_t                sdu_size,
-                   uint32_t                segment_size,
-                   uint8_t                 first_byte = 0) const
+  void create_pdus(std::list<std::vector<uint8_t>>& pdu_list,
+                   byte_buffer&                     sdu,
+                   uint32_t                         sn,
+                   uint32_t                         sdu_size,
+                   uint32_t                         segment_size,
+                   uint8_t                          first_byte = 0) const
   {
     ASSERT_GT(sdu_size, 0) << "Invalid argument: Cannot create PDUs with zero-sized SDU";
     ASSERT_GT(segment_size, 0) << "Invalid argument: Cannot create PDUs with zero-sized SDU segments";
@@ -159,10 +193,12 @@ protected:
         payload = std::move(rest);
         rest    = {};
       }
-      byte_buffer pdu_buf;
+      std::vector<uint8_t> pdu_buf;
+      pdu_buf.resize(payload.length() + 5);
       logger.debug("AMD PDU header: {}", hdr);
-      rlc_am_write_data_pdu_header(hdr, pdu_buf);
-      pdu_buf.append(payload);
+      size_t pdu_len = rlc_am_write_data_pdu_header(span<uint8_t>(pdu_buf), hdr);
+      pdu_len += copy_bytes(span<uint8_t>(pdu_buf).subspan(pdu_len, payload.length()), payload);
+      pdu_buf.resize(pdu_len);
       pdu_list.push_back(std::move(pdu_buf));
 
       // update segment offset for next iteration
@@ -177,21 +213,15 @@ protected:
   /// \param[in] reverse_sdus Inject PDUs in reverse SDU order
   void rx_full_sdus(uint32_t& sn_state, uint32_t n_sdus, uint32_t sdu_size = 1, bool reverse_sdus = false)
   {
-    // check status report
-    rlc_am_status_pdu status_report = rlc->get_status_pdu();
-    EXPECT_EQ(status_report.ack_sn, sn_state);
-    EXPECT_EQ(status_report.get_nacks().size(), 0);
-    EXPECT_EQ(status_report.get_packed_size(), 3);
-    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
-
     uint32_t expected_sn_state = sn_state;
+    uint32_t pdu_counter       = 0;
 
     // Create SDUs and PDUs with full SDUs
-    std::list<byte_buffer> pdu_originals = {};
-    std::list<byte_buffer> sdu_originals = {};
+    std::list<std::vector<uint8_t>> pdu_originals = {};
+    std::list<byte_buffer>          sdu_originals = {};
     for (uint32_t i = 0; i < n_sdus; i++) {
-      std::list<byte_buffer> pdu_list = {};
-      byte_buffer            sdu;
+      std::list<std::vector<uint8_t>> pdu_list = {};
+      byte_buffer                     sdu;
       ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, sdu_size, sn_state));
       sn_state++;
 
@@ -208,14 +238,7 @@ protected:
     }
 
     // Push PDUs into RLC
-    for (byte_buffer& pdu_buf : pdu_originals) {
-      // check status report
-      status_report = rlc->get_status_pdu();
-      EXPECT_EQ(status_report.ack_sn, expected_sn_state);
-      EXPECT_EQ(status_report.get_nacks().size(), 0);
-      EXPECT_EQ(status_report.get_packed_size(), 3);
-      EXPECT_EQ(rlc->get_status_pdu_length(), 3);
-
+    for (std::vector<uint8_t>& pdu_buf : pdu_originals) {
       // write PDU into lower end
       byte_buffer_slice pdu = {std::move(pdu_buf)};
       rlc->handle_pdu(std::move(pdu));
@@ -224,20 +247,22 @@ protected:
         // According to 5.2.3.2.3, when transmitting in order:
         // st.rx_highest_status is advanced on each fully-received SDU.
         ++expected_sn_state;
+      } else {
+        // According to 5.2.3.2.3, when transmitting in reverse order:
+        // st.rx_highest_status is only advanced after SDU with SN = (previous) st.rx_highest_status is fully received.
+        ++pdu_counter;
+        if (pdu_counter == n_sdus) {
+          expected_sn_state += n_sdus;
+        }
       }
-    }
 
-    if (reverse_sdus) {
-      // According to 5.2.3.2.3, when transmitting in reverse order:
-      // st.rx_highest_status is only advanced after SDU with SN = (previous) st.rx_highest_status is fully received.
-      expected_sn_state = sn_state;
+      // check status report
+      rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+      EXPECT_EQ(status_report.ack_sn, expected_sn_state);
+      EXPECT_EQ(status_report.get_nacks().size(), 0);
+      EXPECT_EQ(status_report.get_packed_size(), 3);
+      EXPECT_EQ(rlc->get_status_pdu_length(), 3);
     }
-    // check status report
-    status_report = rlc->get_status_pdu();
-    EXPECT_EQ(status_report.ack_sn, expected_sn_state);
-    EXPECT_EQ(status_report.get_nacks().size(), 0);
-    EXPECT_EQ(status_report.get_packed_size(), 3);
-    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
 
     // Read "n_pdus" SDUs from upper layer
     ASSERT_EQ(tester->sdu_queue.size(), n_sdus);
@@ -265,23 +290,17 @@ protected:
                        bool      reverse_sdus     = false,
                        bool      reverse_segments = false)
   {
-    // check status report
-    rlc_am_status_pdu status_report = rlc->get_status_pdu();
-    EXPECT_EQ(status_report.ack_sn, sn_state);
-    EXPECT_EQ(status_report.get_nacks().size(), 0);
-    EXPECT_EQ(status_report.get_packed_size(), 3);
-    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
-
     uint32_t expected_sn_state = sn_state;
+    uint32_t pdu_counter       = 0;
 
     // Create SDUs and PDUs
-    std::list<std::list<byte_buffer>> pdu_originals = {};
-    std::list<byte_buffer>            sdu_originals = {};
+    std::list<std::list<std::vector<uint8_t>>> pdu_originals = {};
+    std::list<byte_buffer>                     sdu_originals = {};
 
     // Create SDUs and PDUs with SDU segments
     for (uint32_t i = 0; i < n_sdus; i++) {
-      std::list<byte_buffer> pdu_list = {};
-      byte_buffer            sdu;
+      std::list<std::vector<uint8_t>> pdu_list = {};
+      byte_buffer                     sdu;
       ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
       sn_state++;
 
@@ -302,15 +321,8 @@ protected:
     }
 
     // Push PDUs into RLC
-    for (std::list<byte_buffer>& segment_list : pdu_originals) {
-      for (byte_buffer& pdu_buf : segment_list) {
-        // check status report
-        status_report = rlc->get_status_pdu();
-        EXPECT_EQ(status_report.ack_sn, expected_sn_state);
-        EXPECT_EQ(status_report.get_nacks().size(), 0);
-        EXPECT_EQ(status_report.get_packed_size(), 3);
-        EXPECT_EQ(rlc->get_status_pdu_length(), 3);
-
+    for (std::list<std::vector<uint8_t>>& segment_list : pdu_originals) {
+      for (std::vector<uint8_t>& pdu_buf : segment_list) {
         byte_buffer_slice pdu = {std::move(pdu_buf)};
         rlc->handle_pdu(std::move(pdu));
       }
@@ -319,20 +331,22 @@ protected:
         // According to 5.2.3.2.3, when transmitting in order:
         // st.rx_highest_status is advanced on each fully-received SDU.
         ++expected_sn_state;
+      } else {
+        // According to 5.2.3.2.3, when transmitting in reverse order:
+        // st.rx_highest_status is only advanced after SDU with SN = (previous) st.rx_highest_status is fully received.
+        ++pdu_counter;
+        if (pdu_counter == n_sdus) {
+          expected_sn_state += n_sdus;
+        }
       }
-    }
 
-    if (reverse_sdus) {
-      // According to 5.2.3.2.3, when transmitting in reverse order:
-      // st.rx_highest_status is only advanced after SDU with SN = (previous) st.rx_highest_status is fully received.
-      expected_sn_state = sn_state;
+      // check status report
+      rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+      EXPECT_EQ(status_report.ack_sn, expected_sn_state);
+      EXPECT_EQ(status_report.get_nacks().size(), 0);
+      EXPECT_EQ(status_report.get_packed_size(), 3);
+      EXPECT_EQ(rlc->get_status_pdu_length(), 3);
     }
-    // check status report
-    status_report = rlc->get_status_pdu();
-    EXPECT_EQ(status_report.ack_sn, expected_sn_state);
-    EXPECT_EQ(status_report.get_nacks().size(), 0);
-    EXPECT_EQ(status_report.get_packed_size(), 3);
-    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
 
     // Read "n_sdus" SDUs from upper layer
     ASSERT_EQ(tester->sdu_queue.size(), n_sdus);
@@ -354,25 +368,25 @@ protected:
                                    uint32_t  skip_a2        = 0)
   {
     // check status report
-    rlc_am_status_pdu status_report = rlc->get_status_pdu();
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
     EXPECT_EQ(status_report.ack_sn, sn_state);
     EXPECT_EQ(status_report.get_nacks().size(), 0);
     EXPECT_EQ(status_report.get_packed_size(), 3);
     EXPECT_EQ(rlc->get_status_pdu_length(), 3);
 
     // Create SDU and PDUs with SDU segments
-    std::list<byte_buffer> pdu_list_a = {};
-    std::list<byte_buffer> pdu_list_b = {};
-    byte_buffer            sdu;
+    std::list<std::vector<uint8_t>> pdu_list_a = {};
+    std::list<std::vector<uint8_t>> pdu_list_b = {};
+    byte_buffer                     sdu;
     ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list_a, sdu, sn_state, sdu_size, segment_size_a, sn_state));
     ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list_b, sdu, sn_state, sdu_size, segment_size_b, sn_state));
     sn_state++;
 
     // Push A PDUs except for one into RLC
     uint32_t i = 0;
-    for (const byte_buffer& pdu_buf : pdu_list_a) {
+    for (const std::vector<uint8_t>& pdu_buf : pdu_list_a) {
       if (i != skip_a1 && i != skip_a2) {
-        byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+        byte_buffer_slice pdu = {pdu_buf};
         rlc->handle_pdu(std::move(pdu));
       }
       i++;
@@ -383,8 +397,8 @@ protected:
 
     // Push all PDUs again; check that nothing is forwarded to upper layer before except after Rx of 5th segment
     // Push B PDUs into RLC
-    for (const byte_buffer& pdu_buf : pdu_list_b) {
-      byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+    for (const std::vector<uint8_t>& pdu_buf : pdu_list_b) {
+      byte_buffer_slice pdu = {pdu_buf};
       rlc->handle_pdu(std::move(pdu));
     }
     ASSERT_EQ(tester->sdu_queue.size(), 1);
@@ -400,13 +414,17 @@ protected:
   }
 
   srslog::basic_logger&                 logger  = srslog::fetch_basic_logger("TEST", false);
-  rlc_am_sn_size                        sn_size = GetParam();
-  rlc_rx_am_config                      config;
+  rlc_rx_am_config                      config  = GetParam();
+  rlc_am_sn_size                        sn_size = config.sn_field_length;
   timer_manager                         timers;
   manual_task_worker                    ue_worker{128};
   std::unique_ptr<rlc_rx_am_test_frame> tester;
+  null_rlc_pcap                         pcap;
   std::unique_ptr<rlc_rx_am_entity>     rlc;
 };
+
+class rlc_rx_am_test_with_limit : public rlc_rx_am_test
+{};
 
 /// Test the instantiation of a new entity
 TEST_P(rlc_rx_am_test, create_new_entity)
@@ -418,7 +436,7 @@ TEST_P(rlc_rx_am_test, create_new_entity)
 TEST_P(rlc_rx_am_test, read_initial_status)
 {
   EXPECT_FALSE(rlc->status_report_required());
-  rlc_am_status_pdu status_report = rlc->get_status_pdu();
+  rlc_am_status_pdu& status_report = rlc->get_status_pdu();
   EXPECT_EQ(status_report.ack_sn, 0);
   EXPECT_EQ(status_report.get_nacks().size(), 0);
   EXPECT_EQ(status_report.get_packed_size(), 3);
@@ -472,8 +490,8 @@ TEST_P(rlc_rx_am_test, rx_valid_control_pdu)
   rlc_am_status_nack nack  = {};
   nack.nack_sn             = 1230;
   status.push_nack(nack);
-  byte_buffer pdu_buf = {};
-  EXPECT_TRUE(status.pack(pdu_buf));
+  std::array<uint8_t, 100> pdu_buf = {};
+  EXPECT_EQ(status.pack(pdu_buf), status.get_packed_size());
 
   // Pass through RLC
   byte_buffer_slice pdu = {std::move(pdu_buf)};
@@ -494,10 +512,10 @@ TEST_P(rlc_rx_am_test, rx_invalid_control_pdu)
   EXPECT_EQ(tester->status.get_nacks().size(), 0);
 
   // Create status PDU
-  rlc_am_status_pdu status = {sn_size};
-  status.ack_sn            = 1234;
-  byte_buffer pdu_buf      = {};
-  EXPECT_TRUE(status.pack(pdu_buf));
+  rlc_am_status_pdu status         = {sn_size};
+  status.ack_sn                    = 1234;
+  std::array<uint8_t, 100> pdu_buf = {};
+  EXPECT_EQ(status.pack(pdu_buf), status.get_packed_size());
 
   // set reserved bits in CPT field
   *(pdu_buf.begin()) |= 0x70;
@@ -533,7 +551,7 @@ TEST_P(rlc_rx_am_test, rx_data_pdu_with_short_header)
 
   // Create a short header of a data PDU with polling bit set
   byte_buffer pdu_buf = {};
-  pdu_buf.append(0b11000000); // D/C = 1; P = 1
+  ASSERT_TRUE(pdu_buf.append(0b11000000)); // D/C = 1; P = 1
 
   // Push into RLC
   byte_buffer_slice pdu = {std::move(pdu_buf)};
@@ -552,10 +570,10 @@ TEST_P(rlc_rx_am_test, rx_data_pdu_without_payload)
 
   // Create a complete header of a data PDU with polling bit set and with SO
   byte_buffer pdu_buf = {};
-  pdu_buf.append(0b11110000); // D/C = 1; P = 1; SI = 0b11
-  pdu_buf.append({0x00, 0x00, 0x00});
+  ASSERT_TRUE(pdu_buf.append(0b11110000)); // D/C = 1; P = 1; SI = 0b11
+  ASSERT_TRUE(pdu_buf.append({0x00, 0x00, 0x00}));
   if (sn_size == rlc_am_sn_size::size18bits) {
-    pdu_buf.append(0x00);
+    ASSERT_TRUE(pdu_buf.append(0x00));
   }
 
   // Push into RLC
@@ -577,8 +595,8 @@ TEST_P(rlc_rx_am_test, rx_polling_bit_sn_inside_rx_window)
   uint32_t sdu_size = 1;
 
   // Create SDU and PDU with full SDU
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, sdu_size, sn_state));
   sn_state++;
 
@@ -610,8 +628,8 @@ TEST_P(rlc_rx_am_test, rx_polling_bit_sn_outside_rx_window)
   uint32_t sdu_size = 1;
 
   // Create SDU and PDU with full SDU
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, sdu_size, sn_state));
   sn_state++;
 
@@ -640,13 +658,13 @@ TEST_P(rlc_rx_am_test, rx_polling_bit_sdu_duplicate)
   uint32_t sdu_size = 1;
 
   // Create SDU and PDU with full SDU
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, sdu_size, sn_state));
   sn_state++;
 
   // Push into RLC
-  byte_buffer_slice pdu = {pdu_list.front().deep_copy()};
+  byte_buffer_slice pdu = {pdu_list.front()};
   rlc->handle_pdu(std::move(pdu));
 
   // Check if polling bit has not changed
@@ -663,7 +681,7 @@ TEST_P(rlc_rx_am_test, rx_polling_bit_sdu_duplicate)
   *(pdu_list.front().begin()) |= 0b01000000; // set P = 1;
 
   // Push into RLC
-  pdu = {pdu_list.front().deep_copy()};
+  pdu = {pdu_list.front()};
   rlc->handle_pdu(std::move(pdu));
 
   // Check if polling bit was considered, despite duplicate SN
@@ -687,23 +705,23 @@ TEST_P(rlc_rx_am_test, rx_duplicate_segments)
   uint32_t segment_size = 1;
 
   // check status report
-  rlc_am_status_pdu status_report = rlc->get_status_pdu();
+  rlc_am_status_pdu& status_report = rlc->get_status_pdu();
   EXPECT_EQ(status_report.ack_sn, sn_state);
   EXPECT_EQ(status_report.get_nacks().size(), 0);
   EXPECT_EQ(status_report.get_packed_size(), 3);
   EXPECT_EQ(rlc->get_status_pdu_length(), 3);
 
   // Create SDU and PDUs with SDU segments
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
   sn_state++;
 
   // Push PDUs except for 5th into RLC
   int i = 0;
-  for (const byte_buffer& pdu_buf : pdu_list) {
+  for (const std::vector<uint8_t>& pdu_buf : pdu_list) {
     if (i != 5) {
-      byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+      byte_buffer_slice pdu = {pdu_buf};
       rlc->handle_pdu(std::move(pdu));
     }
     i++;
@@ -714,8 +732,8 @@ TEST_P(rlc_rx_am_test, rx_duplicate_segments)
 
   // Push all PDUs again; check that nothing is forwarded to upper layer before except after Rx of 5th segment
   i = 0;
-  for (const byte_buffer& pdu_buf : pdu_list) {
-    byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+  for (const std::vector<uint8_t>& pdu_buf : pdu_list) {
+    byte_buffer_slice pdu = {pdu_buf};
     rlc->handle_pdu(std::move(pdu));
     if (i == 5) {
       // check if SDU has been assembled correctly
@@ -822,17 +840,19 @@ TEST_P(rlc_rx_am_test, status_prohibit_timer)
   uint32_t sn_state = 0;
   uint32_t sdu_size = 1;
 
-  // check status report, reset status_prohibit_timer
-  rlc_am_status_pdu status_report = rlc->get_status_pdu();
-  ue_worker.run_pending_tasks(); // Starting t-StatusProhibit is now defered.
-  EXPECT_EQ(status_report.ack_sn, sn_state);
-  EXPECT_EQ(status_report.get_nacks().size(), 0);
-  EXPECT_EQ(status_report.get_packed_size(), 3);
-  EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  {
+    // check status report, reset status_prohibit_timer
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    ue_worker.run_pending_tasks(); // Starting t-StatusProhibit is now defered.
+    EXPECT_EQ(status_report.ack_sn, sn_state);
+    EXPECT_EQ(status_report.get_nacks().size(), 0);
+    EXPECT_EQ(status_report.get_packed_size(), 3);
+    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  }
 
   // Create SDU and PDU with full SDU
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, sdu_size, sn_state));
   sn_state++;
 
@@ -860,12 +880,14 @@ TEST_P(rlc_rx_am_test, status_prohibit_timer)
   EXPECT_TRUE(rlc->status_report_required());
   EXPECT_EQ(tester->status_trigger_counter, 1);
 
-  // check status report, reset status_prohibit_timer
-  status_report = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, sn_state);
-  EXPECT_EQ(status_report.get_nacks().size(), 0);
-  EXPECT_EQ(status_report.get_packed_size(), 3);
-  EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  {
+    // check status report, reset status_prohibit_timer
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, sn_state);
+    EXPECT_EQ(status_report.get_nacks().size(), 0);
+    EXPECT_EQ(status_report.get_packed_size(), 3);
+    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  }
 
   EXPECT_FALSE(rlc->status_report_required());
   EXPECT_EQ(tester->status_trigger_counter, 1);
@@ -882,24 +904,26 @@ TEST_P(rlc_rx_am_test, reassembly_timer)
   uint32_t sdu_size     = 10;
   uint32_t segment_size = 1;
 
-  // check status report
-  rlc_am_status_pdu status_report = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, sn_state);
-  EXPECT_EQ(status_report.get_nacks().size(), 0);
-  EXPECT_EQ(status_report.get_packed_size(), 3);
-  EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  {
+    // check status report
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, sn_state);
+    EXPECT_EQ(status_report.get_nacks().size(), 0);
+    EXPECT_EQ(status_report.get_packed_size(), 3);
+    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  }
 
   // Create SDU and PDUs with SDU segments
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
   sn_state++;
 
   // Push PDUs except for 5th into RLC
   int i = 0;
-  for (const byte_buffer& pdu_buf : pdu_list) {
+  for (const std::vector<uint8_t>& pdu_buf : pdu_list) {
     if (i != 5) {
-      byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+      byte_buffer_slice pdu = {pdu_buf};
       rlc->handle_pdu(std::move(pdu));
     }
     i++;
@@ -919,18 +943,20 @@ TEST_P(rlc_rx_am_test, reassembly_timer)
   EXPECT_EQ(tester->status_trigger_counter, 1);
 
   // check status report
-  uint32_t nack_size = sn_size == rlc_am_sn_size::size12bits ? rlc_am_nr_status_pdu_sizeof_nack_sn_ext_12bit_sn
-                                                             : rlc_am_nr_status_pdu_sizeof_nack_sn_ext_18bit_sn;
-  status_report      = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, sn_state);
-  EXPECT_EQ(status_report.get_packed_size(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + nack_size + rlc_am_nr_status_pdu_sizeof_nack_so);
-  EXPECT_EQ(rlc->get_status_pdu_length(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + nack_size + rlc_am_nr_status_pdu_sizeof_nack_so);
-  ASSERT_EQ(status_report.get_nacks().size(), 1);
-  EXPECT_TRUE(status_report.get_nacks().front().has_so);
-  EXPECT_EQ(status_report.get_nacks().front().so_start, 5);
-  EXPECT_EQ(status_report.get_nacks().front().so_end, 5);
+  {
+    uint32_t nack_size = sn_size == rlc_am_sn_size::size12bits ? rlc_am_nr_status_pdu_sizeof_nack_sn_ext_12bit_sn
+                                                               : rlc_am_nr_status_pdu_sizeof_nack_sn_ext_18bit_sn;
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, sn_state);
+    EXPECT_EQ(status_report.get_packed_size(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + nack_size + rlc_am_nr_status_pdu_sizeof_nack_so);
+    EXPECT_EQ(rlc->get_status_pdu_length(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + nack_size + rlc_am_nr_status_pdu_sizeof_nack_so);
+    ASSERT_EQ(status_report.get_nacks().size(), 1);
+    EXPECT_TRUE(status_report.get_nacks().front().has_so);
+    EXPECT_EQ(status_report.get_nacks().front().so_start, 5);
+    EXPECT_EQ(status_report.get_nacks().front().so_end, 5);
+  }
 }
 
 /// Verify reassembly timer is triggered upon reception of PDUs:
@@ -947,8 +973,8 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_equal_to_rx_next_reassembly_timer_tr
   uint32_t segment_size = 1;
 
   // Create SDU and PDUs with SDU segments
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
   sn_state++;
 
@@ -957,7 +983,7 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_equal_to_rx_next_reassembly_timer_tr
   ///     with SN = RX_Next before the last byte of all received segments of this SDU:
   // Push PDUs except for 5th into RLC (rx_next=0 rx_next_highest=1)
   int i = 0;
-  for (const byte_buffer& pdu_buf : pdu_list) {
+  for (const std::vector<uint8_t>& pdu_buf : pdu_list) {
     rlc_rx_am_state st = rlc->get_state();
     if (i == 0) {
       ASSERT_EQ(0, st.rx_next_highest);
@@ -966,7 +992,7 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_equal_to_rx_next_reassembly_timer_tr
     }
     ASSERT_EQ(0, st.rx_next);
     if (i != 5) {
-      byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+      byte_buffer_slice pdu = {pdu_buf};
       rlc->handle_pdu(std::move(pdu));
     }
     i++;
@@ -993,13 +1019,13 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_larger_then_rx_next_reassembly_timer
   uint32_t n_sdus       = 10;
 
   // Create SDU and PDUs with SDU segments
-  std::list<std::list<byte_buffer>> pdus = {};
-  std::list<byte_buffer>            sdus = {};
+  std::list<std::list<std::vector<uint8_t>>> pdus = {};
+  std::list<byte_buffer>                     sdus = {};
 
   // Create 10 PDUs out of 10 SDUs
   for (uint32_t i = 0; i < n_sdus; i++) {
-    std::list<byte_buffer> pdu_list = {};
-    byte_buffer            sdu;
+    std::list<std::vector<uint8_t>> pdu_list = {};
+    byte_buffer                     sdu;
     ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
     sn_state++;
 
@@ -1016,7 +1042,7 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_larger_then_rx_next_reassembly_timer
   int i = 0;
   for (const auto& pdu_it : pdus) {
     if (i != 5) {
-      byte_buffer_slice pdu = {pdu_it.front().deep_copy()};
+      byte_buffer_slice pdu = {pdu_it.front()};
       rlc->handle_pdu(std::move(pdu));
     }
     i++;
@@ -1042,8 +1068,8 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_equal_to_rx_next_but_no_byte_missing
   uint32_t segment_size = 1;
 
   // Create SDU and PDUs with SDU segments
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
   sn_state++;
 
@@ -1052,7 +1078,7 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_equal_to_rx_next_but_no_byte_missing
   ///     with SN = RX_Next before the last byte of all received segments of this SDU:
   // Push PDUs except for 5th into RLC (rx_next=0 rx_next_highest=1)
   int i = 0;
-  for (const byte_buffer& pdu_buf : pdu_list) {
+  for (const std::vector<uint8_t>& pdu_buf : pdu_list) {
     rlc_rx_am_state st = rlc->get_state();
     if (i == 0) {
       ASSERT_EQ(0, st.rx_next_highest);
@@ -1061,7 +1087,7 @@ TEST_P(rlc_rx_am_test, when_rx_next_highest_equal_to_rx_next_but_no_byte_missing
     }
     ASSERT_EQ(0, st.rx_next);
     if (i != 9) {
-      byte_buffer_slice pdu = {pdu_buf.deep_copy()};
+      byte_buffer_slice pdu = {pdu_buf};
       rlc->handle_pdu(std::move(pdu));
     }
     i++;
@@ -1088,25 +1114,27 @@ TEST_P(rlc_rx_am_test, status_report)
   uint32_t sdu_size     = 10;
   uint32_t segment_size = 1;
 
-  // check status report
-  rlc_am_status_pdu status_report = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, sn_state);
-  EXPECT_EQ(status_report.get_nacks().size(), 0);
-  EXPECT_EQ(status_report.get_packed_size(), 3);
-  EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  {
+    // check status report
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, sn_state);
+    EXPECT_EQ(status_report.get_nacks().size(), 0);
+    EXPECT_EQ(status_report.get_packed_size(), 3);
+    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  }
 
   // Create SDU and PDUs with SDU segments
-  std::list<byte_buffer> pdu_list = {};
-  byte_buffer            sdu;
+  std::list<std::vector<uint8_t>> pdu_list = {};
+  byte_buffer                     sdu;
   ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
   sn_state++;
 
   // Keep missing PDUs for later
-  std::list<byte_buffer> missing_pdus = {};
+  std::list<std::vector<uint8_t>> missing_pdus = {};
 
   // Push PDUs except for 4th, 6th and 7th into RLC
   uint32_t i = 0;
-  for (byte_buffer& pdu_buf : pdu_list) {
+  for (std::vector<uint8_t>& pdu_buf : pdu_list) {
     if (i != 4 && i != 6 && i != 7 && i != 9) {
       byte_buffer_slice pdu = {std::move(pdu_buf)};
       rlc->handle_pdu(std::move(pdu));
@@ -1148,28 +1176,30 @@ TEST_P(rlc_rx_am_test, status_report)
   EXPECT_TRUE(rlc->status_report_required());
   EXPECT_EQ(tester->status_trigger_counter, 1);
 
-  // Check status report
   uint32_t nack_size = sn_size == rlc_am_sn_size::size12bits ? rlc_am_nr_status_pdu_sizeof_nack_sn_ext_12bit_sn
                                                              : rlc_am_nr_status_pdu_sizeof_nack_sn_ext_18bit_sn;
-  status_report      = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, 4);
-  EXPECT_EQ(status_report.get_packed_size(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
-  EXPECT_EQ(rlc->get_status_pdu_length(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
-  ASSERT_EQ(status_report.get_nacks().size(), 3);
+  {
+    // Check status report
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, 4);
+    EXPECT_EQ(status_report.get_packed_size(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
+    EXPECT_EQ(rlc->get_status_pdu_length(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
+    ASSERT_EQ(status_report.get_nacks().size(), 3);
 
-  EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(0).so_start, 4);
-  EXPECT_EQ(status_report.get_nacks().at(0).so_end, 4);
+    EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(0).so_start, 4);
+    EXPECT_EQ(status_report.get_nacks().at(0).so_end, 4);
 
-  EXPECT_TRUE(status_report.get_nacks().at(1).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(1).so_start, 6);
-  EXPECT_EQ(status_report.get_nacks().at(1).so_end, 7);
+    EXPECT_TRUE(status_report.get_nacks().at(1).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(1).so_start, 6);
+    EXPECT_EQ(status_report.get_nacks().at(1).so_end, 7);
 
-  EXPECT_TRUE(status_report.get_nacks().at(2).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(2).so_start, 9);
-  EXPECT_EQ(status_report.get_nacks().at(2).so_end, rlc_am_status_nack::so_end_of_sdu);
+    EXPECT_TRUE(status_report.get_nacks().at(2).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(2).so_start, 9);
+    EXPECT_EQ(status_report.get_nacks().at(2).so_end, rlc_am_status_nack::so_end_of_sdu);
+  }
 
   // Create SDU and PDU with full SDU (set poll bit)
   pdu_list.clear();
@@ -1186,26 +1216,28 @@ TEST_P(rlc_rx_am_test, status_report)
   EXPECT_FALSE(rlc->status_report_required()); // status prohibit timer is not yet expired, regardless we read status
   EXPECT_EQ(tester->status_trigger_counter, 1);
 
-  // Check status report
-  status_report = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, 4);
-  EXPECT_EQ(status_report.get_packed_size(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
-  EXPECT_EQ(rlc->get_status_pdu_length(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
-  ASSERT_EQ(status_report.get_nacks().size(), 3);
+  {
+    // Check status report
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, 4);
+    EXPECT_EQ(status_report.get_packed_size(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
+    EXPECT_EQ(rlc->get_status_pdu_length(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so));
+    ASSERT_EQ(status_report.get_nacks().size(), 3);
 
-  EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(0).so_start, 4);
-  EXPECT_EQ(status_report.get_nacks().at(0).so_end, 4);
+    EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(0).so_start, 4);
+    EXPECT_EQ(status_report.get_nacks().at(0).so_end, 4);
 
-  EXPECT_TRUE(status_report.get_nacks().at(1).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(1).so_start, 6);
-  EXPECT_EQ(status_report.get_nacks().at(1).so_end, 7);
+    EXPECT_TRUE(status_report.get_nacks().at(1).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(1).so_start, 6);
+    EXPECT_EQ(status_report.get_nacks().at(1).so_end, 7);
 
-  EXPECT_TRUE(status_report.get_nacks().at(2).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(2).so_start, 9);
-  EXPECT_EQ(status_report.get_nacks().at(2).so_end, rlc_am_status_nack::so_end_of_sdu);
+    EXPECT_TRUE(status_report.get_nacks().at(2).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(2).so_start, 9);
+    EXPECT_EQ(status_report.get_nacks().at(2).so_end, rlc_am_status_nack::so_end_of_sdu);
+  }
 
   // Let the reassembly timer expire (advance rx_highest_status to 12)
   for (int t = 0; t < config.t_reassembly; t++) {
@@ -1214,38 +1246,120 @@ TEST_P(rlc_rx_am_test, status_report)
 
   EXPECT_EQ(tester->status_trigger_counter, 2);
 
+  {
+    // Check status report
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, 12);
+    EXPECT_EQ(status_report.get_packed_size(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so) +
+                  2 * nack_size + rlc_am_nr_status_pdu_sizeof_nack_range);
+    EXPECT_EQ(rlc->get_status_pdu_length(),
+              rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so) +
+                  2 * nack_size + rlc_am_nr_status_pdu_sizeof_nack_range);
+    ASSERT_EQ(status_report.get_nacks().size(), 5);
+    EXPECT_EQ(status_report.get_nacks().at(0).nack_sn, 0);
+    EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(0).so_start, 4);
+    EXPECT_EQ(status_report.get_nacks().at(0).so_end, 4);
+
+    EXPECT_EQ(status_report.get_nacks().at(1).nack_sn, 0);
+    EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(1).so_start, 6);
+    EXPECT_EQ(status_report.get_nacks().at(1).so_end, 7);
+
+    EXPECT_EQ(status_report.get_nacks().at(2).nack_sn, 0);
+    EXPECT_TRUE(status_report.get_nacks().at(2).has_so);
+    EXPECT_EQ(status_report.get_nacks().at(2).so_start, 9);
+    EXPECT_EQ(status_report.get_nacks().at(2).so_end, rlc_am_status_nack::so_end_of_sdu);
+
+    EXPECT_EQ(status_report.get_nacks().at(3).nack_sn, 4);
+    EXPECT_FALSE(status_report.get_nacks().at(3).has_so);
+
+    EXPECT_EQ(status_report.get_nacks().at(4).nack_sn, 6);
+    EXPECT_FALSE(status_report.get_nacks().at(4).has_so);
+    EXPECT_TRUE(status_report.get_nacks().at(4).has_nack_range);
+    EXPECT_EQ(status_report.get_nacks().at(4).nack_range, 2);
+  }
+}
+
+TEST_P(rlc_rx_am_test_with_limit, status_report_large_window)
+{
+  uint32_t sn_start     = 0;
+  uint32_t sn_state     = sn_start;
+  uint32_t sdu_size     = 10;
+  uint32_t segment_size = 7;
+
+  uint32_t sn_max;
+  if (config.max_sn_per_status.has_value()) {
+    sn_max = config.max_sn_per_status.value();
+  } else {
+    sn_max = window_size(to_number(config.sn_field_length));
+  }
+
+  {
+    // check status report
+    rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+    EXPECT_EQ(status_report.ack_sn, sn_state);
+    EXPECT_EQ(status_report.get_nacks().size(), 0);
+    EXPECT_EQ(status_report.get_packed_size(), 3);
+    EXPECT_EQ(rlc->get_status_pdu_length(), 3);
+  }
+
+  {
+    // Create SDU and PDUs with SDU segments
+    std::list<std::vector<uint8_t>> pdu_list = {};
+    byte_buffer                     sdu;
+    ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
+
+    // Push only first segment
+    byte_buffer_slice pdu = {pdu_list.front()};
+    rlc->handle_pdu(std::move(pdu));
+  }
+
+  // Skip sn_state to expand rx_window up to max_nof_sn_per_status_report
+  sn_state += sn_max - 1;
+
+  {
+    // Create SDU and PDUs with SDU segments
+    std::list<std::vector<uint8_t>> pdu_list = {};
+    byte_buffer                     sdu;
+    ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
+
+    // Push only first segment
+    byte_buffer_slice pdu = {pdu_list.front()};
+    rlc->handle_pdu(std::move(pdu));
+  }
+
+  // Now overstep max_nof_sn_per_status_report. The corresponding NACKs shall not appear in the status report
+  for (int i = 0; i < 2; i++) {
+    sn_state++;
+
+    // Create SDU and PDUs with SDU segments
+    std::list<std::vector<uint8_t>> pdu_list = {};
+    byte_buffer                     sdu;
+    ASSERT_NO_FATAL_FAILURE(create_pdus(pdu_list, sdu, sn_state, sdu_size, segment_size, sn_state));
+
+    // Push only first segment
+    byte_buffer_slice pdu = {pdu_list.front()};
+    rlc->handle_pdu(std::move(pdu));
+  }
+
+  // Let the reassembly timer expire (advance rx_highest_status)
+  for (int t = 0; t < config.t_reassembly; t++) {
+    EXPECT_FALSE(rlc->status_report_required());
+    EXPECT_EQ(tester->status_trigger_counter, 0);
+    tick();
+  }
+
+  EXPECT_TRUE(rlc->status_report_required());
+  EXPECT_EQ(tester->status_trigger_counter, 1);
+
   // Check status report
-  status_report = rlc->get_status_pdu();
-  EXPECT_EQ(status_report.ack_sn, 12);
-  EXPECT_EQ(status_report.get_packed_size(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so) +
-                2 * nack_size + rlc_am_nr_status_pdu_sizeof_nack_range);
-  EXPECT_EQ(rlc->get_status_pdu_length(),
-            rlc_am_nr_status_pdu_sizeof_header_ack_sn + 3 * (nack_size + rlc_am_nr_status_pdu_sizeof_nack_so) +
-                2 * nack_size + rlc_am_nr_status_pdu_sizeof_nack_range);
-  ASSERT_EQ(status_report.get_nacks().size(), 5);
-  EXPECT_EQ(status_report.get_nacks().at(0).nack_sn, 0);
-  EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(0).so_start, 4);
-  EXPECT_EQ(status_report.get_nacks().at(0).so_end, 4);
-
-  EXPECT_EQ(status_report.get_nacks().at(1).nack_sn, 0);
-  EXPECT_TRUE(status_report.get_nacks().at(0).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(1).so_start, 6);
-  EXPECT_EQ(status_report.get_nacks().at(1).so_end, 7);
-
-  EXPECT_EQ(status_report.get_nacks().at(2).nack_sn, 0);
-  EXPECT_TRUE(status_report.get_nacks().at(2).has_so);
-  EXPECT_EQ(status_report.get_nacks().at(2).so_start, 9);
-  EXPECT_EQ(status_report.get_nacks().at(2).so_end, rlc_am_status_nack::so_end_of_sdu);
-
-  EXPECT_EQ(status_report.get_nacks().at(3).nack_sn, 4);
-  EXPECT_FALSE(status_report.get_nacks().at(3).has_so);
-
-  EXPECT_EQ(status_report.get_nacks().at(4).nack_sn, 6);
-  EXPECT_FALSE(status_report.get_nacks().at(4).has_so);
-  EXPECT_TRUE(status_report.get_nacks().at(4).has_nack_range);
-  EXPECT_EQ(status_report.get_nacks().at(4).nack_range, 2);
+  rlc_am_status_pdu& status_report = rlc->get_status_pdu();
+  EXPECT_EQ(status_report.ack_sn, sn_start + sn_max);
+  constexpr uint32_t max_nack_range  = 255;
+  uint32_t           nof_nack_ranges = ((sn_max + max_nack_range - 1) / max_nack_range); // round up
+  EXPECT_EQ(status_report.get_nacks().size(), nof_nack_ranges + 1); // +1 for the missing segment at upper edge
 }
 
 /// Verify in-order Rx of full SDUs
@@ -1318,17 +1432,27 @@ TEST_P(rlc_rx_am_test, rx_reverse_with_reversed_segmentation)
 // Finally, instantiate all testcases for each supported SN size
 ///////////////////////////////////////////////////////////////////////////////
 
-std::string test_param_info_to_string(const ::testing::TestParamInfo<rlc_am_sn_size>& info)
+std::string test_param_info_to_string(const ::testing::TestParamInfo<rlc_rx_am_config>& info)
 {
-  fmt::memory_buffer buffer;
-  fmt::format_to(buffer, "{}bit", to_number(info.param));
-  return fmt::to_string(buffer);
+  constexpr static const char* options[] = {"12bit", "18bit"};
+  return options[info.index];
 }
 
 INSTANTIATE_TEST_SUITE_P(rlc_rx_am_test_each_sn_size,
                          rlc_rx_am_test,
-                         ::testing::Values(rlc_am_sn_size::size12bits, rlc_am_sn_size::size18bits),
+                         ::testing::Values(cfg_12bit, cfg_18bit),
                          test_param_info_to_string);
+
+std::string test_param_info_to_string_status_limit(const ::testing::TestParamInfo<rlc_rx_am_config>& info)
+{
+  constexpr static const char* options[] = {"12bit", "18bit", "12bit_status_limit", "18bit_status_limit"};
+  return options[info.index];
+}
+
+INSTANTIATE_TEST_SUITE_P(rlc_rx_am_test_each_sn_size_with_limit,
+                         rlc_rx_am_test_with_limit,
+                         ::testing::Values(cfg_12bit, cfg_18bit, cfg_12bit_status_limit, cfg_18bit_status_limit),
+                         test_param_info_to_string_status_limit);
 
 int main(int argc, char** argv)
 {

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,7 +32,7 @@ using namespace pdcch_constants;
 
 void pdcch_encoder_impl::crc_attach(span<uint8_t>& c, span<const uint8_t> a, unsigned rnti)
 {
-  std::array<uint8_t, RNTI_LEN> unpacked_rnti = {};
+  std::array<uint8_t, RNTI_LEN> unpacked_rnti;
 
   // Unpack RNTI bits
   srsvec::bit_unpack(unpacked_rnti, rnti, RNTI_LEN);

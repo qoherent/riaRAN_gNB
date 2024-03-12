@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #include "f1ap_cu_test_helpers.h"
 #include "lib/f1ap/cu_cp/ue_context/f1ap_cu_ue_context.h"
-#include "srsran/f1ap/common/f1ap_types.h"
+#include "srsran/f1ap/common/f1ap_ue_id.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/test_utils.h"
 
@@ -42,7 +42,7 @@ public:
   {
   }
 
-  gnb_cu_ue_f1ap_id_t get_next_cu_ue_f1ap_id() { return next_cu_ue_f1ap_id; }
+  gnb_cu_ue_f1ap_id_t allocate_cu_ue_f1ap_id() { return next_cu_ue_f1ap_id; }
 
   void set_next_cu_ue_f1ap_id(gnb_cu_ue_f1ap_id_t next_id) { next_cu_ue_f1ap_id = next_id; }
 };
@@ -85,10 +85,10 @@ TEST_F(f1ap_cu_ue_context_test, when_ue_added_then_ue_exists)
   ASSERT_TRUE(ue_ctxt_list.contains(cu_ue_f1ap_id));
   ASSERT_TRUE(ue_ctxt_list.contains(ue_index));
 
-  ASSERT_EQ(ue_ctxt_list[cu_ue_f1ap_id].cu_ue_f1ap_id, cu_ue_f1ap_id);
-  ASSERT_EQ(ue_ctxt_list[cu_ue_f1ap_id].ue_index, ue_index);
-  ASSERT_EQ(ue_ctxt_list[ue_index].cu_ue_f1ap_id, cu_ue_f1ap_id);
-  ASSERT_EQ(ue_ctxt_list[ue_index].ue_index, ue_index);
+  ASSERT_EQ(ue_ctxt_list[cu_ue_f1ap_id].ue_ids.cu_ue_f1ap_id, cu_ue_f1ap_id);
+  ASSERT_EQ(ue_ctxt_list[cu_ue_f1ap_id].ue_ids.ue_index, ue_index);
+  ASSERT_EQ(ue_ctxt_list[ue_index].ue_ids.cu_ue_f1ap_id, cu_ue_f1ap_id);
+  ASSERT_EQ(ue_ctxt_list[ue_index].ue_ids.ue_index, ue_index);
 }
 
 TEST_F(f1ap_cu_ue_context_test, when_ue_not_added_then_ue_doesnt_exist)
@@ -132,7 +132,7 @@ TEST_F(f1ap_cu_ue_context_test, when_ue_exists_then_removal_succeeds)
   ue_ctxt_list.add_ue(ue_index, cu_ue_f1ap_id);
 
   // test removal
-  ue_ctxt_list.remove_ue(cu_ue_f1ap_id);
+  ue_ctxt_list.remove_ue(ue_index);
 
   ASSERT_FALSE(ue_ctxt_list.contains(cu_ue_f1ap_id));
   ASSERT_FALSE(ue_ctxt_list.contains(ue_index));
@@ -148,7 +148,7 @@ TEST_F(f1ap_cu_ue_context_test, when_ue_is_added_then_next_ue_id_is_increased)
   ue_ctxt_list.add_ue(ue_index, cu_ue_f1ap_id);
 
   // remove ue
-  ue_ctxt_list.remove_ue(cu_ue_f1ap_id);
+  ue_ctxt_list.remove_ue(ue_index);
 
   ASSERT_FALSE(ue_ctxt_list.contains(cu_ue_f1ap_id));
   ASSERT_FALSE(ue_ctxt_list.contains(ue_index));
@@ -178,7 +178,7 @@ TEST_F(f1ap_cu_ue_context_test, when_next_ue_id_reaches_max_then_unused_values_a
 
   // set next cu ue f1ap id to maximum value
   ue_ctxt_list.set_next_cu_ue_f1ap_id(gnb_cu_ue_f1ap_id_t::max);
-  ASSERT_EQ((uint64_t)ue_ctxt_list.get_next_cu_ue_f1ap_id(), (uint64_t)gnb_cu_ue_f1ap_id_t::max);
+  ASSERT_EQ((uint64_t)ue_ctxt_list.allocate_cu_ue_f1ap_id(), (uint64_t)gnb_cu_ue_f1ap_id_t::max);
 
   // Add ue with max cu ue f1ap id to let next cu ue f1ap id overflow
   ue_ctxt_list.add_ue(ue_index_t::max, gnb_cu_ue_f1ap_id_t::max);
@@ -189,7 +189,7 @@ TEST_F(f1ap_cu_ue_context_test, when_next_ue_id_reaches_max_then_unused_values_a
   // remove an ue from the context list
   gnb_cu_ue_f1ap_id_t rem_ue_id = int_to_gnb_cu_ue_f1ap_id(19);
   ASSERT_TRUE(ue_ctxt_list.contains(rem_ue_id));
-  ue_ctxt_list.remove_ue(rem_ue_id);
+  ue_ctxt_list.remove_ue(ue_ctxt_list[rem_ue_id].ue_ids.ue_index);
   ASSERT_FALSE(ue_ctxt_list.contains(rem_ue_id));
 
   // Next available cu ue f1ap id should be the removed one

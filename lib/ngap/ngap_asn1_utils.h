@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,8 @@
 
 #include "srsran/adt/expected.h"
 #include "srsran/asn1/ngap/ngap.h"
-#include "srsran/ngap/ngap_types.h"
+#include "srsran/asn1/ngap/ngap_pdu_contents.h"
+#include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/security/security.h"
 #include "srsran/support/error_handling.h"
 

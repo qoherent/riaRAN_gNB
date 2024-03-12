@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,7 +33,7 @@ namespace srsran {
 
 struct mac_ue_context {
   du_ue_index_t   du_ue_index = MAX_NOF_DU_UES;
-  rnti_t          rnti        = INVALID_RNTI;
+  rnti_t          rnti        = rnti_t::INVALID_RNTI;
   du_cell_index_t pcell_idx   = MAX_NOF_DU_CELLS;
 };
 
@@ -66,9 +66,9 @@ public:
   async_task<mac_ue_reconfiguration_response>
   handle_ue_reconfiguration_request(const mac_ue_reconfiguration_request& msg) override;
 
-  void handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override
+  bool handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override
   {
-    ul_unit.flush_ul_ccch_msg(ue_index, std::move(pdu));
+    return ul_unit.flush_ul_ccch_msg(ue_index, std::move(pdu));
   }
 
   /// Fetch UE context

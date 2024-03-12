@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -140,20 +140,22 @@ static ecpri::realtime_control_parameters generate_ecpri_control_parameters(uint
 }
 
 data_flow_cplane_scheduling_commands_impl::data_flow_cplane_scheduling_commands_impl(
-    data_flow_cplane_scheduling_commands_impl_config&& config) :
-  logger(*config.logger),
+    const data_flow_cplane_scheduling_commands_impl_config&  config,
+    data_flow_cplane_scheduling_commands_impl_dependencies&& dependencies) :
+  logger(*dependencies.logger),
+  nof_symbols_per_slot(get_nsymb_per_slot(config.cp)),
   ru_nof_prbs(config.ru_nof_prbs),
   dl_compr_params(config.dl_compr_params),
   ul_compr_params(config.ul_compr_params),
   prach_compr_params(config.prach_compr_params),
   vlan_params(config.vlan_params),
-  ul_cplane_context_repo_ptr(config.ul_cplane_context_repo),
-  frame_pool_ptr(config.frame_pool),
+  ul_cplane_context_repo_ptr(dependencies.ul_cplane_context_repo),
+  frame_pool_ptr(dependencies.frame_pool),
   ul_cplane_context_repo(*ul_cplane_context_repo_ptr),
   frame_pool(*frame_pool_ptr),
-  eth_builder(std::move(config.eth_builder)),
-  ecpri_builder(std::move(config.ecpri_builder)),
-  cp_builder(std::move(config.cp_builder))
+  eth_builder(std::move(dependencies.eth_builder)),
+  ecpri_builder(std::move(dependencies.ecpri_builder)),
+  cp_builder(std::move(dependencies.cp_builder))
 {
   srsran_assert(eth_builder, "Invalid Ethernet VLAN packet builder");
   srsran_assert(ecpri_builder, "Invalid eCPRI packet builder");
@@ -165,14 +167,24 @@ data_flow_cplane_scheduling_commands_impl::data_flow_cplane_scheduling_commands_
 void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_1_message(
     const data_flow_cplane_type_1_context& context)
 {
-  data_direction direction = context.direction;
-  slot_point     slot      = context.slot;
-  logger.debug("Creating Control-Plane message type 1 for {} at slot={}",
+  data_direction    direction = context.direction;
+  slot_point        slot      = context.slot;
+  slot_symbol_point symbol_point(slot, 0, nof_symbols_per_slot);
+  logger.debug("Packing a {} type 1 Control-Plane message for slot '{}' and eAxC '{}'",
                (direction == data_direction::downlink) ? "downlink" : "uplink",
-               slot);
+               slot,
+               context.eaxc);
 
   // Get an ethernet frame buffer.
-  scoped_frame_buffer  scoped_buffer(frame_pool, slot, 0U, message_type::control_plane, direction);
+  scoped_frame_buffer scoped_buffer(frame_pool, symbol_point, message_type::control_plane, direction);
+  if (scoped_buffer.empty()) {
+    logger.warning(
+        "Not enough space in the buffer pool to create a {} type 1 Control-Plane message for slot '{}' and eAxC '{}'",
+        (direction == data_direction::downlink) ? "downlink" : "uplink",
+        slot,
+        context.eaxc);
+    return;
+  }
   ether::frame_buffer& frame_buffer = scoped_buffer.get_next_frame();
   span<uint8_t>        buffer       = frame_buffer.data();
 
@@ -216,12 +228,19 @@ void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_1_message(
 void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_3_prach_message(
     const data_flow_cplane_scheduling_prach_context& context)
 {
-  slot_point slot = context.slot;
-  logger.debug("Creating Control-Plane message type 3 for PRACH at slot={}", slot);
+  slot_point        slot = context.slot;
+  slot_symbol_point symbol_point(slot, context.start_symbol, nof_symbols_per_slot);
+  logger.debug("Packing a type 3 PRACH Control-Plane message for slot '{}' and eAxC '{}'", slot, context.eaxc);
 
   // Get an ethernet frame buffer.
-  scoped_frame_buffer scoped_buffer(
-      frame_pool, slot, context.start_symbol, message_type::control_plane, data_direction::uplink);
+  scoped_frame_buffer scoped_buffer(frame_pool, symbol_point, message_type::control_plane, data_direction::uplink);
+  if (scoped_buffer.empty()) {
+    logger.warning("Not enough space in the buffer pool to create a type 3 PRACH Control-Plane message for slot '{}' "
+                   "and eAxC '{}'",
+                   slot,
+                   context.eaxc);
+    return;
+  }
   ether::frame_buffer& frame_buffer = scoped_buffer.get_next_frame();
   span<uint8_t>        buffer       = frame_buffer.data();
 
@@ -232,8 +251,8 @@ void data_flow_cplane_scheduling_commands_impl::enqueue_section_type_3_prach_mes
   span<uint8_t> ofh_buffer      = buffer.last(buffer.size() - offset.value());
   const auto&   ofh_ctrl_params = generate_prach_control_parameters(context, prach_compr_params, ru_nof_prbs);
 
-  logger.debug("PRACH request at slot={}: numSymbols={}, startSym={}, start_re={}, scs={}, prach_scs={}, nof_rb={}, "
-               "timeOffset={}, freqOffset={}",
+  logger.debug("Generated a PRACH request for slot '{}': numSymbols={}, startSym={}, start_re={}, scs={}, "
+               "prach_scs={}, nof_rb={}, timeOffset={}, freqOffset={}",
                slot,
                context.nof_repetitions,
                context.start_symbol,

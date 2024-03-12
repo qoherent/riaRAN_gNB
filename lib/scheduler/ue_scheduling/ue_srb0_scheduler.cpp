@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "../support/dmrs_helpers.h"
 #include "../support/pdsch/pdsch_resource_allocation.h"
 #include "../support/prbs_calculator.h"
-#include "../support/tbs_calculator.h"
+#include "srsran/ran/sch/tbs_calculator.h"
 
 using namespace srsran;
 
@@ -116,7 +116,7 @@ bool ue_srb0_scheduler::schedule_srb0(cell_resource_allocator& res_alloc, ue& u)
   }
 
   // No resource found in UE's carriers and Search spaces.
-  logger.debug("rnti={:#x}: Not enough PDSCH space for SRB0 message. Will re-try in next slot.", u.crnti);
+  logger.debug("rnti={}: Not enough PDSCH space for SRB0 message. Will re-try in next slot.", u.crnti);
   return false;
 }
 
@@ -132,14 +132,17 @@ bool ue_srb0_scheduler::schedule_srb0(ue& u, cell_resource_allocator& res_alloc,
 
   // Verify there is space in PDSCH and PDCCH result lists for new allocations.
   if (pdsch_alloc.result.dl.ue_grants.full() or pdcch_alloc.result.dl.dl_pdcchs.full()) {
-    logger.debug("rnti={:#x}: Failed to allocate PDSCH for SRB0. Cause: No space available in scheduler output list.",
+    logger.debug("rnti={}: Failed to allocate PDSCH for SRB0. Cause: No space available in scheduler output list.",
                  u.crnti);
     return false;
   }
 
   // Search for empty HARQ.
   dl_harq_process* h_dl = ue_pcell.harqs.find_empty_dl_harq();
-  srsran_assert(h_dl != nullptr, "UE must have empty HARQs during SRB0 PDU allocation");
+  if (h_dl == nullptr) {
+    logger.warning("rnti={}: UE must have empty HARQs during SRB0 PDU allocation", u.crnti);
+    return false;
+  }
 
   // Find available symbol x RB resources.
   const unsigned pending_bytes = u.pending_dl_srb0_newtx_bytes();
@@ -177,12 +180,12 @@ bool ue_srb0_scheduler::schedule_srb0(ue& u, cell_resource_allocator& res_alloc,
 
   if (prbs_tbs.tbs_bytes < pending_bytes) {
     logger.debug(
-        "rnti={:#x}: SRB0 PDU size ({}) exceeds TBS calculated ({}).", pending_bytes, prbs_tbs.tbs_bytes, u.crnti);
+        "rnti={}: SRB0 PDU size ({}) exceeds TBS calculated ({}).", pending_bytes, prbs_tbs.tbs_bytes, u.crnti);
     return false;
   }
 
   if (mcs_idx > expert_cfg.max_msg4_mcs) {
-    logger.debug("rnti={:#x}: MCS index chosen ({}) for SRB0 exceeds maximum allowed MCS index ({}).",
+    logger.debug("rnti={}: MCS index chosen ({}) for SRB0 exceeds maximum allowed MCS index ({}).",
                  u.crnti,
                  mcs_idx,
                  expert_cfg.max_msg4_mcs);
@@ -191,7 +194,7 @@ bool ue_srb0_scheduler::schedule_srb0(ue& u, cell_resource_allocator& res_alloc,
 
   crb_interval ue_grant_crbs = rb_helper::find_empty_interval_of_length(used_crbs, prbs_tbs.nof_prbs, 0);
   if (ue_grant_crbs.length() < prbs_tbs.nof_prbs) {
-    logger.debug("rnti={:#x}: Postponed SRB0 PDU scheduling. Cause: Not enough PRBs ({} < {})",
+    logger.debug("rnti={}: Postponed SRB0 PDU scheduling. Cause: Not enough PRBs ({} < {})",
                  u.crnti,
                  ue_grant_crbs.length(),
                  prbs_tbs.nof_prbs);
@@ -202,23 +205,24 @@ bool ue_srb0_scheduler::schedule_srb0(ue& u, cell_resource_allocator& res_alloc,
   pdcch_dl_information* pdcch =
       pdcch_sch.alloc_dl_pdcch_common(pdcch_alloc, u.crnti, ss_cfg.get_id(), aggregation_level::n4);
   if (pdcch == nullptr) {
-    logger.debug("rnti={:#x}: Postponed SRB0 PDU scheduling. Cause: No space in PDCCH.", u.crnti);
+    logger.debug("rnti={}: Postponed SRB0 PDU scheduling. Cause: No space in PDCCH.", u.crnti);
     return false;
   }
 
   // Allocate PUCCH resources.
-  unsigned             k1          = 4;
-  pucch_harq_ack_grant pucch_grant = {};
+  unsigned k1 = 4;
   // Minimum k1 value supported is 4.
   static const std::array<uint8_t, 5> dci_1_0_k1_values = {4, 5, 6, 7, 8};
+  optional<unsigned>                  pucch_res_indicator;
   for (const auto k1_candidate : dci_1_0_k1_values) {
-    pucch_grant = pucch_alloc.alloc_common_pucch_harq_ack_ue(res_alloc, u.crnti, pdsch_td_cfg.k0, k1_candidate, *pdcch);
-    if (pucch_grant.pucch_pdu != nullptr) {
+    pucch_res_indicator =
+        pucch_alloc.alloc_common_pucch_harq_ack_ue(res_alloc, u.crnti, pdsch_td_cfg.k0, k1_candidate, *pdcch);
+    if (pucch_res_indicator.has_value()) {
       k1 = k1_candidate;
       break;
     }
   }
-  if (pucch_grant.pucch_pdu == nullptr) {
+  if (not pucch_res_indicator.has_value()) {
     logger.debug("Failed to allocate PDSCH for SRB0. Cause: No space in PUCCH.");
     pdcch_sch.cancel_last_pdcch(pdcch_alloc);
     return false;
@@ -232,7 +236,7 @@ bool ue_srb0_scheduler::schedule_srb0(ue& u, cell_resource_allocator& res_alloc,
                   *h_dl,
                   *pdcch,
                   pdsch_alloc.result.dl.ue_grants.emplace_back(),
-                  pucch_grant,
+                  pucch_res_indicator.value(),
                   pdsch_time_res,
                   k1,
                   mcs_idx,
@@ -248,7 +252,7 @@ void ue_srb0_scheduler::fill_srb0_grant(ue&                        u,
                                         dl_harq_process&           h_dl,
                                         pdcch_dl_information&      pdcch,
                                         dl_msg_alloc&              msg,
-                                        pucch_harq_ack_grant&      pucch,
+                                        unsigned                   pucch_res_indicator,
                                         unsigned                   pdsch_time_res,
                                         unsigned                   k1,
                                         sch_mcs_index              mcs_idx,
@@ -258,7 +262,12 @@ void ue_srb0_scheduler::fill_srb0_grant(ue&                        u,
 {
   static constexpr uint8_t srb0_dai = 0;
   // Allocate DL HARQ.
-  h_dl.new_tx(pdsch_slot, k1, expert_cfg.max_nof_harq_retxs, srb0_dai);
+  h_dl.new_tx(pdsch_slot,
+              k1,
+              expert_cfg.max_nof_harq_retxs,
+              srb0_dai,
+              u.get_pcell().channel_state_manager().get_wideband_cqi(),
+              u.get_pcell().channel_state_manager().get_nof_dl_layers());
 
   // Fill DL PDCCH DCI.
   static const uint8_t msg4_rv = 0;
@@ -267,7 +276,7 @@ void ue_srb0_scheduler::fill_srb0_grant(ue&                        u,
                          ue_grant_crbs,
                          pdsch_time_res,
                          k1,
-                         pucch.pucch_res_indicator,
+                         pucch_res_indicator,
                          mcs_idx,
                          msg4_rv,
                          h_dl);

@@ -1,9 +1,21 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
-# By using this file, you agree to the terms and conditions set
-# forth in the LICENSE file which can be found at the top level of
-# the distribution.
+# This file is part of srsRAN
+#
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
 #
 
 """
@@ -11,7 +23,7 @@ Test ping
 """
 import logging
 from contextlib import suppress
-from typing import Optional, Sequence, Union
+from typing import Optional, Sequence, Tuple, Union
 
 import grpc
 from _pytest.outcomes import Failed
@@ -47,7 +59,7 @@ from .steps.stub import ping, start_network, stop, ue_start_and_attach, ue_stop
 def test_android(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -62,7 +74,7 @@ def test_android(
     _ping(
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1,),
+        ue_array=(ue,),
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -87,16 +99,17 @@ def test_android(
 @mark.parametrize(
     "band, common_scs, bandwidth",
     (
-        param(3, 15, 20, id="band:%s-scs:%s-bandwidth:%s"),
-        param(78, 30, 40, id="band:%s-scs:%s-bandwidth:%s"),
+        param(7, 15, 20, id="band:%s-scs:%s-bandwidth:%s"),
+        param(78, 30, 50, id="band:%s-scs:%s-bandwidth:%s"),
+        param(78, 30, 90, id="band:%s-scs:%s-bandwidth:%s"),
     ),
 )
 @mark.android_hp
 # pylint: disable=too-many-arguments
-def test_android_2x2_mimo(
+def test_android_hp(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -111,7 +124,7 @@ def test_android_2x2_mimo(
     _ping(
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1,),
+        ue_array=(ue,),
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -139,14 +152,12 @@ def test_android_2x2_mimo(
     ),
 )
 @mark.zmq
+@mark.flaky(reruns=2, only_rerun=["Some packages got lost"])
 # pylint: disable=too-many-arguments
 def test_zmq(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_32: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -160,7 +171,7 @@ def test_zmq(
     _ping(
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1, ue_2, ue_3, ue_4),
+        ue_array=ue_32,
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -181,10 +192,7 @@ def test_zmq(
 def test_zmq_valgrind(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_4: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -201,7 +209,7 @@ def test_zmq_valgrind(
         _ping(
             retina_manager=retina_manager,
             retina_data=retina_data,
-            ue_array=(ue_1, ue_2, ue_3, ue_4),
+            ue_array=ue_4,
             gnb=gnb,
             fivegc=fivegc,
             band=band,
@@ -216,7 +224,7 @@ def test_zmq_valgrind(
             gnb_stop_timeout=gnb_stop_timeout,
         )
     stop(
-        (ue_1, ue_2, ue_3, ue_4),
+        ue_4,
         gnb,
         fivegc,
         retina_data,
@@ -237,10 +245,7 @@ def test_zmq_valgrind(
 def test_rf(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_4: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -254,7 +259,7 @@ def test_rf(
     _ping(
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1, ue_2, ue_3, ue_4),
+        ue_array=ue_4,
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -262,7 +267,7 @@ def test_rf(
         bandwidth=bandwidth,
         sample_rate=None,  # default from testbed
         global_timing_advance=-1,
-        time_alignment_calibration="auto",
+        time_alignment_calibration="264",
         warning_as_errors=False,
         always_download_artifacts=True,
     )
@@ -277,10 +282,7 @@ def test_rf(
 def test_rf_does_not_crash(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_4: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -297,7 +299,7 @@ def test_rf_does_not_crash(
         _ping(
             retina_manager=retina_manager,
             retina_data=retina_data,
-            ue_array=(ue_1, ue_2, ue_3, ue_4),
+            ue_array=ue_4,
             gnb=gnb,
             fivegc=fivegc,
             band=band,
@@ -305,11 +307,11 @@ def test_rf_does_not_crash(
             bandwidth=bandwidth,
             sample_rate=None,  # default from testbed
             global_timing_advance=-1,
-            time_alignment_calibration="auto",
+            time_alignment_calibration="264",
             log_search=False,
             always_download_artifacts=True,
         )
-    stop((ue_1, ue_2, ue_3, ue_4), gnb, fivegc, retina_data, log_search=False)
+    stop(ue_4, gnb, fivegc, retina_data, log_search=False)
 
 
 # pylint: disable=too-many-arguments, too-many-locals
@@ -333,6 +335,7 @@ def _ping(
     pre_command: str = "",
     post_command: str = "",
     gnb_stop_timeout: int = 0,
+    ue_stop_timeout: int = 0,
     plmn: Optional[PLMN] = None,
 ):
     logging.info("Ping Test")
@@ -371,5 +374,6 @@ def _ping(
         retina_data,
         gnb_stop_timeout=gnb_stop_timeout,
         log_search=log_search,
+        ue_stop_timeout=ue_stop_timeout,
         warning_as_errors=warning_as_errors,
     )

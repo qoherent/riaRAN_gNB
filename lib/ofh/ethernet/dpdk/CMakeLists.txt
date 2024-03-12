@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,9 +19,11 @@
 #
 
 set(SOURCES
+        dpdk_ethernet_port_context.cpp
         dpdk_ethernet_transmitter.cpp
         dpdk_ethernet_factories.cpp
         dpdk_ethernet_receiver.cpp)
 
 add_library(srsran_ofh_dpdk_ethernet STATIC ${SOURCES})
+target_compile_options(srsran_ofh_dpdk_ethernet PRIVATE ${DPDK_CFLAGS})
 target_link_libraries(srsran_ofh_dpdk_ethernet srslog ${DPDK_LIBRARIES})

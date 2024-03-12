@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,7 +26,7 @@
 
 using namespace srsran;
 
-std::unique_ptr<srs_cu_cp::cu_cp_interface> srsran::create_cu_cp(const srs_cu_cp::cu_cp_configuration& cfg_)
+std::unique_ptr<srs_cu_cp::cu_cp> srsran::create_cu_cp(const srs_cu_cp::cu_cp_configuration& cfg_)
 {
   return std::make_unique<srs_cu_cp::cu_cp_impl>(cfg_);
 }

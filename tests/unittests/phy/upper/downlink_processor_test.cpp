@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -34,6 +34,8 @@
 
 using namespace srsran;
 
+static srslog::basic_logger& logger = srslog::fetch_basic_logger("PHY");
+
 TEST(downlinkProcessorTest, worksInOrder)
 {
   upper_phy_rg_gateway_fto gw;
@@ -54,7 +56,8 @@ TEST(downlinkProcessorTest, worksInOrder)
                                                                                 std::move(pdsch_processor),
                                                                                 std::move(ssb_processor),
                                                                                 std::move(csi_rs_processor),
-                                                                                executor);
+                                                                                executor,
+                                                                                logger);
   slot_point slot(1, 2, 1);
   unsigned   sector = 0;
 
@@ -109,7 +112,8 @@ TEST(downlinkProcessorTest, finishIsCalledBeforeProcessingPdus)
                                                                                 std::move(pdsch_processor),
                                                                                 std::move(ssb_processor),
                                                                                 std::move(csi_rs_processor),
-                                                                                executor);
+                                                                                executor,
+                                                                                logger);
 
   slot_point slot(1, 2, 1);
   unsigned   sector = 0;
@@ -165,7 +169,8 @@ TEST(downlinkProcessorTest, processPduAfterFinishProcessingPdusDoesNothing)
                                                                                 std::move(pdsch_processor),
                                                                                 std::move(ssb_processor),
                                                                                 std::move(csi_rs_processor),
-                                                                                executor);
+                                                                                executor,
+                                                                                logger);
 
   slot_point slot(1, 2, 1);
   unsigned   sector = 0;
@@ -187,10 +192,7 @@ TEST(downlinkProcessorTest, processPduAfterFinishProcessingPdusDoesNothing)
   ASSERT_TRUE(gw.sent);
 
   // Process a PDU after finish_processing_pdus() method has been called.
-  {
-    bool processed = dl_processor->process_nzp_csi_rs({});
-    ASSERT_FALSE(processed);
-  }
+  dl_processor->process_nzp_csi_rs({});
   ASSERT_FALSE(csi_rs_ref.is_map_called());
 }
 
@@ -214,25 +216,17 @@ TEST(downlinkProcessorTest, processPduBeforeConfigureDoesNothing)
                                                                                 std::move(pdsch_processor),
                                                                                 std::move(ssb_processor),
                                                                                 std::move(csi_rs_processor),
-                                                                                executor);
+                                                                                executor,
+                                                                                logger);
 
   dl_processor->process_ssb({});
   pdcch_processor::pdu_t pdu;
   pdu.dci.precoding         = precoding_configuration::make_wideband(make_single_port());
   std::vector<uint8_t> data = {1, 2, 3, 4};
 
-  {
-    bool processed = dl_processor->process_pdcch(pdu);
-    ASSERT_FALSE(processed);
-  }
-  {
-    bool processed = dl_processor->process_pdsch({data}, {});
-    ASSERT_FALSE(processed);
-  }
-  {
-    bool processed = dl_processor->process_nzp_csi_rs({});
-    ASSERT_FALSE(processed);
-  }
+  dl_processor->process_pdcch(pdu);
+  dl_processor->process_pdsch({data}, {});
+  dl_processor->process_nzp_csi_rs({});
 
   ASSERT_FALSE(pdcch_ref.is_process_called());
   ASSERT_FALSE(pdsch_ref.is_process_called());
@@ -254,7 +248,8 @@ TEST(downlinkProcessorTest, finishBeforeConfigureDeath)
                                                                 std::make_unique<pdsch_processor_spy>(),
                                                                 std::make_unique<ssb_processor_spy>(),
                                                                 std::make_unique<csi_rs_processor_spy>(),
-                                                                executor);
+                                                                executor,
+                                                                logger);
 
   ASSERT_TRUE(!gw.sent);
 
@@ -277,7 +272,8 @@ TEST(downlinkProcessorTest, twoConsecutiveSlots)
                                                                 std::make_unique<pdsch_processor_spy>(),
                                                                 std::make_unique<ssb_processor_spy>(),
                                                                 std::make_unique<csi_rs_processor_spy>(),
-                                                                executor);
+                                                                executor,
+                                                                logger);
   slot_point slot(1, 2, 1);
   unsigned   sector = 0;
 
@@ -324,26 +320,13 @@ TEST(downlinkProcessorTest, finishWithoutProcessingPdusSendsTheGrid)
                                                                 std::make_unique<pdsch_processor_spy>(),
                                                                 std::make_unique<ssb_processor_spy>(),
                                                                 std::make_unique<csi_rs_processor_spy>(),
-                                                                executor);
+                                                                executor,
+                                                                logger);
   slot_point slot(1, 2, 1);
   unsigned   sector = 0;
 
   resource_grid_spy grid(0, 0, 0);
   dl_processor->configure_resource_grid({slot, sector}, grid);
-
-  // The resource grid should not have been set to zero yet.
-  ASSERT_FALSE(grid.has_set_all_zero_method_been_called());
-
-  // The resource grid set all zero should be enqueued.
-  ASSERT_TRUE(executor.has_pending_tasks());
-
-  // Run resource grid zero set.
-  executor.run_pending_tasks();
-
-  // The resource grid set all zero should have been called.
-  ASSERT_TRUE(grid.has_set_all_zero_method_been_called());
-
-  ASSERT_FALSE(gw.sent);
 
   // By finishing PDUs, the resource grid should be sent.
   dl_processor->finish_processing_pdus();

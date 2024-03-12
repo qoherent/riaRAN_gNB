@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,7 +32,7 @@ std::unique_ptr<mbuf_pool> srsran::dpdk::create_mbuf_pool(const char*           
                                                           srslog::basic_logger& logger)
 {
   // Create a new memory pool.
-  rte_mempool* pool =
+  ::rte_mempool* pool =
       create_mem_pool(pool_name, socket, cfg.n_mbuf, cfg.mempool_cache_size, cfg.mbuf_data_size, logger);
   if (pool == nullptr) {
     return nullptr;

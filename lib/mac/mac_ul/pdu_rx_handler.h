@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,7 +30,7 @@
 #include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/du_high/rnti_value_table.h"
 #include "srsran/mac/mac.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/mac_pcap.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/slot_point.h"
 

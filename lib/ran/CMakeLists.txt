@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -42,12 +42,15 @@ add_library(srsran_ran
         prach/prach_helper.cpp
         precoding/precoding_codebooks.cpp
         pusch/pusch_mcs.cpp
+        pusch/pusch_tpmi_select.cpp
         pusch/pusch_uci_beta_offset.cpp
         pusch/ulsch_info.cpp
         uci/uci_part2_size_calculator.cpp
         band_helper.cpp
+        sch/tbs_calculator.cpp
         resource_allocation/resource_allocation_frequency.cpp
         sch/sch_segmentation.cpp
+        srs/srs_bandwidth_configuration.cpp
         ssb_freq_position_generator.cpp
         ssb_gscn.cpp
         ssb_mapping.cpp

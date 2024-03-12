@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,19 +22,21 @@
 
 #include "ngap_pdu_session_resource_release_procedure.h"
 #include "../ngap/ngap_asn1_helpers.h"
+#include "srsran/asn1/ngap/common.h"
+#include "srsran/ngap/ngap_message.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
 using namespace asn1::ngap;
 
 ngap_pdu_session_resource_release_procedure::ngap_pdu_session_resource_release_procedure(
-    ngap_ue&                                          ue_,
     const cu_cp_pdu_session_resource_release_command& command_,
+    const ngap_ue_ids&                                ue_ids_,
     ngap_du_processor_control_notifier&               du_processor_ctrl_notif_,
     ngap_message_notifier&                            amf_notif_,
-    srslog::basic_logger&                             logger_) :
-  ue(ue_),
+    ngap_ue_logger&                                   logger_) :
   command(command_),
+  ue_ids(ue_ids_),
   du_processor_ctrl_notifier(du_processor_ctrl_notif_),
   amf_notifier(amf_notif_),
   logger(logger_)
@@ -45,11 +47,7 @@ void ngap_pdu_session_resource_release_procedure::operator()(coro_context<async_
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={} ran_ue_id={} amf_ue_id={}: \"{}\" initialized",
-               ue.get_ue_index(),
-               ue.get_amf_ue_id(),
-               ue.get_ran_ue_id(),
-               name());
+  logger.log_debug("\"{}\" initialized", name());
 
   // Handle mandatory IEs
   CORO_AWAIT_VALUE(response, du_processor_ctrl_notifier.on_new_pdu_session_resource_release_command(command));
@@ -58,11 +56,7 @@ void ngap_pdu_session_resource_release_procedure::operator()(coro_context<async_
 
   send_pdu_session_resource_release_response();
 
-  logger.debug("ue={} ran_ue_id={} amf_ue_id={}: \"{}\" finalized",
-               ue.get_ue_index(),
-               ue.get_amf_ue_id(),
-               ue.get_ran_ue_id(),
-               name());
+  logger.log_debug("\"{}\" finalized", name());
 
   CORO_RETURN();
 }
@@ -78,12 +72,9 @@ void ngap_pdu_session_resource_release_procedure::send_pdu_session_resource_rele
       ngap_msg.pdu.successful_outcome().value.pdu_session_res_release_resp(), response);
 
   auto& pdu_session_res_release_resp           = ngap_msg.pdu.successful_outcome().value.pdu_session_res_release_resp();
-  pdu_session_res_release_resp->amf_ue_ngap_id = amf_ue_id_to_uint(ue.get_amf_ue_id());
-  pdu_session_res_release_resp->ran_ue_ngap_id = ran_ue_id_to_uint(ue.get_ran_ue_id());
+  pdu_session_res_release_resp->amf_ue_ngap_id = amf_ue_id_to_uint(ue_ids.amf_ue_id);
+  pdu_session_res_release_resp->ran_ue_ngap_id = ran_ue_id_to_uint(ue_ids.ran_ue_id);
 
-  logger.info("ue={} ran_ue_id={} amf_ue_id={}: Sending PduSessionResourceReleaseResponse",
-              ue.get_ue_index(),
-              ue.get_amf_ue_id(),
-              ue.get_ran_ue_id());
+  logger.log_info("Sending PduSessionResourceReleaseResponse");
   amf_notifier.on_new_message(ngap_msg);
 }

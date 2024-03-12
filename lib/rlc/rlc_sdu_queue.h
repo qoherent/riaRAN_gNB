@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,7 +37,7 @@ namespace srsran {
 class rlc_sdu_queue
 {
 public:
-  explicit rlc_sdu_queue(uint16_t capacity_ = 1024) :
+  explicit rlc_sdu_queue(uint16_t capacity_ = 4096) :
     capacity(capacity_), queue(capacity_, push_callback(unread_bytes, n_sdus), pop_callback(unread_bytes, n_sdus))
   {
   }

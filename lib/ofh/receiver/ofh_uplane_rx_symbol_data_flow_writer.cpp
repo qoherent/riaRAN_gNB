@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,16 +33,18 @@ void uplane_rx_symbol_data_flow_writer::write_to_resource_grid(unsigned         
   unsigned       symbol     = results.params.symbol_id;
   uplink_context ul_context = ul_context_repo.get(slot, symbol);
   if (ul_context.empty()) {
-    logger.info("Dropping Open Fronthaul message as no uplink slot context was found for slot={}, symbol={}",
-                results.params.slot,
-                results.params.symbol_id);
+    logger.warning("Dropped received Open Fronthaul message as no uplink slot context was found for slot '{}', symbol "
+                   "'{}' and eAxC '{}'",
+                   results.params.slot,
+                   results.params.symbol_id,
+                   eaxc);
 
     return;
   }
 
   // Find resource grid port with eAxC.
   unsigned rg_port = std::distance(ul_eaxc.begin(), std::find(ul_eaxc.begin(), ul_eaxc.end(), eaxc));
-  srsran_assert(rg_port < ul_eaxc.size(), "Invalid resource grid port={}", rg_port);
+  srsran_assert(rg_port < ul_eaxc.size(), "Invalid resource grid port value '{}'", rg_port);
 
   unsigned du_ul_nof_prbs = ul_context.get_grid_nof_prbs();
   for (const auto& sect : results.sections) {
@@ -59,13 +61,6 @@ void uplane_rx_symbol_data_flow_writer::write_to_resource_grid(unsigned         
       nof_prbs_to_write = sect.nof_prbs;
     }
 
-    logger.debug("Writing into the resource grid prbs=[{},{}), symbol={}, port={} at slot={}",
-                 sect.start_prb,
-                 sect.start_prb + nof_prbs_to_write,
-                 symbol,
-                 rg_port,
-                 slot);
-
     ul_context_repo.write_grid(
         slot,
         rg_port,
@@ -73,5 +68,12 @@ void uplane_rx_symbol_data_flow_writer::write_to_resource_grid(unsigned         
         sect.start_prb * NOF_SUBCARRIERS_PER_RB,
         span<const cf_t>(sect.iq_samples)
             .subspan(sect.start_prb * NOF_SUBCARRIERS_PER_RB, nof_prbs_to_write * NOF_SUBCARRIERS_PER_RB));
+
+    logger.debug("Written IQ data into UL resource grid PRB range [{},{}), for slot '{}', symbol '{}' and port '{}'",
+                 sect.start_prb,
+                 sect.start_prb + nof_prbs_to_write,
+                 slot,
+                 symbol,
+                 rg_port);
   }
 }

@@ -1,9 +1,21 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
-# By using this file, you agree to the terms and conditions set
-# forth in the LICENSE file which can be found at the top level of
-# the distribution.
+# This file is part of srsRAN
+#
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
 #
 
 """
@@ -11,8 +23,9 @@ Test Iperf
 """
 
 import logging
+from collections import defaultdict
 from time import sleep
-from typing import Optional, Sequence, Union
+from typing import Optional, Sequence, Tuple, Union
 
 from pytest import mark
 from retina.client.manager import RetinaTestManager
@@ -23,20 +36,126 @@ from retina.protocol.fivegc_pb2_grpc import FiveGCStub
 from retina.protocol.gnb_pb2_grpc import GNBStub
 from retina.protocol.ue_pb2 import IPerfDir, IPerfProto
 from retina.protocol.ue_pb2_grpc import UEStub
-from retina.reporter.metric_manager import MetricManager
 
-from .steps.configuration import configure_test_parameters, get_minimum_sample_rate_for_bandwidth
-from .steps.stub import iperf, start_and_attach, stop
-from .utils import get_current_pytest_suite_name, get_current_pytest_test_name
+from .steps.configuration import configure_test_parameters, get_minimum_sample_rate_for_bandwidth, is_tdd
+from .steps.stub import iperf_parallel, start_and_attach, stop
 
 TINY_DURATION = 10
 SHORT_DURATION = 20
-LONG_DURATION = 5 * 60
+LONG_DURATION = 2 * 60
 LOW_BITRATE = int(1e6)
 MEDIUM_BITRATE = int(15e6)
 HIGH_BITRATE = int(50e6)
+MAX_BITRATE = int(600e6)
 
 ZMQ_ID = "band:%s-scs:%s-bandwidth:%s-bitrate:%s-artifacts:%s"
+
+# TDD throughput (empirical measurements, might become outdated if RF conditions change)
+tdd_ul_udp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        20: int(16e6),
+        50: int(33e6),
+        90: int(58e6),
+    },
+)
+tdd_dl_udp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        20: int(45e6),
+        50: int(156e6),
+        90: int(247e6),
+    },
+)
+tdd_ul_tcp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        20: int(16e6),
+        50: int(29e6),
+        90: int(56e6),
+    },
+)
+tdd_dl_tcp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        20: int(43e6),
+        50: int(153e6),
+        90: int(124e6),  # TODO: update this value if lates are gone
+    },
+)
+
+# FDD throughput (empirical measurements, might become outdated if RF conditions change)
+fdd_ul_udp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        10: int(32e6),
+        20: int(71e6),
+    },
+)
+fdd_dl_udp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        10: int(35e6),
+        20: int(97e6),
+    },
+)
+fdd_ul_tcp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        10: int(30e6),
+        20: int(69e6),
+    },
+)
+fdd_dl_tcp = defaultdict(
+    lambda: MAX_BITRATE,
+    {
+        10: int(35e6),
+        20: int(96e6),
+    },
+)
+
+
+def get_maximum_throughput_tdd(bandwidth: int, direction: IPerfDir, protocol: IPerfProto) -> int:
+    """
+    Get the maximum E2E TDD throughput for bandwidth, direction and transport protocol
+    """
+    if direction in (IPerfDir.UPLINK, IPerfDir.BIDIRECTIONAL):
+        if protocol == IPerfProto.UDP:
+            return tdd_ul_udp[bandwidth]
+        if protocol == IPerfProto.TCP:
+            return tdd_ul_tcp[bandwidth]
+    elif direction == IPerfDir.DOWNLINK:
+        if protocol == IPerfProto.UDP:
+            return tdd_dl_udp[bandwidth]
+        if protocol == IPerfProto.TCP:
+            return tdd_dl_tcp[bandwidth]
+    return 0
+
+
+def get_maximum_throughput_fdd(bandwidth: int, direction: IPerfDir, protocol: IPerfProto) -> int:
+    """
+    Get the maximum E2E FDD throughput for bandwidth, direction and transport protocol
+    """
+    if direction in (IPerfDir.UPLINK, IPerfDir.BIDIRECTIONAL):
+        if protocol == IPerfProto.UDP:
+            return fdd_ul_udp[bandwidth]
+        if protocol == IPerfProto.TCP:
+            return fdd_ul_tcp[bandwidth]
+    elif direction == IPerfDir.DOWNLINK:
+        if protocol == IPerfProto.UDP:
+            return fdd_dl_udp[bandwidth]
+        if protocol == IPerfProto.TCP:
+            return fdd_dl_tcp[bandwidth]
+    return 0
+
+
+def get_maximum_throughput(bandwidth: int, band: int, direction: IPerfDir, protocol: IPerfProto) -> int:
+    """
+    Get the maximum E2E throughput for bandwidth, duplex-type, direction and transport protocol
+    """
+    if is_tdd(band):
+        return get_maximum_throughput_tdd(bandwidth, direction, protocol)
+    return get_maximum_throughput_fdd(bandwidth, direction, protocol)
 
 
 @mark.parametrize(
@@ -63,7 +182,7 @@ ZMQ_ID = "band:%s-scs:%s-bandwidth:%s-bitrate:%s-artifacts:%s"
 def test_srsue(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -77,10 +196,9 @@ def test_srsue(
     """
 
     _iperf(
-        reporter=None,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1,),
+        ue_array=(ue,),
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -95,6 +213,7 @@ def test_srsue(
         time_alignment_calibration=0,
         always_download_artifacts=False,
         common_search_space_enable=True,
+        prach_config_index=1,
     )
 
 
@@ -125,7 +244,7 @@ def test_srsue(
 def test_android(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -139,10 +258,9 @@ def test_android(
     """
 
     _iperf(
-        reporter=None,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1,),
+        ue_array=(ue,),
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -151,7 +269,7 @@ def test_android(
         sample_rate=get_minimum_sample_rate_for_bandwidth(bandwidth),
         iperf_duration=SHORT_DURATION,
         protocol=protocol,
-        bitrate=MEDIUM_BITRATE,
+        bitrate=get_maximum_throughput(bandwidth, band, direction, protocol),
         direction=direction,
         global_timing_advance=-1,
         time_alignment_calibration="auto",
@@ -178,17 +296,17 @@ def test_android(
 @mark.parametrize(
     "band, common_scs, bandwidth",
     (
-        param(78, 30, 40, id="band:%s-scs:%s-bandwidth:%s"),
-        param(3, 15, 20, id="band:%s-scs:%s-bandwidth:%s"),
+        param(7, 15, 20, id="band:%s-scs:%s-bandwidth:%s"),
+        param(78, 30, 50, id="band:%s-scs:%s-bandwidth:%s"),
+        param(78, 30, 90, id="band:%s-scs:%s-bandwidth:%s"),
     ),
 )
 @mark.android_hp
 # pylint: disable=too-many-arguments
-def test_android_2x2_mimo(
+def test_android_hp(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    reporter: None,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -202,10 +320,9 @@ def test_android_2x2_mimo(
     """
 
     _iperf(
-        reporter=reporter,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1,),
+        ue_array=(ue,),
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -214,7 +331,7 @@ def test_android_2x2_mimo(
         sample_rate=None,
         iperf_duration=SHORT_DURATION,
         protocol=protocol,
-        bitrate=HIGH_BITRATE,
+        bitrate=get_maximum_throughput(bandwidth, band, direction, protocol),
         direction=direction,
         global_timing_advance=-1,
         time_alignment_calibration="auto",
@@ -247,7 +364,7 @@ def test_android_2x2_mimo(
 def test_zmq_4x4_mimo(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -261,10 +378,9 @@ def test_zmq_4x4_mimo(
     """
 
     _iperf(
-        reporter=None,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1,),
+        ue_array=(ue,),
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -277,7 +393,7 @@ def test_zmq_4x4_mimo(
         direction=direction,
         global_timing_advance=-1,
         time_alignment_calibration=0,
-        always_download_artifacts=True,
+        always_download_artifacts=False,
     )
 
 
@@ -306,10 +422,7 @@ def test_zmq_4x4_mimo(
 def test_zmq_smoke(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_4: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -325,10 +438,9 @@ def test_zmq_smoke(
     """
 
     _iperf(
-        reporter=None,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1, ue_2, ue_3, ue_4),
+        ue_array=ue_4,
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -343,6 +455,7 @@ def test_zmq_smoke(
         time_alignment_calibration=0,
         always_download_artifacts=always_download_artifacts,
         bitrate_threshold=0,
+        ue_stop_timeout=10,
     )
 
 
@@ -375,14 +488,12 @@ def test_zmq_smoke(
     ),
 )
 @mark.zmq
+@mark.flaky(reruns=1, only_rerun=["failed to start", "iperf did not achieve the expected data rate"])
 # pylint: disable=too-many-arguments
 def test_zmq(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_32: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
@@ -398,10 +509,9 @@ def test_zmq(
     """
 
     _iperf(
-        reporter=None,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1, ue_2, ue_3, ue_4),
+        ue_array=ue_32,
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -429,6 +539,13 @@ def test_zmq(
     ),
 )
 @mark.parametrize(
+    "protocol",
+    (
+        param(IPerfProto.UDP, id="udp", marks=mark.udp),
+        param(IPerfProto.TCP, id="tcp", marks=mark.tcp),
+    ),
+)
+@mark.parametrize(
     "band, common_scs, bandwidth",
     (
         param(3, 15, 10, id="band:%s-scs:%s-bandwidth:%s"),
@@ -437,18 +554,16 @@ def test_zmq(
 )
 @mark.rf
 # pylint: disable=too-many-arguments
-def test_rf_udp(
+def test_rf(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
-    ue_2: UEStub,
-    ue_3: UEStub,
-    ue_4: UEStub,
+    ue_4: Tuple[UEStub, ...],
     fivegc: FiveGCStub,
     gnb: GNBStub,
     band: int,
     common_scs: int,
     bandwidth: int,
+    protocol: IPerfProto,
     direction: IPerfDir,
 ):
     """
@@ -456,10 +571,9 @@ def test_rf_udp(
     """
 
     _iperf(
-        reporter=None,
         retina_manager=retina_manager,
         retina_data=retina_data,
-        ue_array=(ue_1, ue_2, ue_3, ue_4),
+        ue_array=ue_4,
         gnb=gnb,
         fivegc=fivegc,
         band=band,
@@ -467,19 +581,18 @@ def test_rf_udp(
         bandwidth=bandwidth,
         sample_rate=None,  # default from testbed
         iperf_duration=LONG_DURATION,
-        protocol=IPerfProto.UDP,
+        protocol=protocol,
         bitrate=MEDIUM_BITRATE,
         direction=direction,
         global_timing_advance=-1,
-        time_alignment_calibration="auto",
-        always_download_artifacts=True,
+        time_alignment_calibration="264",
+        always_download_artifacts=False,
         warning_as_errors=False,
     )
 
 
 # pylint: disable=too-many-arguments, too-many-locals
 def _iperf(
-    reporter: Optional[MetricManager],
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
     ue_array: Sequence[UEStub],
@@ -501,8 +614,10 @@ def _iperf(
     gnb_post_cmd: str = "",
     plmn: Optional[PLMN] = None,
     common_search_space_enable: bool = False,
+    prach_config_index=-1,
+    ue_stop_timeout: int = 0,
 ):
-    wait_before_power_off = 2
+    wait_before_power_off = 5
 
     logging.info("Iperf Test")
 
@@ -517,6 +632,7 @@ def _iperf(
         time_alignment_calibration=time_alignment_calibration,
         pcap=False,
         common_search_space_enable=common_search_space_enable,
+        prach_config_index=prach_config_index,
     )
     configure_artifacts(
         retina_data=retina_data,
@@ -525,7 +641,7 @@ def _iperf(
 
     ue_attach_info_dict = start_and_attach(ue_array, gnb, fivegc, gnb_post_cmd=gnb_post_cmd, plmn=plmn)
 
-    iperf_result = iperf(
+    iperf_parallel(
         ue_attach_info_dict,
         fivegc,
         protocol,
@@ -535,27 +651,5 @@ def _iperf(
         bitrate_threshold,
     )
 
-    if reporter is not None:
-        test_name = get_current_pytest_test_name()
-        test_suite = get_current_pytest_suite_name()
-
-        for i, iperf_result_inst in enumerate(iperf_result):
-            if direction in (IPerfDir.DOWNLINK, IPerfDir.BIDIRECTIONAL):
-                reporter.write_db_direct(
-                    test_suite,
-                    test_name,
-                    f"ue_{i}",
-                    "Downlink",
-                    [str(iperf_result_inst.downlink.bits_per_second)],
-                )
-            elif direction in (IPerfDir.UPLINK, IPerfDir.BIDIRECTIONAL):
-                reporter.write_db_direct(
-                    test_suite,
-                    test_name,
-                    f"ue_{i}",
-                    "Uplink",
-                    [str(iperf_result_inst.uplink.bits_per_second)],
-                )
-
     sleep(wait_before_power_off)
-    stop(ue_array, gnb, fivegc, retina_data, warning_as_errors=warning_as_errors)
+    stop(ue_array, gnb, fivegc, retina_data, ue_stop_timeout=ue_stop_timeout, warning_as_errors=warning_as_errors)

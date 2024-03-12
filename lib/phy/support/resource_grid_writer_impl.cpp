@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -69,7 +69,7 @@ void resource_grid_writer_impl::put(unsigned                             port,
     // Write into the desired resource element.
     rg_symbol[coordinate.subcarrier] = symbols[count++];
   }
-  empty[port] = false;
+  clear_empty(port);
 }
 
 span<const cf_t> resource_grid_writer_impl::put(unsigned         port,
@@ -99,7 +99,7 @@ span<const cf_t> resource_grid_writer_impl::put(unsigned         port,
       symbol_buffer              = symbol_buffer.last(symbol_buffer.size() - 1);
     }
   }
-  empty[port] = false;
+  clear_empty(port);
 
   // Update symbol buffer
   return symbol_buffer;
@@ -122,7 +122,7 @@ span<const cf_t> resource_grid_writer_impl::put(unsigned                        
   // Get view of the OFDM symbol subcarriers.
   span<cf_t> symb = data.get_view({l, port}).subspan(k_init, mask.size());
 
-  empty[port] = false;
+  clear_empty(port);
 
   unsigned mask_count = mask.count();
   srsran_assert(mask_count <= symbols.size(),
@@ -167,5 +167,38 @@ void resource_grid_writer_impl::put(unsigned port, unsigned l, unsigned k_init, 
 
   // Copy resource elements.
   srsvec::copy(rg_symbol.subspan(k_init, symbols.size()), symbols);
-  empty[port] = false;
+  clear_empty(port);
+}
+
+void resource_grid_writer_impl::put(unsigned         port,
+                                    unsigned         l,
+                                    unsigned         k_init,
+                                    unsigned         stride,
+                                    span<const cf_t> symbols)
+{
+  unsigned nof_symbols = symbols.size();
+  srsran_assert(
+      k_init + (((nof_symbols - 1) * stride) + 1) <= get_nof_subc(),
+      "The initial subcarrier index (i.e., {}) plus the number of RE (i.e., {}) exceeds the maximum number of "
+      "subcarriers (i.e., {})",
+      k_init,
+      (((nof_symbols - 1) * stride) + 1),
+      get_nof_subc());
+  srsran_assert(l < get_nof_symbols(),
+                "Symbol index (i.e., {}) exceeds the maximum number of symbols (i.e., {})",
+                l,
+                get_nof_symbols());
+  srsran_assert(port < get_nof_ports(),
+                "Port index (i.e., {}) exceeds the maximum number of ports (i.e., {})",
+                port,
+                get_nof_ports());
+
+  // Insert symbols.
+  span<cf_t> rg_symbol = data.get_view({l, port});
+  for (unsigned i_symbol = 0, i_re = k_init; i_symbol != nof_symbols; ++i_symbol) {
+    rg_symbol[i_re] = symbols[i_symbol];
+    i_re += stride;
+  }
+
+  clear_empty(port);
 }

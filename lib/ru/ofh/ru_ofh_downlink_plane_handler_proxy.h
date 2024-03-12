@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,7 +30,7 @@ class task_executor;
 
 namespace ofh {
 class downlink_handler;
-}
+} // namespace ofh
 
 /// This proxy implementation dispatches the requests to the corresponding OFH sector.
 class ru_downlink_plane_handler_proxy : public ru_downlink_plane_handler

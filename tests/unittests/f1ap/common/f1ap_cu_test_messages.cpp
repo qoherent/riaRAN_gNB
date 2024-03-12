@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,8 @@
  */
 
 #include "f1ap_cu_test_messages.h"
+#include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents.h"
 #include "srsran/f1ap/common/f1ap_message.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu_ue_context_update.h"
 
@@ -63,7 +65,7 @@ asn1::f1ap::gnb_du_served_cells_item_s srsran::srs_cu_cp::generate_served_cells_
   return served_cells_item;
 }
 
-f1ap_message srsran::srs_cu_cp::generate_f1_setup_request(unsigned gnb_du_id, unsigned nrcell_id, pci_t pci)
+f1ap_message srsran::srs_cu_cp::generate_f1_setup_request(gnb_du_id_t gnb_du_id, unsigned nrcell_id, pci_t pci)
 {
   f1ap_message msg;
   msg.pdu.set_init_msg();
@@ -71,7 +73,7 @@ f1ap_message srsran::srs_cu_cp::generate_f1_setup_request(unsigned gnb_du_id, un
 
   auto& setup_req                = msg.pdu.init_msg().value.f1_setup_request();
   setup_req->transaction_id      = 99;
-  setup_req->gnb_du_id           = gnb_du_id;
+  setup_req->gnb_du_id           = (uint64_t)gnb_du_id;
   setup_req->gnb_du_name_present = true;
   setup_req->gnb_du_name.from_string("srsDU");
   setup_req->gnb_du_rrc_version.latest_rrc_version.from_number(1);
@@ -82,6 +84,16 @@ f1ap_message srsran::srs_cu_cp::generate_f1_setup_request(unsigned gnb_du_id, un
       generate_served_cells_item(nrcell_id, pci);
 
   return msg;
+}
+
+f1ap_message
+srsran::srs_cu_cp::generate_init_ul_rrc_message_transfer_without_du_to_cu_container(gnb_du_ue_f1ap_id_t du_ue_id,
+                                                                                    rnti_t              crnti)
+{
+  f1ap_message init_ul_rrc_msg = generate_init_ul_rrc_message_transfer(du_ue_id, crnti);
+  init_ul_rrc_msg.pdu.init_msg().value.init_ul_rrc_msg_transfer()->du_to_cu_rrc_container_present = false;
+
+  return init_ul_rrc_msg;
 }
 
 f1ap_message srsran::srs_cu_cp::generate_init_ul_rrc_message_transfer(gnb_du_ue_f1ap_id_t du_ue_id,
@@ -98,7 +110,7 @@ f1ap_message srsran::srs_cu_cp::generate_init_ul_rrc_message_transfer(gnb_du_ue_
 
   init_ul_rrc->nr_cgi.nr_cell_id.from_string("000000000000000000000001100110110000"); // 6576 in decimal
   init_ul_rrc->nr_cgi.plmn_id.from_string("00f110");
-  init_ul_rrc->c_rnti = crnti;
+  init_ul_rrc->c_rnti = to_value(crnti);
 
   init_ul_rrc->sul_access_ind_present = true;
   init_ul_rrc->sul_access_ind.value   = asn1::f1ap::sul_access_ind_opts::options::true_value;
@@ -175,7 +187,8 @@ f1ap_message srsran::srs_cu_cp::generate_ue_context_setup_request(gnb_cu_ue_f1ap
 
 f1ap_message srsran::srs_cu_cp::generate_ue_context_setup_response(gnb_cu_ue_f1ap_id_t cu_ue_id,
                                                                    gnb_du_ue_f1ap_id_t du_ue_id,
-                                                                   rnti_t              crnti)
+                                                                   rnti_t              crnti,
+                                                                   byte_buffer         cell_group_config)
 {
   f1ap_message ue_context_setup_response = {};
 
@@ -183,12 +196,11 @@ f1ap_message srsran::srs_cu_cp::generate_ue_context_setup_response(gnb_cu_ue_f1a
   ue_context_setup_response.pdu.successful_outcome().load_info_obj(ASN1_F1AP_ID_UE_CONTEXT_SETUP);
 
   auto& ue_context_setup_resp = ue_context_setup_response.pdu.successful_outcome().value.ue_context_setup_resp();
-  ue_context_setup_resp->gnb_cu_ue_f1ap_id = (unsigned)cu_ue_id;
-  ue_context_setup_resp->gnb_du_ue_f1ap_id = (unsigned)du_ue_id;
-  ue_context_setup_resp->c_rnti_present    = true;
-  ue_context_setup_resp->c_rnti            = (unsigned)crnti;
-  ue_context_setup_resp->du_to_cu_rrc_info.cell_group_cfg =
-      make_byte_buffer("5c02b091117aec701061e000b1c03544cde4a20c7c080408c008241000100000");
+  ue_context_setup_resp->gnb_cu_ue_f1ap_id                = (unsigned)cu_ue_id;
+  ue_context_setup_resp->gnb_du_ue_f1ap_id                = (unsigned)du_ue_id;
+  ue_context_setup_resp->c_rnti_present                   = true;
+  ue_context_setup_resp->c_rnti                           = (unsigned)crnti;
+  ue_context_setup_resp->du_to_cu_rrc_info.cell_group_cfg = cell_group_config.copy();
 
   return ue_context_setup_response;
 }

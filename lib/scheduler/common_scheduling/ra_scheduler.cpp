@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,15 +22,15 @@
 
 #include "ra_scheduler.h"
 #include "../logging/scheduler_event_logger.h"
-#include "../pdcch_scheduling/pdcch_config_helpers.h"
 #include "../pdcch_scheduling/pdcch_resource_allocator_impl.h"
 #include "../support/dci_builder.h"
 #include "../support/dmrs_helpers.h"
+#include "../support/pdcch/pdcch_mapping.h"
 #include "../support/pdsch/pdsch_default_time_allocation.h"
 #include "../support/pdsch/pdsch_resource_allocation.h"
 #include "../support/sch_pdu_builder.h"
-#include "../support/tbs_calculator.h"
 #include "srsran/ran/resource_allocation/resource_allocation_frequency.h"
+#include "srsran/ran/sch/tbs_calculator.h"
 #include "srsran/support/compiler.h"
 
 using namespace srsran;
@@ -48,6 +48,7 @@ unsigned srsran::get_msg3_delay(const pusch_time_domain_resource_allocation& pus
   // The MSG3 slot is defined as MSG3_slot = floor( n * (2^*(mu_PUSCH) ) / (2^*(mu_PDCCH) ) ) + k2 + Delta.
   // Given the assumption mu_PUSCH == mu_PDCCH, MSG3_delay simplifies to MSG3_delay =  k2 + Delta
   // [TS 38.214, Section 6.1.2.1 and 6.1.2.1.1].
+
   return static_cast<int>(pusch_td_res_alloc.k2 + DELTAS[to_numerology_value(pusch_scs)]);
 }
 
@@ -216,7 +217,7 @@ void ra_scheduler::handle_rach_indication_impl(const rach_indication_message& ms
 
     pending_rar_t* rar_req = nullptr;
     for (pending_rar_t& rar : pending_rars) {
-      if (rar.ra_rnti == ra_rnti and rar.prach_slot_rx == msg.slot_rx) {
+      if (to_value(rar.ra_rnti) == ra_rnti and rar.prach_slot_rx == msg.slot_rx) {
         rar_req = &rar;
         break;
       }
@@ -257,7 +258,7 @@ void ra_scheduler::handle_rach_indication_impl(const rach_indication_message& ms
                                                             prach_preamble.time_advance.to_Ta(get_ul_bwp_cfg().scs)});
 
       // Check if TC-RNTI value to be scheduled is already under use
-      if (not pending_msg3s[prach_preamble.tc_rnti % MAX_NOF_MSG3].harq.empty()) {
+      if (not pending_msg3s[to_value(prach_preamble.tc_rnti) % MAX_NOF_MSG3].harq.empty()) {
         logger.warning("PRACH ignored, as the allocated TC-RNTI=0x{:x} is already under use", prach_preamble.tc_rnti);
         continue;
       }
@@ -266,8 +267,8 @@ void ra_scheduler::handle_rach_indication_impl(const rach_indication_message& ms
       rar_req->tc_rntis.emplace_back(prach_preamble.tc_rnti);
 
       // Store Msg3 to allocate.
-      pending_msg3s[prach_preamble.tc_rnti % MAX_NOF_MSG3].preamble = prach_preamble;
-      pending_msg3s[prach_preamble.tc_rnti % MAX_NOF_MSG3].msg3_harq_logger.set_rnti(prach_preamble.tc_rnti);
+      pending_msg3s[to_value(prach_preamble.tc_rnti) % MAX_NOF_MSG3].preamble = prach_preamble;
+      pending_msg3s[to_value(prach_preamble.tc_rnti) % MAX_NOF_MSG3].msg3_harq_logger.set_rnti(prach_preamble.tc_rnti);
     }
   }
 }
@@ -286,16 +287,16 @@ void ra_scheduler::handle_pending_crc_indications_impl(cell_resource_allocator& 
   for (const ul_crc_indication& crc_ind : new_crc_inds) {
     for (const ul_crc_pdu_indication& crc : crc_ind.crcs) {
       srsran_assert(crc.ue_index == INVALID_DU_UE_INDEX, "Msg3 HARQ CRCs cannot have a ueId assigned yet");
-      auto& pending_msg3 = pending_msg3s[crc.rnti % MAX_NOF_MSG3];
+      auto& pending_msg3 = pending_msg3s[to_value(crc.rnti) % MAX_NOF_MSG3];
       if (pending_msg3.preamble.tc_rnti != crc.rnti) {
-        logger.warning("Invalid UL CRC, cell={}, rnti={:#x}, h_id={}. Cause: Inexistent rnti.",
+        logger.warning("Invalid UL CRC, cell={}, rnti={}, h_id={}. Cause: Inexistent rnti.",
                        cell_cfg.cell_index,
                        crc.rnti,
                        crc.harq_id);
         continue;
       }
       if (pending_msg3.harq.id != crc.harq_id) {
-        logger.warning("Invalid UL CRC, cell={}, rnti={:#x}, h_id={}. Cause: HARQ-Ids do not match ({} != {})",
+        logger.warning("Invalid UL CRC, cell={}, rnti={}, h_id={}. Cause: HARQ-Ids do not match ({} != {})",
                        cell_cfg.cell_index,
                        crc.rnti,
                        crc.harq_id,
@@ -359,7 +360,7 @@ void ra_scheduler::run_slot(cell_resource_allocator& res_alloc)
   // Ensure there are UL slots where Msg3s can be allocated.
   bool pusch_slots_available = false;
   for (const auto& pusch_td_alloc : get_pusch_time_domain_resource_table(get_pusch_cfg())) {
-    const unsigned msg3_delay = get_msg3_delay(pusch_td_alloc, get_ul_bwp_cfg().scs);
+    const unsigned msg3_delay = get_msg3_delay(pusch_td_alloc, get_ul_bwp_cfg().scs) + res_alloc.cfg.ntn_cs_koffset;
     const unsigned start_ul_symbols =
         NOF_OFDM_SYM_PER_SLOT_NORMAL_CP - cell_cfg.get_nof_ul_symbol_per_slot(pdcch_slot + msg3_delay);
     if (cell_cfg.is_ul_enabled(pdcch_slot + msg3_delay) and pusch_td_alloc.symbols.start() >= start_ul_symbols) {
@@ -456,7 +457,7 @@ unsigned ra_scheduler::schedule_rar(const pending_rar_t& rar, cell_resource_allo
       return 0;
     }
 
-    // Ensure slot for RAR PDSCH has DL enabled.
+    // > Ensure slot for RAR PDSCH has DL enabled.
     if (not cell_cfg.is_dl_enabled(pdsch_alloc.slot)) {
       // Early exit.
       return 0;
@@ -505,8 +506,10 @@ unsigned ra_scheduler::schedule_rar(const pending_rar_t& rar, cell_resource_allo
   auto pusch_list = get_pusch_time_domain_resource_table(get_pusch_cfg());
   for (unsigned puschidx = 0; puschidx < pusch_list.size(); ++puschidx) {
     unsigned pusch_res_max_allocs = max_nof_allocs - msg3_candidates.size();
+
     // >> Verify if Msg3 delay provided by current PUSCH-TimeDomainResourceAllocation corresponds to an UL slot.
-    const unsigned                      msg3_delay = get_msg3_delay(pusch_list[puschidx], get_ul_bwp_cfg().scs);
+    const unsigned msg3_delay =
+        get_msg3_delay(pusch_list[puschidx], get_ul_bwp_cfg().scs) + res_alloc.cfg.ntn_cs_koffset;
     const cell_slot_resource_allocator& msg3_alloc = res_alloc[msg3_delay];
     const unsigned                      start_ul_symbols =
         NOF_OFDM_SYM_PER_SLOT_NORMAL_CP - cell_cfg.get_nof_ul_symbol_per_slot(msg3_alloc.slot);
@@ -541,6 +544,10 @@ unsigned ra_scheduler::schedule_rar(const pending_rar_t& rar, cell_resource_allo
     }
   }
   max_nof_allocs = msg3_candidates.size();
+  if (max_nof_allocs == 0) {
+    log_postponed_rar(rar, "No PUSCH time domain resource found for Msg3.");
+    return 0;
+  }
   rar_crbs.resize(get_nof_pdsch_prbs_required(pdsch_time_res_index, max_nof_allocs).nof_prbs);
 
   // > Find space in PDCCH for RAR.
@@ -594,13 +601,13 @@ void ra_scheduler::fill_rar_grant(cell_resource_allocator&         res_alloc,
 
   const auto& pusch_td_alloc_list = get_pusch_time_domain_resource_table(get_pusch_cfg());
   for (unsigned i = 0; i < msg3_candidates.size(); ++i) {
-    const auto&                   msg3_candidate = msg3_candidates[i];
-    const auto&                   pusch_res      = pusch_td_alloc_list[msg3_candidate.pusch_td_res_index];
-    const unsigned                msg3_delay     = get_msg3_delay(pusch_res, get_ul_bwp_cfg().scs);
-    cell_slot_resource_allocator& msg3_alloc     = res_alloc[msg3_delay];
-    const vrb_interval            vrbs           = msg3_crb_to_vrb(cell_cfg, msg3_candidate.crbs);
+    const auto&    msg3_candidate = msg3_candidates[i];
+    const auto&    pusch_res      = pusch_td_alloc_list[msg3_candidate.pusch_td_res_index];
+    const unsigned msg3_delay     = get_msg3_delay(pusch_res, get_ul_bwp_cfg().scs) + res_alloc.cfg.ntn_cs_koffset;
+    cell_slot_resource_allocator& msg3_alloc = res_alloc[msg3_delay];
+    const vrb_interval            vrbs       = msg3_crb_to_vrb(cell_cfg, msg3_candidate.crbs);
 
-    auto& pending_msg3 = pending_msg3s[rar_request.tc_rntis[i] % MAX_NOF_MSG3];
+    auto& pending_msg3 = pending_msg3s[to_value(rar_request.tc_rntis[i]) % MAX_NOF_MSG3];
     srsran_sanity_check(pending_msg3.harq.empty(), "Pending Msg3 should not have been added if HARQ is busy.");
 
     // Allocate Msg3 UL HARQ
@@ -700,7 +707,7 @@ void ra_scheduler::schedule_msg3_retx(cell_resource_allocator& res_alloc, pendin
     pdcch_ul_information* pdcch =
         pdcch_sch.alloc_ul_pdcch_common(pdcch_alloc, msg3_ctx.preamble.tc_rnti, ss_id, aggregation_level::n4);
     if (pdcch == nullptr) {
-      logger.debug("tc-rnti={:#x}: Failed to schedule PDCCH for Msg3 retx. Retrying it in a later slot",
+      logger.debug("tc-rnti={}: Failed to schedule PDCCH for Msg3 retx. Retrying it in a later slot",
                    msg3_ctx.preamble.tc_rnti);
       continue;
     }
@@ -752,10 +759,13 @@ void ra_scheduler::schedule_msg3_retx(cell_resource_allocator& res_alloc, pendin
 
 sch_prbs_tbs ra_scheduler::get_nof_pdsch_prbs_required(unsigned time_res_idx, unsigned nof_ul_grants) const
 {
-  return rar_data[time_res_idx].prbs_tbs_per_nof_grants[std::min(nof_ul_grants, (unsigned)MAX_RAR_PDUS_PER_SLOT) - 1];
+  srsran_assert(nof_ul_grants > 0, "Invalid number of UL grants");
+
+  return rar_data[time_res_idx].prbs_tbs_per_nof_grants
+      [std::min(nof_ul_grants, (unsigned)rar_data[time_res_idx].prbs_tbs_per_nof_grants.size()) - 1];
 }
 
 void ra_scheduler::log_postponed_rar(const pending_rar_t& rar, const char* cause_str) const
 {
-  logger.debug("RAR allocation for ra-rnti={:#x} was postponed. Cause: {}", rar.ra_rnti, cause_str);
+  logger.debug("RAR allocation for ra-rnti={} was postponed. Cause: {}", rar.ra_rnti, cause_str);
 }

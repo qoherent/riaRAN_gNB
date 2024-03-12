@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,8 @@
  */
 
 #include "rlc_stress_test.h"
+#include "srsran/pdcp/pdcp_factory.h"
+#include "srsran/rlc/rlc_factory.h"
 #include "srsran/support/srsran_assert.h"
 
 using namespace srsran;
@@ -32,10 +34,10 @@ stress_stack::stress_stack(const stress_test_args& args_, uint32_t id, rb_id_t r
   pcell_name("PCell-Worker-" + std::to_string(id)),
   ue_worker{ue_name, task_worker_queue_size},
   pcell_worker{pcell_name, task_worker_queue_size},
-  logger("STACK", {id, rb_id, "DL/UL"})
+  logger("STACK", {0, id, rb_id, "DL/UL"})
 {
-  ue_executor    = make_task_executor(ue_worker);
-  pcell_executor = make_task_executor(pcell_worker);
+  ue_executor    = make_task_executor_ptr(ue_worker);
+  pcell_executor = make_task_executor_ptr(pcell_worker);
 
   // MAC
   mac = std::make_unique<mac_dummy>(args_, id, rb_id);
@@ -52,18 +54,22 @@ stress_stack::stress_stack(const stress_test_args& args_, uint32_t id, rb_id_t r
 
   sec_cfg = get_security_config_from_args(args_);
 
+  // SDU queue size;
+  const uint32_t rlc_sdu_queue = 256;
+
   // PDCP
-  pdcp_config                  pdcp_cnfg = get_pdcp_config_from_args(id, args_);
-  pdcp_entity_creation_message pdcp_msg  = {};
-  pdcp_msg.ue_index                      = id;
-  pdcp_msg.rb_id                         = rb_id;
-  pdcp_msg.config                        = pdcp_cnfg;
-  pdcp_msg.tx_lower                      = f1ap.get();
-  pdcp_msg.tx_upper_cn                   = rrc.get();
-  pdcp_msg.rx_upper_dn                   = traffic_sink.get();
-  pdcp_msg.rx_upper_cn                   = rrc.get();
-  pdcp_msg.timers                        = timer_factory{timers, *ue_executor};
-  pdcp                                   = create_pdcp_entity(pdcp_msg);
+  pdcp_config pdcp_cnfg                 = get_pdcp_config_from_args(id, args_);
+  pdcp_cnfg.custom.tx.rlc_sdu_queue     = rlc_sdu_queue;
+  pdcp_entity_creation_message pdcp_msg = {};
+  pdcp_msg.ue_index                     = id;
+  pdcp_msg.rb_id                        = rb_id;
+  pdcp_msg.config                       = pdcp_cnfg;
+  pdcp_msg.tx_lower                     = f1ap.get();
+  pdcp_msg.tx_upper_cn                  = rrc.get();
+  pdcp_msg.rx_upper_dn                  = traffic_sink.get();
+  pdcp_msg.rx_upper_cn                  = rrc.get();
+  pdcp_msg.timers                       = timer_factory{timers, *ue_executor};
+  pdcp                                  = create_pdcp_entity(pdcp_msg);
   traffic_source->set_pdcp_tx_upper(&pdcp->get_tx_upper_data_interface());
   f1ap->set_pdcp_rx_lower(&pdcp->get_rx_lower_interface());
 
@@ -73,19 +79,32 @@ stress_stack::stress_stack(const stress_test_args& args_, uint32_t id, rb_id_t r
   rrc_rx_if.configure_security(sec_cfg);
 
   // RLC
-  rlc_config                  rlc_cnfg = get_rlc_config_from_args(args_);
-  rlc_entity_creation_message rlc_msg  = {};
-  rlc_msg.ue_index                     = static_cast<du_ue_index_t>(stack_id);
-  rlc_msg.rb_id                        = rb_id;
-  rlc_msg.rx_upper_dn                  = f1ap.get();
-  rlc_msg.tx_upper_cn                  = f1ap.get();
-  rlc_msg.tx_upper_dn                  = f1ap.get();
-  rlc_msg.tx_lower_dn                  = mac.get();
-  rlc_msg.config                       = rlc_cnfg;
-  rlc_msg.timers                       = &timers;
-  rlc_msg.pcell_executor               = pcell_executor.get();
-  rlc_msg.ue_executor                  = ue_executor.get();
-  rlc                                  = create_rlc_entity(rlc_msg);
+  rlc_config rlc_cnfg = get_rlc_config_from_args(args_);
+  switch (rlc_cnfg.mode) {
+    case rlc_mode::am:
+      rlc_cnfg.am.tx.queue_size = rlc_sdu_queue;
+      break;
+    case rlc_mode::um_bidir:
+    case rlc_mode::um_unidir_dl:
+      rlc_cnfg.um.tx.queue_size = rlc_sdu_queue;
+      break;
+    default:
+      report_fatal_error("Invalid RLC mode.");
+      break;
+  }
+  rlc_entity_creation_message rlc_msg = {};
+  rlc_msg.ue_index                    = static_cast<du_ue_index_t>(stack_id);
+  rlc_msg.rb_id                       = rb_id;
+  rlc_msg.rx_upper_dn                 = f1ap.get();
+  rlc_msg.tx_upper_cn                 = f1ap.get();
+  rlc_msg.tx_upper_dn                 = f1ap.get();
+  rlc_msg.tx_lower_dn                 = mac.get();
+  rlc_msg.config                      = rlc_cnfg;
+  rlc_msg.timers                      = &timers;
+  rlc_msg.pcell_executor              = pcell_executor.get();
+  rlc_msg.ue_executor                 = ue_executor.get();
+  rlc_msg.pcap_writer                 = &pcap;
+  rlc                                 = create_rlc_entity(rlc_msg);
   f1ap->set_rlc_tx_upper_data(rlc->get_tx_upper_layer_data_interface());
 
   mac->set_rlc_tx_lower(rlc->get_tx_lower_layer_interface());
@@ -102,7 +121,8 @@ void stress_stack::start()
   }
 
   // Schedule the TTI when the thread are started.
-  pcell_executor->defer([this]() { run_lower_tti(0); });
+  bool result = pcell_executor->defer([this]() { run_lower_tti(0); });
+  report_error_if_not(result, "Failed to dispatch run_lower_tti");
 }
 
 void stress_stack::wait_for_finish()
@@ -141,7 +161,8 @@ void stress_stack::run_upper_tti(uint32_t tti)
     lk.unlock();
     cv_ue.notify_all();
   }
-  pcell_executor->defer([this, tti]() { run_lower_tti(tti + 1); });
+  bool result = pcell_executor->defer([this, tti]() { run_lower_tti(tti + 1); });
+  report_error_if_not(result, "Failed to dispatch run_lower_tti");
   logger.log_debug("Finished running upper TTI={}, PDU RX queue size={}", tti, mac->pdu_rx_list.size());
 }
 
@@ -151,7 +172,8 @@ void stress_stack::run_lower_tti(uint32_t tti)
   if (tti < args.nof_ttis) {
     std::vector<byte_buffer_chain> pdu_list = mac->run_tx_tti(tti);
     logger.log_debug("Generated PDU list size={}", pdu_list.size());
-    ue_executor->defer([this, tti]() { run_upper_tti(tti); });
+    bool result = ue_executor->defer([this, tti]() { run_upper_tti(tti); });
+    report_error_if_not(result, "Failed to dispatch run_upper_tti");
     peer_stack->push_pdus(std::move(pdu_list));
     tti++;
     pthread_barrier_wait(&barrier); // wait for other stack to finish
@@ -169,7 +191,8 @@ void stress_stack::push_pdus(std::vector<byte_buffer_chain> list_pdus)
 {
   auto push_fnc = [this, list_pdus = std::move(list_pdus)]() mutable { mac->push_rx_pdus(std::move(list_pdus)); };
   if (!stopping_pcell.load() && !stopping_ue.load()) {
-    ue_executor->defer(std::move(push_fnc));
+    bool result = ue_executor->defer(std::move(push_fnc));
+    report_error_if_not(result, "Failed to push PDUs");
   }
 }
 

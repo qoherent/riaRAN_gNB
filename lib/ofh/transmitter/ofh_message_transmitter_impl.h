@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,7 @@
 
 #include "srsran/ofh/ethernet/ethernet_frame_pool.h"
 #include "srsran/ofh/ethernet/ethernet_gateway.h"
-#include "srsran/ofh/ofh_ota_symbol_handler.h"
+#include "srsran/ofh/timing/ofh_ota_symbol_boundary_notifier.h"
 #include "srsran/ofh/transmitter/ofh_transmitter_configuration.h"
 
 namespace srsran {
@@ -33,7 +33,7 @@ namespace ofh {
 /// \brief Transmits enqueued Open Fronthaul messages through an Ethernet gateway.
 ///
 /// Message transmission is managed according the given transmission window.
-class message_transmitter_impl : public ota_symbol_handler
+class message_transmitter_impl : public ota_symbol_boundary_notifier
 {
   /// Internal structure used to store transmission window timing parameters expressed in a number of symbols.
   struct tx_timing_parameters {
@@ -86,17 +86,11 @@ public:
                            std::shared_ptr<ether::eth_frame_pool> frame_pool);
 
   // See interface for documentation.
-  void handle_new_ota_symbol(slot_symbol_point symbol_point) override;
+  void on_new_symbol(slot_symbol_point symbol_point) override;
 
 private:
-  /// Transmits enqueued messages for the given slot symbol point, message type and direction.
-  void transmit_enqueued_messages(slot_symbol_point symbol_point, message_type type, data_direction direction);
-
-  /// Logs the messages that could not be sent due the transmission window closed.
-  void log_late_messages_on_tx_window_close(slot_symbol_point symbol_point);
-
-  /// Logs the late messages for the given late slot symbol point, message type and direction.
-  void log_late_messages(slot_symbol_point late_point, message_type type, data_direction direction);
+  /// Transmits enqueued messages for the given interval of slot symbol points.
+  void transmit_enqueued_messages(const ether::frame_pool_interval& interval);
 };
 
 } // namespace ofh

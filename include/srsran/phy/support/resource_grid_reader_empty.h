@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -47,6 +47,9 @@ public:
 
   // See interface for documentation.
   bool is_empty(unsigned /**/) const override { return true; }
+
+  // See interface for documentation.
+  bool is_empty() const override { return true; }
 
   // See interface for documentation.
   span<cf_t> get(span<cf_t> symbols, unsigned /**/, unsigned /**/, unsigned /**/, span<const bool> /**/) const override

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,10 +22,10 @@
 
 #pragma once
 
+#include "../config/ue_configuration.h"
 #include "../support/bwp_helpers.h"
 #include "harq_process.h"
 #include "ue_channel_state_manager.h"
-#include "ue_configuration.h"
 #include "ue_link_adaptation_controller.h"
 #include "srsran/ran/uci/uci_constants.h"
 #include "srsran/scheduler/config/scheduler_expert_config.h"
@@ -50,11 +50,10 @@ public:
     unsigned consecutive_pusch_kos = 0;
   };
 
-  ue_cell(du_ue_index_t              ue_index_,
-          rnti_t                     crnti_val,
-          const cell_configuration&  cell_cfg_common_,
-          const serving_cell_config& ue_serv_cell,
-          ue_harq_timeout_notifier   harq_timeout_notifier);
+  ue_cell(du_ue_index_t                ue_index_,
+          rnti_t                       crnti_val,
+          const ue_cell_configuration& ue_cell_cfg_,
+          ue_harq_timeout_notifier     harq_timeout_notifier);
 
   const du_ue_index_t   ue_index;
   const du_cell_index_t cell_index;
@@ -64,15 +63,21 @@ public:
   rnti_t rnti() const { return crnti_; }
 
   bwp_id_t active_bwp_id() const { return to_bwp_id(0); }
-  bool     is_active() const { return true; }
 
-  const ue_cell_configuration& cfg() const { return ue_cfg; }
+  /// \brief Determines whether the UE cell is currently active.
+  bool is_active() const { return active; }
 
-  void handle_reconfiguration_request(const serving_cell_config& new_ue_cell_cfg);
-  void handle_resource_allocation_reconfiguration_request(const sched_ue_resource_alloc_config& ra_cfg);
+  const ue_cell_configuration& cfg() const { return *ue_cfg; }
 
-  const dl_harq_process*
-  handle_dl_ack_info(slot_point uci_slot, mac_harq_ack_report_status ack_value, unsigned harq_bit_idx);
+  /// \brief Deactivates cell.
+  void deactivate();
+
+  void handle_reconfiguration_request(const ue_cell_configuration& ue_cell_cfg);
+
+  dl_harq_process::dl_ack_info_result handle_dl_ack_info(slot_point                 uci_slot,
+                                                         mac_harq_ack_report_status ack_value,
+                                                         unsigned                   harq_bit_idx,
+                                                         optional<float>            pucch_snr);
 
   /// \brief Estimate the number of required DL PRBs to allocate the given number of bytes.
   grant_prbs_mcs required_dl_prbs(const pdsch_time_domain_resource_allocation& pdsch_td_cfg,
@@ -101,13 +106,7 @@ public:
   int handle_crc_pdu(slot_point pusch_slot, const ul_crc_pdu_indication& crc_pdu);
 
   /// Update UE with the latest CSI report for a given cell.
-  void handle_csi_report(const csi_report_data& csi_report)
-  {
-    set_fallback_state(false);
-    if (not channel_state.handle_csi_report(csi_report)) {
-      logger.warning("ue={} rnti={:#x}: Invalid CSI report received", ue_index, rnti());
-    }
-  }
+  void handle_csi_report(const csi_report_data& csi_report);
 
   /// \brief Get the current UE cell metrics.
   const metrics& get_metrics() const { return ue_metrics; }
@@ -130,10 +129,14 @@ public:
   void set_fallback_state(bool fallback_state_)
   {
     if (fallback_state_ != is_fallback_mode) {
-      logger.debug("ue={} rnti={:#x}: {} fallback mode", ue_index, rnti(), fallback_state_ ? "Entering" : "Leaving");
+      logger.debug("ue={} rnti={}: {} fallback mode", ue_index, rnti(), fallback_state_ ? "Entering" : "Leaving");
     }
     is_fallback_mode = fallback_state_;
   }
+
+  bool is_pucch_grid_inited() const { return is_pucch_alloc_grid_initialized; }
+
+  void set_pucch_grid_inited() { is_pucch_alloc_grid_initialized = true; }
 
   /// \brief Get UE channel state handler.
   ue_channel_state_manager&       channel_state_manager() { return channel_state; }
@@ -142,16 +145,24 @@ public:
   const ue_link_adaptation_controller& link_adaptation_controller() const { return ue_mcs_calculator; }
 
 private:
-  rnti_t                         crnti_;
-  const cell_configuration&      cell_cfg;
-  ue_cell_configuration          ue_cfg;
-  sched_ue_resource_alloc_config ue_res_alloc_cfg;
-  srslog::basic_logger&          logger;
+  /// \brief Performs link adaptation procedures such as cancelling HARQs etc.
+  void apply_link_adaptation_procedures(const csi_report_data& csi_report);
+
+  rnti_t                            crnti_;
+  const cell_configuration&         cell_cfg;
+  const ue_cell_configuration*      ue_cfg;
+  const scheduler_ue_expert_config& expert_cfg;
+  srslog::basic_logger&             logger;
+
+  /// \brief Whether cell is currently active.
+  bool active = true;
 
   /// \brief Fallback state of the UE. When in "fallback" mode, only the search spaces of cellConfigCommon are used.
   /// The UE should automatically leave this mode, when a SR/CSI is received, since, in order to send SR/CSI the UE must
   /// already have applied a dedicated config.
   bool is_fallback_mode = false;
+
+  bool is_pucch_alloc_grid_initialized = false;
 
   metrics ue_metrics;
 

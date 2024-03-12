@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -821,9 +821,9 @@ public:
   }
 
   /// Sets the PDSCH context as vendor specific.
-  dl_pdsch_pdu_builder& set_context_vendor_specific(harq_id_t harq_id, unsigned k1)
+  dl_pdsch_pdu_builder& set_context_vendor_specific(harq_id_t harq_id, unsigned k1, unsigned nof_retxs)
   {
-    pdu.context = pdsch_context(harq_id, k1);
+    pdu.context = pdsch_context(harq_id, k1, nof_retxs);
     return *this;
   }
 
@@ -943,7 +943,10 @@ class dl_tti_request_message_builder
 {
 public:
   /// Constructs a builder that will help to fill the given DL TTI request message.
-  explicit dl_tti_request_message_builder(dl_tti_request_message& msg_) : msg(msg_) {}
+  explicit dl_tti_request_message_builder(dl_tti_request_message& msg_) : msg(msg_)
+  {
+    msg.is_last_message_in_slot = false;
+  }
 
   /// Sets the DL_TTI.request basic parameters and returns a reference to the builder.
   /// \note nPDUs and nPDUsOfEachType properties are filled by the add_*_pdu() functions.
@@ -1081,6 +1084,13 @@ public:
     return builder;
   }
 
+  /// Sets the flag of the last message in slot.
+  dl_tti_request_message_builder& set_last_message_in_slot_flag()
+  {
+    msg.is_last_message_in_slot = true;
+    return *this;
+  }
+
   //: TODO: PDU groups array
   //: TODO: top level rate match patterns
 
@@ -1097,6 +1107,7 @@ public:
   explicit ul_dci_request_message_builder(ul_dci_request_message& msg_) : msg(msg_)
   {
     msg.num_pdus_of_each_type.fill(0);
+    msg.is_last_message_in_slot = false;
   }
 
   /// Sets the UL_DCI.request basic parameters and returns a reference to the builder.
@@ -1129,6 +1140,13 @@ public:
     dl_pdcch_pdu_builder builder(pdu.pdu);
 
     return builder;
+  }
+
+  /// Sets the flag of the last message in slot.
+  ul_dci_request_message_builder& set_last_message_in_slot_flag()
+  {
+    msg.is_last_message_in_slot = true;
+    return *this;
   }
 };
 
@@ -1396,7 +1414,7 @@ public:
   uci_pusch_pdu_builder& set_basic_parameters(uint32_t handle, rnti_t rnti)
   {
     pdu.handle = handle;
-    pdu.rnti   = rnti;
+    pdu.rnti   = to_value(rnti);
 
     return *this;
   }
@@ -1522,7 +1540,7 @@ public:
   uci_pucch_pdu_format_0_1_builder& set_basic_parameters(uint32_t handle, rnti_t rnti, pucch_format type)
   {
     pdu.handle = handle;
-    pdu.rnti   = rnti;
+    pdu.rnti   = to_value(rnti);
     switch (type) {
       case pucch_format::FORMAT_0:
         pdu.pucch_format = uci_pucch_pdu_format_0_1::format_type::format_0;
@@ -1639,7 +1657,7 @@ public:
   uci_pucch_pdu_format_2_3_4_builder& set_basic_parameters(uint32_t handle, rnti_t rnti, pucch_format type)
   {
     pdu.handle = handle;
-    pdu.rnti   = rnti;
+    pdu.rnti   = to_value(rnti);
     switch (type) {
       case pucch_format::FORMAT_2:
         pdu.pucch_format = uci_pucch_pdu_format_2_3_4::format_type::format_2;
@@ -1864,17 +1882,15 @@ inline slot_indication_message build_slot_indication_message(unsigned sfn, unsig
 inline error_indication_message
 build_error_indication(uint16_t sfn, uint16_t slot, message_type_id msg_id, error_code_id error_id)
 {
-  srsran_assert(error_id != error_code_id::out_of_sync, "OUT OF SYNC error is not allowed in this builder");
-
   error_indication_message msg;
 
-  msg.message_type  = msg_id;
+  msg.message_type  = message_type_id::error_indication;
   msg.sfn           = sfn;
   msg.slot          = slot;
   msg.message_id    = msg_id;
   msg.error_code    = error_id;
-  msg.expected_sfn  = std::numeric_limits<uint16_t>::max();
-  msg.expected_slot = std::numeric_limits<uint16_t>::max();
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
 
   return msg;
 }
@@ -1890,13 +1906,89 @@ inline error_indication_message build_out_of_sync_error_indication(uint16_t     
 {
   error_indication_message msg;
 
-  msg.message_type  = msg_id;
+  msg.message_type  = message_type_id::error_indication;
   msg.sfn           = sfn;
   msg.slot          = slot;
   msg.message_id    = msg_id;
   msg.error_code    = error_code_id::out_of_sync;
   msg.expected_sfn  = expected_sfn;
   msg.expected_slot = expected_slot;
+
+  return msg;
+}
+
+/// \brief Builds and returns an ERROR.indication message with the given parameters, as per SCF-222 v4.0 section 3.3.6.1
+/// in table ERROR.indication message body
+/// \note This builder is used to build only an MSG_INVALID_SFN error code.
+inline error_indication_message build_invalid_sfn_error_indication(uint16_t        sfn,
+                                                                   uint16_t        slot,
+                                                                   message_type_id msg_id,
+                                                                   uint16_t        expected_sfn,
+                                                                   uint16_t        expected_slot)
+{
+  error_indication_message msg;
+
+  msg.message_type  = message_type_id::error_indication;
+  msg.sfn           = sfn;
+  msg.slot          = slot;
+  msg.message_id    = msg_id;
+  msg.error_code    = error_code_id::msg_invalid_sfn;
+  msg.expected_sfn  = expected_sfn;
+  msg.expected_slot = expected_slot;
+
+  return msg;
+}
+
+/// \brief Builds and returns an ERROR.indication message with the given parameters, as per SCF-222 v4.0 section 3.3.6.1
+/// in table ERROR.indication message body
+/// \note This builder is used to build only a MSG_SLOT_ERR error code.
+inline error_indication_message build_msg_slot_error_indication(uint16_t sfn, uint16_t slot, message_type_id msg_id)
+{
+  error_indication_message msg;
+
+  msg.message_type  = message_type_id::error_indication;
+  msg.sfn           = sfn;
+  msg.slot          = slot;
+  msg.message_id    = msg_id;
+  msg.error_code    = error_code_id::msg_slot_err;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
+
+  return msg;
+}
+
+/// \brief Builds and returns an ERROR.indication message with the given parameters, as per SCF-222 v4.0 section 3.3.6.1
+/// in table ERROR.indication message body
+/// \note This builder is used to build only a MSG_TX_ERR error code.
+inline error_indication_message build_msg_tx_error_indication(uint16_t sfn, uint16_t slot)
+{
+  error_indication_message msg;
+
+  msg.message_type  = message_type_id::error_indication;
+  msg.sfn           = sfn;
+  msg.slot          = slot;
+  msg.message_id    = message_type_id::tx_data_request;
+  msg.error_code    = error_code_id::msg_tx_err;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
+
+  return msg;
+}
+
+/// \brief Builds and returns an ERROR.indication message with the given parameters, as per SCF-222 v4.0 section 3.3.6.1
+/// in table ERROR.indication message body
+/// \note This builder is used to build only a MSG_UL_DCI_ERR error code.
+inline error_indication_message build_msg_ul_dci_error_indication(uint16_t sfn, uint16_t slot)
+{
+  error_indication_message msg;
+
+  msg.message_type  = message_type_id::error_indication;
+  msg.sfn           = sfn;
+  msg.slot          = slot;
+  msg.message_id    = message_type_id::ul_dci_request;
+  msg.error_code    = error_code_id::msg_ul_dci_err;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
 
   return msg;
 }
@@ -2205,6 +2297,14 @@ public:
   {
     pdu.ul_dmrs_symb_pos = 0U;
     pdu.rb_bitmap.fill(0);
+
+    ul_pusch_uci& uci        = pdu.pusch_uci;
+    uci.harq_ack_bit_length  = 0U;
+    uci.beta_offset_harq_ack = 0U;
+    uci.csi_part1_bit_length = 0U;
+    uci.beta_offset_csi1     = 0U;
+    uci.flags_csi_part2      = 0U;
+    uci.beta_offset_csi2     = 0U;
   }
 
   /// Sets the PUSCH PDU basic parameters and returns a reference to the builder.
@@ -2424,27 +2524,54 @@ public:
     return *this;
   }
 
-  /// Adds optional PUSCH UCI information to the PUSCH PDU and returns a reference to the builder.
+  /// Adds optional PUSCH UCI alpha information to the PUSCH PDU and returns a reference to the builder.
   /// \note These parameters are specified in SCF-222 v4.0 section 3.4.3.2 in table optional PUSCH UCI information.
-  ul_pusch_pdu_builder& add_optional_pusch_uci(uint16_t          harq_ack_bit_len,
-                                               uint16_t          csi_part1_bit_len,
-                                               uint16_t          flag_csi_part2_bit_len,
-                                               alpha_scaling_opt alpha_scaling,
-                                               uint8_t           beta_offset_harq_ack,
-                                               uint8_t           beta_offset_csi_1,
-                                               uint8_t           beta_offset_csi_2)
+  ul_pusch_pdu_builder& add_optional_pusch_uci_alpha(alpha_scaling_opt alpha_scaling)
+  {
+    pdu.pdu_bitmap.set(ul_pusch_pdu::PUSCH_UCI_BIT);
+
+    auto& uci         = pdu.pusch_uci;
+    uci.alpha_scaling = alpha_scaling;
+
+    return *this;
+  }
+
+  /// Adds optional PUSCH UCI HARQ information to the PUSCH PDU and returns a reference to the builder.
+  /// \note These parameters are specified in SCF-222 v4.0 section 3.4.3.2 in table optional PUSCH UCI information.
+  ul_pusch_pdu_builder& add_optional_pusch_uci_harq(uint16_t harq_ack_bit_len, uint8_t beta_offset_harq_ack)
   {
     pdu.pdu_bitmap.set(ul_pusch_pdu::PUSCH_UCI_BIT);
 
     auto& uci = pdu.pusch_uci;
 
     uci.harq_ack_bit_length  = harq_ack_bit_len;
-    uci.csi_part1_bit_length = csi_part1_bit_len;
-    uci.flags_csi_part2      = flag_csi_part2_bit_len;
-    uci.alpha_scaling        = alpha_scaling;
     uci.beta_offset_harq_ack = beta_offset_harq_ack;
+
+    return *this;
+  }
+
+  /// Adds optional PUSCH UCI CSI1 information to the PUSCH PDU and returns a reference to the builder.
+  /// \note These parameters are specified in SCF-222 v4.0 section 3.4.3.2 in table optional PUSCH UCI information.
+  ul_pusch_pdu_builder& add_optional_pusch_uci_csi1(uint16_t csi_part1_bit_len, uint8_t beta_offset_csi_1)
+  {
+    pdu.pdu_bitmap.set(ul_pusch_pdu::PUSCH_UCI_BIT);
+
+    auto& uci = pdu.pusch_uci;
+
+    uci.csi_part1_bit_length = csi_part1_bit_len;
     uci.beta_offset_csi1     = beta_offset_csi_1;
-    uci.beta_offset_csi2     = beta_offset_csi_2;
+
+    return *this;
+  }
+
+  /// Adds optional PUSCH UCI CSI2 information to the PUSCH PDU and returns a reference to the builder.
+  /// \note These parameters are specified in SCF-222 v4.0 section 3.4.3.2 in table optional PUSCH UCI information.
+  ul_pusch_pdu_builder& add_optional_pusch_uci_csi2(uint8_t beta_offset_csi_2)
+  {
+    auto& uci = pdu.pusch_uci;
+
+    uci.flags_csi_part2  = std::numeric_limits<decltype(fapi::ul_pusch_uci::flags_csi_part2)>::max();
+    uci.beta_offset_csi2 = beta_offset_csi_2;
 
     return *this;
   }

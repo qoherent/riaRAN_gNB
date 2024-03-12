@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "../mac_dl/rlf_detector.h"
+#include "rlf_detector.h"
 #include "srsran/du_high/rnti_value_table.h"
 #include "srsran/mac/mac_cell_control_information_handler.h"
 #include "srsran/ran/csi_report/csi_report_configuration.h"
@@ -46,14 +46,15 @@ public:
                    rlf_detector&                                   rlf_dt);
 
   /// \brief Store information relative to expected UCIs to be decoded.
-  void store_uci(slot_point uci_sl, span<const pucch_info> scheduled_pucchs);
+  void
+  store_uci(slot_point uci_sl, span<const pucch_info> scheduled_pucchs, span<const ul_sched_info> scheduled_puschs);
 
   /// \brief Decode received MAC UCI indication and convert it to scheduler UCI indication.
   uci_indication decode_uci(const mac_uci_indication_message& msg);
 
 private:
   struct uci_context {
-    rnti_t                   rnti = INVALID_RNTI;
+    rnti_t                   rnti = rnti_t::INVALID_RNTI;
     csi_report_configuration csi_rep_cfg;
   };
 

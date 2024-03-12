@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "f1ap_du_test_helpers.h"
 #include "lib/f1ap/du/ue_context/f1c_du_bearer_impl.h"
+#include "srsran/asn1/f1ap/common.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
 

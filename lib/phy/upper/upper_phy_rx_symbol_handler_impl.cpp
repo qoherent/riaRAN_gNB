@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,20 +23,24 @@
 #include "upper_phy_rx_symbol_handler_impl.h"
 #include "upper_phy_rx_results_notifier_wrapper.h"
 #include "srsran/phy/support/prach_buffer_context.h"
-#include "srsran/phy/upper/unique_rx_softbuffer.h"
+#include "srsran/phy/upper/channel_coding/ldpc/ldpc.h"
+#include "srsran/phy/upper/channel_processors/pusch/formatters.h"
+#include "srsran/phy/upper/rx_buffer_pool.h"
+#include "srsran/phy/upper/unique_rx_buffer.h"
 #include "srsran/phy/upper/uplink_processor.h"
 #include "srsran/support/error_handling.h"
+#include <utility>
 
 using namespace srsran;
 
 upper_phy_rx_symbol_handler_impl::upper_phy_rx_symbol_handler_impl(uplink_processor_pool&         ul_processor_pool_,
                                                                    uplink_slot_pdu_repository&    ul_pdu_repository_,
-                                                                   rx_softbuffer_pool&            softbuffer_pool_,
+                                                                   rx_buffer_pool&                rm_buffer_pool_,
                                                                    upper_phy_rx_results_notifier& rx_results_notifier_,
                                                                    srslog::basic_logger&          logger_) :
   ul_processor_pool(ul_processor_pool_),
   ul_pdu_repository(ul_pdu_repository_),
-  softbuffer_pool(softbuffer_pool_),
+  rm_buffer_pool(rm_buffer_pool_),
   rx_results_notifier(rx_results_notifier_),
   logger(logger_)
 {
@@ -71,16 +75,22 @@ void upper_phy_rx_symbol_handler_impl::handle_rx_symbol(const upper_phy_rx_symbo
   span<const uplink_slot_pdu_entry> pdus = ul_pdu_repository.get_pdus(context.slot);
 
   if (pdus.empty()) {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.warning("Received notification for processing an uplink slot, but no PUSCH/PUCCH PDUs are expected to be "
+    logger.warning(context.slot.sfn(),
+                   context.slot.slot_index(),
+                   "Received notification for processing an uplink slot, but no PUSCH/PUCCH PDUs are expected to be "
                    "processed in the slot.");
     return;
   }
 
   const uplink_slot_pdu_entry& first_entry = pdus.front();
-  unsigned                     nof_symbols =
-      get_nsymb_per_slot((first_entry.type == uplink_slot_pdu_entry::pdu_type::PUSCH) ? first_entry.pusch.pdu.cp
-                                                                                      : get_cp(first_entry.pucch));
+  unsigned                     nof_symbols = 0;
+  if (variant_holds_alternative<uplink_processor::pusch_pdu>(first_entry)) {
+    const uplink_processor::pusch_pdu& pdu = variant_get<uplink_processor::pusch_pdu>(first_entry);
+    nof_symbols                            = get_nsymb_per_slot(pdu.pdu.cp);
+  } else {
+    const uplink_processor::pucch_pdu& pdu = variant_get<uplink_processor::pucch_pdu>(first_entry);
+    nof_symbols                            = get_nsymb_per_slot(get_cp(pdu));
+  }
   unsigned last_symbol_id = nof_symbols - 1U;
 
   // Process the PDUs when all symbols of the slot have been received.
@@ -93,15 +103,17 @@ void upper_phy_rx_symbol_handler_impl::handle_rx_symbol(const upper_phy_rx_symbo
 
   // Process all the PDUs from the pool.
   for (const auto& pdu : pdus) {
-    switch (pdu.type) {
-      case uplink_slot_pdu_entry::pdu_type::PUSCH:
-        process_pusch(pdu.pusch, ul_processor, grid, context.slot);
-        break;
-      case uplink_slot_pdu_entry::pdu_type::PUCCH:
-        ul_processor.process_pucch(rx_results_notifier, grid, pdu.pucch);
-        break;
+    if (variant_holds_alternative<uplink_processor::pusch_pdu>(pdu)) {
+      const uplink_processor::pusch_pdu& pusch_pdu = variant_get<uplink_processor::pusch_pdu>(pdu);
+      process_pusch(pusch_pdu, ul_processor, grid, context.slot);
+    } else if (variant_holds_alternative<uplink_processor::pucch_pdu>(pdu)) {
+      const uplink_processor::pucch_pdu& pucch_pdu = variant_get<uplink_processor::pucch_pdu>(pdu);
+      ul_processor.process_pucch(rx_results_notifier, grid, pucch_pdu);
     }
   }
+
+  // Run PUSCH buffer housekeeping.
+  rm_buffer_pool.run_slot(context.slot);
 }
 
 void upper_phy_rx_symbol_handler_impl::handle_rx_prach_window(const prach_buffer_context& context,
@@ -127,22 +139,27 @@ void upper_phy_rx_symbol_handler_impl::process_pusch(const uplink_processor::pus
   const pusch_processor::pdu_t& proc_pdu = pdu.pdu;
 
   // Temporal sanity check as PUSCH is only supported for data. Remove the check when the UCI is supported for PUSCH.
-  srsran_assert(proc_pdu.codeword.has_value(), "PUSCH PDU doesn't contain data. Currently, that mode is not supported");
+  srsran_assert(proc_pdu.codeword.has_value(),
+                "PUSCH PDU doesn't contain data. Currently, that mode is not supported.");
 
-  rx_softbuffer_identifier id;
-  id.rnti        = static_cast<unsigned>(proc_pdu.rnti);
-  id.harq_ack_id = pdu.harq_id;
+  // Create buffer identifier.
+  trx_buffer_identifier id(proc_pdu.rnti, pdu.harq_id);
 
-  unsigned nof_codeblocks =
-      ldpc::compute_nof_codeblocks(units::bytes(pdu.tb_size).to_bits(), proc_pdu.codeword->ldpc_base_graph);
+  // Determine the number of codeblocks from the TBS and base graph.
+  unsigned nof_codeblocks = ldpc::compute_nof_codeblocks(pdu.tb_size.to_bits(), proc_pdu.codeword->ldpc_base_graph);
 
-  unique_rx_softbuffer buffer = softbuffer_pool.reserve_softbuffer(slot, id, nof_codeblocks);
-  if (buffer.is_valid()) {
-    auto payload = rx_payload_pool.acquire_payload_buffer(pdu.tb_size);
-    ul_processor.process_pusch(payload, std::move(buffer), rx_results_notifier, grid, pdu);
+  // Extract new data flag.
+  bool new_data = proc_pdu.codeword->new_data;
+
+  // Reserve receive buffer.
+  unique_rx_buffer buffer = rm_buffer_pool.reserve(slot, id, nof_codeblocks, new_data);
+
+  // Skip processing if the buffer is not valid. The pool shall log the context and the reason of the failure.
+  if (!buffer.is_valid()) {
     return;
   }
 
-  logger.set_context(pdu.pdu.slot.sfn(), pdu.pdu.slot.slot_index());
-  logger.warning("Could not reserve a softbuffer for PUSCH PDU with RNTI={}, HARQ={}", id.rnti, id.harq_ack_id);
+  // Retrieves transport block data and starts PUSCH processing.
+  auto payload = rx_payload_pool.acquire_payload_buffer(pdu.tb_size);
+  ul_processor.process_pusch(payload, std::move(buffer), rx_results_notifier, grid, pdu);
 }

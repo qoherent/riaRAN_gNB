@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,12 +31,12 @@ class baseband_gateway_transmitter_spy : public baseband_gateway_transmitter
 {
 public:
   struct entry_t {
-    baseband_gateway_transmitter::metadata metadata;
-    baseband_gateway_buffer_read_only      data;
+    baseband_gateway_transmitter_metadata metadata;
+    baseband_gateway_buffer_read_only     data;
   };
 
   // See interface for documentation.
-  void transmit(const baseband_gateway_buffer_reader& data, const baseband_gateway_transmitter::metadata& md) override
+  void transmit(const baseband_gateway_buffer_reader& data, const baseband_gateway_transmitter_metadata& md) override
   {
     entries.emplace_back();
     entry_t& entry = entries.back();

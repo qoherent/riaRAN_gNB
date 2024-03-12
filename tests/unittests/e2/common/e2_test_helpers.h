@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,10 +26,10 @@
 #include "lib/e2/common/e2ap_asn1_packer.h"
 #include "lib/e2/e2sm/e2sm_kpm/e2sm_kpm_asn1_packer.h"
 #include "lib/e2/e2sm/e2sm_kpm/e2sm_kpm_impl.h"
-#include "lib/e2/e2sm/e2sm_param_provider.h"
 #include "lib/e2/e2sm/e2sm_rc/e2sm_rc_asn1_packer.h"
+#include "lib/e2/e2sm/e2sm_rc/e2sm_rc_control_action_du_executor.h"
+#include "lib/e2/e2sm/e2sm_rc/e2sm_rc_control_service_impl.h"
 #include "lib/e2/e2sm/e2sm_rc/e2sm_rc_impl.h"
-#include "lib/pcap/dlt_pcap_impl.h"
 #include "srsran/asn1/e2ap/e2ap.h"
 #include "srsran/asn1/e2ap/e2sm_rc.h"
 #include "srsran/e2/e2.h"
@@ -39,6 +39,7 @@
 #include "srsran/e2/e2sm/e2sm_factory.h"
 #include "srsran/e2/e2sm/e2sm_manager.h"
 #include "srsran/gateways/network_gateway.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include "srsran/support/timers.h"
 #include <gtest/gtest.h>
@@ -94,9 +95,8 @@ private:
 class dummy_e2ap_pcap : public dlt_pcap
 {
 public:
-  void open(const std::string& filename_) override {}
   void close() override {}
-  bool is_write_enabled() override { return false; }
+  bool is_write_enabled() const override { return false; }
   void push_pdu(const_span<uint8_t> pdu) override {}
   void push_pdu(byte_buffer pdu) override {}
 };
@@ -153,7 +153,7 @@ inline e2_message generate_e2_setup_request(std::string oid)
   return e2_msg;
 }
 
-inline e2_message generate_ric_control_request(srslog::basic_logger& logger)
+inline e2_message generate_ric_control_request_style2_action6(srslog::basic_logger& logger)
 {
   using namespace asn1::e2ap;
   e2_message  e2_msg;
@@ -162,17 +162,20 @@ inline e2_message generate_ric_control_request(srslog::basic_logger& logger)
 
   ri_cctrl_request_s& ric_control_request           = initmsg.value.ri_cctrl_request();
   ric_control_request->ri_ccall_process_id_present  = false;
-  ric_control_request->ri_cctrl_ack_request_present = false;
+  ric_control_request->ri_cctrl_ack_request_present = true;
+  ric_control_request->ri_cctrl_ack_request.value   = ri_cctrl_ack_request_e::options::ack;
 
   ric_control_request->ra_nfunction_id.value.value           = 1;
-  ric_control_request->ri_crequest_id.value.ric_instance_id  = 2;
   ric_control_request->ri_crequest_id.value.ric_requestor_id = 3;
+  ric_control_request->ri_crequest_id.value.ric_instance_id  = 0;
 
   asn1::e2sm_rc::e2_sm_rc_ctrl_hdr_s ctrl_hdr;
-  ctrl_hdr.ric_ctrl_hdr_formats.set_ctrl_hdr_format2();
-  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format2().ue_id_present = true;
-  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format2().ue_id.set_gnb_ue_id();
-  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format2().ue_id.gnb_du_ue_id().gnb_cu_ue_f1ap_id = 4;
+  ctrl_hdr.ric_ctrl_hdr_formats.set_ctrl_hdr_format1();
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ric_ctrl_decision_present = false;
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ric_style_type            = 2;
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ric_ctrl_action_id        = 6;
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ue_id.set_gnb_ue_id();
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ue_id.gnb_du_ue_id().gnb_cu_ue_f1ap_id = 4;
 
   srsran::byte_buffer ctrl_hdr_buff;
   asn1::bit_ref       bref_msg(ctrl_hdr_buff);
@@ -184,39 +187,89 @@ inline e2_message generate_ric_control_request(srslog::basic_logger& logger)
   std::copy(ctrl_hdr_buff.begin(), ctrl_hdr_buff.end(), ric_control_request->ri_cctrl_hdr.value.begin());
 
   asn1::e2sm_rc::e2_sm_rc_ctrl_msg_s ctrl_msg;
-  ctrl_msg.ric_ctrl_msg_formats.set_ctrl_msg_format2();
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2().ric_ctrl_style_list.resize(1);
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2().ric_ctrl_style_list[0].indicated_ctrl_style_type = 1;
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2().ric_ctrl_style_list[0].ric_ctrl_action_list.resize(1);
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2().ric_ctrl_style_list[0].ric_ctrl_action_list[0].ric_ctrl_action_id =
-      1;
+  ctrl_msg.ric_ctrl_msg_formats.set_ctrl_msg_format1();
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1().ran_p_list.resize(2);
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1().ran_p_list[0].ran_param_id = 11;
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1()
+      .ran_p_list[0]
+      .ran_param_value_type.set_ran_p_choice_elem_false()
+      .ran_param_value_present = true;
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1()
+      .ran_p_list[0]
+      .ran_param_value_type.ran_p_choice_elem_false()
+      .ran_param_value.set_value_int()                                        = 5;
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1().ran_p_list[1].ran_param_id = 12;
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1()
+      .ran_p_list[1]
+      .ran_param_value_type.set_ran_p_choice_elem_false()
+      .ran_param_value_present = true;
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1()
+      .ran_p_list[1]
+      .ran_param_value_type.ran_p_choice_elem_false()
+      .ran_param_value.set_value_int() = 12;
 
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2()
-      .ric_ctrl_style_list[0]
-      .ric_ctrl_action_list[0]
-      .ran_p_list.ran_p_list.resize(1);
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2()
-      .ric_ctrl_style_list[0]
-      .ric_ctrl_action_list[0]
-      .ran_p_list.ran_p_list[0]
-      .ran_param_id = 1;
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2()
-      .ric_ctrl_style_list[0]
-      .ric_ctrl_action_list[0]
-      .ran_p_list.ran_p_list[0]
-      .ran_param_value_type.set_ran_p_choice_elem_true();
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2()
-      .ric_ctrl_style_list[0]
-      .ric_ctrl_action_list[0]
-      .ran_p_list.ran_p_list[0]
-      .ran_param_value_type.ran_p_choice_elem_true()
-      .ran_param_value.set_value_int();
-  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format2()
-      .ric_ctrl_style_list[0]
-      .ric_ctrl_action_list[0]
-      .ran_p_list.ran_p_list[0]
-      .ran_param_value_type.ran_p_choice_elem_true()
-      .ran_param_value.value_int() = 1;
+  srsran::byte_buffer ctrl_msg_buff;
+  asn1::bit_ref       bref_msg1(ctrl_msg_buff);
+  if (ctrl_msg.pack(bref_msg1) != asn1::SRSASN_SUCCESS) {
+    logger.error("Failed to pack E2SM RC control message\n");
+  }
+
+  ric_control_request->ri_cctrl_msg.value.resize(ctrl_msg_buff.length());
+  std::copy(ctrl_msg_buff.begin(), ctrl_msg_buff.end(), ric_control_request->ri_cctrl_msg.value.begin());
+  return e2_msg;
+}
+
+inline e2_message generate_ric_control_request(srslog::basic_logger& logger,
+                                               int64_t               style_type,
+                                               uint64_t              action_id,
+                                               uint64_t              param_id,
+                                               uint64_t              param_value)
+{
+  using namespace asn1::e2ap;
+  e2_message  e2_msg;
+  init_msg_s& initmsg = e2_msg.pdu.set_init_msg();
+  initmsg.load_info_obj(ASN1_E2AP_ID_RI_CCTRL);
+
+  ri_cctrl_request_s& ric_control_request           = initmsg.value.ri_cctrl_request();
+  ric_control_request->ri_ccall_process_id_present  = false;
+  ric_control_request->ri_cctrl_ack_request_present = true;
+  ric_control_request->ri_cctrl_ack_request.value   = ri_cctrl_ack_request_e::options::ack;
+
+  ric_control_request->ra_nfunction_id.value.value           = 1;
+  ric_control_request->ri_crequest_id.value.ric_instance_id  = 3;
+  ric_control_request->ri_crequest_id.value.ric_requestor_id = 0;
+
+  asn1::e2sm_rc::e2_sm_rc_ctrl_hdr_s ctrl_hdr;
+  ctrl_hdr.ric_ctrl_hdr_formats.set_ctrl_hdr_format1();
+
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ric_style_type     = style_type;
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ric_ctrl_action_id = action_id;
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ue_id.set_gnb_ue_id();
+  ctrl_hdr.ric_ctrl_hdr_formats.ctrl_hdr_format1().ue_id.gnb_du_ue_id().gnb_cu_ue_f1ap_id = 4;
+
+  srsran::byte_buffer ctrl_hdr_buff;
+  asn1::bit_ref       bref_msg(ctrl_hdr_buff);
+  if (ctrl_hdr.pack(bref_msg) != asn1::SRSASN_SUCCESS) {
+    logger.error("Failed to pack E2SM RC control header\n");
+  }
+
+  ric_control_request->ri_cctrl_hdr.value.resize(ctrl_hdr_buff.length());
+  std::copy(ctrl_hdr_buff.begin(), ctrl_hdr_buff.end(), ric_control_request->ri_cctrl_hdr.value.begin());
+
+  asn1::e2sm_rc::e2_sm_rc_ctrl_msg_s ctrl_msg;
+  ctrl_msg.ric_ctrl_msg_formats.set_ctrl_msg_format1();
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1().ran_p_list.resize(1);
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1().ran_p_list[0].ran_param_id = param_id;
+
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1()
+      .ran_p_list[0]
+      .ran_param_value_type.set_ran_p_choice_elem_false()
+      .ran_param_value_present = true;
+
+  ctrl_msg.ric_ctrl_msg_formats.ctrl_msg_format1()
+      .ran_p_list[0]
+      .ran_param_value_type.ran_p_choice_elem_false()
+      .ran_param_value.set_value_int() = param_value;
 
   srsran::byte_buffer ctrl_msg_buff;
   asn1::bit_ref       bref_msg1(ctrl_msg_buff);
@@ -330,15 +383,24 @@ public:
     if (ues.size() == 0) {
       // E2 Node level measurements
       meas_record_item_c meas_record_item;
-      if (meas_values.size()) {
-        meas_record_item.set_integer() = meas_values[0];
+      if (meas_type.meas_name().to_string() == "DRB.RlcSduDelayDl") {
+        if (meas_values_float.size()) {
+          meas_record_item.set_real();
+          meas_record_item.real().value = meas_values_float[0];
+        } else {
+          meas_record_item.set_real();
+          meas_record_item.real().value = 0.15625;
+        }
       } else {
-        meas_record_item.set_integer() = 1;
+        if (meas_values_int.size()) {
+          meas_record_item.integer() = meas_values_int[0];
+        } else {
+          meas_record_item.set_integer() = 1;
+        }
       }
       items.push_back(meas_record_item);
       return true;
     }
-
     // UE level measurements
     for (auto& ue_id : ues) {
       uint32_t                        ueid_  = ue_id.gnb_du_ueid().gnb_cu_ue_f1_ap_id;
@@ -348,11 +410,20 @@ public:
       meas_record_item_c meas_record_item;
       if (ue_idx < presence.size()) {
         if (presence[ue_idx]) {
-          if (ue_idx < meas_values.size()) {
-            meas_record_item.set_integer() = meas_values[ue_idx];
+          if (meas_type.meas_name().to_string() == "DRB.RlcSduDelayDl") {
+            if (meas_values_float.size()) {
+              meas_record_item.set_real();
+              meas_record_item.real().value = meas_values_float[ue_idx];
+            } else {
+              meas_record_item.set_real();
+              meas_record_item.real().value = 0.15625;
+            }
           } else {
-            // no meas provided, by default return value 1001
-            meas_record_item.set_integer() = 1001;
+            if (meas_values_int.size()) {
+              meas_record_item.set_integer() = meas_values_int[ue_idx];
+            } else {
+              meas_record_item.set_integer() = 1;
+            }
           }
         } else {
           meas_record_item.set_no_value();
@@ -371,13 +442,22 @@ public:
     return false;
   };
 
-  void push_measurements(std::vector<uint32_t> presence_,
-                         std::vector<uint32_t> cond_satisfied_,
-                         std::vector<uint32_t> meas_values_)
+  void push_measurements_int(std::vector<uint32_t> presence_,
+                             std::vector<uint32_t> cond_satisfied_,
+                             std::vector<uint32_t> meas_values_int_)
   {
-    presence       = presence_;
-    cond_satisfied = cond_satisfied_;
-    meas_values    = meas_values_;
+    presence        = presence_;
+    cond_satisfied  = cond_satisfied_;
+    meas_values_int = meas_values_int_;
+  };
+
+  void push_measurements_float(std::vector<uint32_t> presence_,
+                               std::vector<uint32_t> cond_satisfied_,
+                               std::vector<float>    meas_values_float_)
+  {
+    presence          = presence_;
+    cond_satisfied    = cond_satisfied_;
+    meas_values_float = meas_values_float_;
   };
 
   void set_ue_ids(std::vector<uint32_t> ue_ids_) { ue_ids = ue_ids_; };
@@ -401,10 +481,11 @@ private:
     return false;
   };
 
-  std::vector<std::string> supported_metrics = {"CQI", "RSRP", "RSRQ", "DRB.UEThpDl"};
+  std::vector<std::string> supported_metrics = {"CQI", "RSRP", "RSRQ", "DRB.UEThpDl", "DRB.RlcSduDelayDl"};
   std::vector<uint32_t>    presence          = {1};
   std::vector<uint32_t>    cond_satisfied    = {1};
-  std::vector<uint32_t>    meas_values       = {1};
+  std::vector<float>       meas_values_float = {0.15625};
+  std::vector<uint32_t>    meas_values_int   = {1};
   std::vector<uint32_t>    ue_ids            = {0};
 };
 
@@ -429,9 +510,13 @@ public:
     return outcome;
   };
 
-  void start_subscription(int ric_instance_id, e2_event_manager& ev_mng, uint16_t ran_func_id) override {}
+  void start_subscription(const asn1::e2ap::ri_crequest_id_s& ric_request_id,
+                          e2_event_manager&                   ev_mng,
+                          uint16_t                            ran_func_id) override
+  {
+  }
 
-  void stop_subscription(int                                                 ric_instance_id,
+  void stop_subscription(const asn1::e2ap::ri_crequest_id_s&                 ric_request_id,
                          e2_event_manager&                                   ev_mng,
                          const asn1::e2ap::ricsubscription_delete_request_s& msg) override
   {
@@ -536,7 +621,7 @@ inline asn1::e2ap::ri_caction_to_be_setup_item_s generate_e2sm_kpm_ric_action(e2
 inline e2_message generate_e2sm_kpm_subscription_request(asn1::e2ap::ri_caction_to_be_setup_item_s& ric_action)
 {
   asn1::e2ap::ricsubscription_request_s ric_subscript_reqs;
-  ric_subscript_reqs->ra_nfunction_id->value           = 147;
+  ric_subscript_reqs->ra_nfunction_id->value           = e2sm_kpm_asn1_packer::ran_func_id;
   ric_subscript_reqs->ri_crequest_id->ric_requestor_id = 1;
   ric_subscript_reqs->ri_crequest_id->ric_instance_id  = 0;
   ric_subscript_reqs->ricsubscription_details->ric_action_to_be_setup_list.resize(1);
@@ -569,7 +654,7 @@ inline e2_message generate_e2_ind_msg(byte_buffer& ind_hdr_bytes, byte_buffer& i
   e2_ind.indication->ri_cind_msg.crit                 = asn1::crit_opts::reject;
   e2_ind.indication->ri_crequest_id->ric_requestor_id = 1;
   e2_ind.indication->ri_crequest_id->ric_instance_id  = 0;
-  e2_ind.indication->ra_nfunction_id.value            = 147;
+  e2_ind.indication->ra_nfunction_id.value            = e2sm_kpm_asn1_packer::ran_func_id;
   e2_ind.indication->ri_caction_id.value              = 4;
   e2_ind.indication->ri_cind_sn_present               = true;
   e2_ind.indication->ri_cind_sn->value                = 1234;
@@ -618,9 +703,10 @@ public:
 
 class dummy_e2sm_handler : public e2sm_handler
 {
-  e2_sm_action_definition_s handle_packed_e2sm_action_definition(const srsran::byte_buffer& buf) override
+  e2sm_action_definition handle_packed_e2sm_action_definition(const srsran::byte_buffer& buf) override
   {
-    e2_sm_action_definition_s      action_def;
+    e2sm_action_definition action_def;
+    action_def.service_model = e2sm_service_model_t::KPM;
     e2_sm_kpm_action_definition_s& e2_sm_kpm_action_definition =
         variant_get<e2_sm_kpm_action_definition_s>(action_def.action_definition);
     e2_sm_kpm_action_definition.ric_style_type = 3;
@@ -633,9 +719,19 @@ class dummy_e2sm_handler : public e2sm_handler
     e2_sm_kpm_action_definition.action_definition_formats.action_definition_format3().granul_period = 10;
     return action_def;
   }
-  e2_sm_event_trigger_definition_s handle_packed_event_trigger_definition(const srsran::byte_buffer& buf) override
+  e2sm_ric_control_request handle_packed_ric_control_request(const asn1::e2ap::ri_cctrl_request_s& req) override
   {
-    e2_sm_event_trigger_definition_s e2sm_event_trigger_def;
+    e2sm_ric_control_request ric_control_request = {};
+    return ric_control_request;
+  }
+  e2_ric_control_response pack_ric_control_response(const e2sm_ric_control_response& e2sm_response) override
+  {
+    e2_ric_control_response ric_control_response = {};
+    return ric_control_response;
+  }
+  e2sm_event_trigger_definition handle_packed_event_trigger_definition(const srsran::byte_buffer& buf) override
+  {
+    e2sm_event_trigger_definition e2sm_event_trigger_def;
     e2sm_event_trigger_def.report_period = 10;
     return e2sm_event_trigger_def;
   }
@@ -672,17 +768,18 @@ private:
   dummy_e2_pdu_notifier* msg_notifier;
 };
 
-class dummy_e2sm_param_configurator : public e2sm_param_configurator
+class dummy_du_configurator : public du_configurator
 {
 public:
-  dummy_e2sm_param_configurator(){};
-  async_task<ric_control_config_response> configure_ue_mac_scheduler(ric_control_config reconf) override
+  dummy_du_configurator(){};
+  async_task<du_mac_sched_control_config_response>
+  configure_ue_mac_scheduler(du_mac_sched_control_config reconf) override
   {
-    ric_control_config config;
+    du_mac_sched_control_config config;
     config = reconf;
-    return launch_async([](coro_context<async_task<ric_control_config_response>>& ctx) {
+    return launch_async([](coro_context<async_task<du_mac_sched_control_config_response>>& ctx) {
       CORO_BEGIN(ctx);
-      CORO_RETURN(ric_control_config_response{true, true, true});
+      CORO_RETURN(du_mac_sched_control_config_response{true, true, true});
     });
   }
 };
@@ -705,10 +802,11 @@ protected:
   std::unique_ptr<srsran::e2ap_asn1_packer>           packer;
   std::unique_ptr<e2sm_interface>                     e2sm_kpm_iface;
   std::unique_ptr<e2sm_interface>                     e2sm_rc_iface;
+  std::unique_ptr<e2sm_control_service>               e2sm_rc_control_service_style2;
+  std::unique_ptr<e2sm_control_action_executor>       rc_control_action_2_6_executor;
   std::unique_ptr<e2sm_handler>                       e2sm_kpm_packer;
-  std::unique_ptr<e2sm_handler>                       e2sm_rc_packer;
-  std::unique_ptr<e2sm_param_provider>                rc_provider;
-  std::unique_ptr<e2sm_param_configurator>            rc_param_configurator;
+  std::unique_ptr<e2sm_rc_asn1_packer>                e2sm_rc_packer;
+  std::unique_ptr<du_configurator>                    rc_param_configurator;
   std::unique_ptr<e2_subscription_manager>            e2_subscription_mngr;
   std::unique_ptr<e2_du_metrics_interface>            du_metrics;
   std::unique_ptr<srs_du::f1ap_ue_id_translator>      f1ap_ue_id_mapper;
@@ -796,7 +894,7 @@ class e2_entity_test : public e2_test_base
     du_metrics            = std::make_unique<dummy_e2_du_metrics>();
     f1ap_ue_id_mapper     = std::make_unique<dummy_f1ap_ue_id_translator>();
     factory               = timer_factory{timers, task_worker};
-    rc_param_configurator = std::make_unique<dummy_e2sm_param_configurator>();
+    rc_param_configurator = std::make_unique<dummy_du_configurator>();
     e2                    = create_e2_entity(
         cfg, e2_client.get(), *du_metrics, *f1ap_ue_id_mapper, *rc_param_configurator, factory, task_worker);
   }
@@ -849,17 +947,21 @@ class e2_test_setup : public e2_test_base
     cfg                  = srsran::config_helpers::make_default_e2ap_config();
     cfg.e2sm_kpm_enabled = true;
 
-    factory               = timer_factory{timers, task_worker};
-    msg_notifier          = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
-    du_metrics            = std::make_unique<dummy_e2_du_metrics>();
-    du_meas_provider      = std::make_unique<dummy_e2sm_kpm_du_meas_provider>();
-    e2sm_kpm_packer       = std::make_unique<e2sm_kpm_asn1_packer>(*du_meas_provider);
-    e2sm_kpm_iface        = std::make_unique<e2sm_kpm_impl>(test_logger, *e2sm_kpm_packer, *du_meas_provider);
-    rc_provider           = std::make_unique<e2sm_param_provider>();
-    e2sm_rc_packer        = std::make_unique<e2sm_rc_asn1_packer>(*rc_provider);
-    rc_param_configurator = std::make_unique<dummy_e2sm_param_configurator>();
-    e2sm_rc_iface = std::make_unique<e2sm_rc_impl>(test_logger, *e2sm_rc_packer, *rc_param_configurator, *rc_provider);
-    e2sm_mngr     = std::make_unique<e2sm_manager>(test_logger);
+    factory                        = timer_factory{timers, task_worker};
+    msg_notifier                   = std::make_unique<dummy_e2_pdu_notifier>(nullptr);
+    du_metrics                     = std::make_unique<dummy_e2_du_metrics>();
+    du_meas_provider               = std::make_unique<dummy_e2sm_kpm_du_meas_provider>();
+    e2sm_kpm_packer                = std::make_unique<e2sm_kpm_asn1_packer>(*du_meas_provider);
+    e2sm_kpm_iface                 = std::make_unique<e2sm_kpm_impl>(test_logger, *e2sm_kpm_packer, *du_meas_provider);
+    e2sm_rc_packer                 = std::make_unique<e2sm_rc_asn1_packer>();
+    rc_param_configurator          = std::make_unique<dummy_du_configurator>();
+    e2sm_rc_iface                  = std::make_unique<e2sm_rc_impl>(test_logger, *e2sm_rc_packer);
+    e2sm_rc_control_service_style2 = std::make_unique<e2sm_rc_control_service>(2);
+    rc_control_action_2_6_executor = std::make_unique<e2sm_rc_control_action_2_6_du_executor>(*rc_param_configurator);
+    e2sm_rc_control_service_style2->add_e2sm_rc_control_action_executor(std::move(rc_control_action_2_6_executor));
+    e2sm_rc_packer->add_e2sm_control_service(e2sm_rc_control_service_style2.get());
+    e2sm_rc_iface->add_e2sm_control_service(std::move(e2sm_rc_control_service_style2));
+    e2sm_mngr = std::make_unique<e2sm_manager>(test_logger);
     e2sm_mngr->add_e2sm_service("1.3.6.1.4.1.53148.1.2.2.2", std::move(e2sm_kpm_iface));
     e2sm_mngr->add_e2sm_service("1.3.6.1.4.1.53148.1.1.2.3", std::move(e2sm_rc_iface));
     e2sm_mngr->add_supported_ran_function(1, "1.3.6.1.4.1.53148.1.1.2.3");
@@ -876,4 +978,5 @@ class e2_test_setup : public e2_test_base
     srslog::flush();
   }
 };
+
 } // namespace srsran

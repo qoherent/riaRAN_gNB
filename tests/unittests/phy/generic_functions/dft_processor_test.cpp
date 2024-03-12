@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -70,8 +70,8 @@ static void ditfft(span<cf_t> out, span<const cf_t> in, span<const cf_t> table, 
 static void run_expected_dft(span<cf_t> output, dft_processor::direction direction, span<const cf_t> input)
 {
   // Formal checks to avoid zero division among other failures.
-  assert(!input.empty());
-  assert(input.size() == output.size());
+  srsran_assert(!input.empty(), "Empty input span");
+  srsran_assert(input.size() == output.size(), "Input and output span sizes must be identical");
 
   // Derive parameters.
   unsigned size = input.size();

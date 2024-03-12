@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,8 +36,6 @@ class amplitude_controller_scaling_impl : public amplitude_controller
 private:
   /// Gain factor applied to the input signal.
   float amplitude_gain;
-  /// No metrics are reported by this implementation of the amplitude controller.
-  amplitude_controller_metrics empty_metrics = {};
 
 public:
   /// \brief Constructs an amplitude controller.

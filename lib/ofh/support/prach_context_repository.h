@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -68,8 +68,8 @@ public:
   prach_context() = default;
 
   /// Constructs an uplink PRACH context with the given PRACH buffer and PRACH buffer context.
-  prach_context(const prach_buffer_context& context, prach_buffer& buffer, unsigned nof_ports_) :
-    nof_ports(nof_ports_), context_info({context, &buffer}), nof_symbols(get_preamble_duration(context.format))
+  prach_context(const prach_buffer_context& context, prach_buffer& buffer) :
+    context_info({context, &buffer}), nof_symbols(get_preamble_duration(context.format))
   {
     srsran_assert(context.nof_fd_occasions == 1, "Only supporting one frequency domain occasion");
     srsran_assert(context.nof_td_occasions == 1, "Only supporting one time domain occasion");
@@ -87,12 +87,15 @@ public:
     }
     // Initialize statistic.
     for (unsigned i = 0; i != nof_symbols; ++i) {
-      buffer_stats.push_back({nof_ports, preamble_info.sequence_length});
+      buffer_stats.push_back({buffer.get_max_nof_ports(), preamble_info.sequence_length});
     }
   }
 
   /// Returns true if this context is empty, otherwise false.
   bool empty() const { return context_info.buffer == nullptr; }
+
+  /// Returns the PRACH buffer context.
+  const prach_buffer_context& get_context() const { return context_info.context; }
 
   /// Returns the number of REs of one PRACH repetition or zero if no PRACH buffer is associated with this context.
   unsigned get_prach_nof_re() const { return empty() ? 0U : preamble_info.sequence_length; }
@@ -101,7 +104,7 @@ public:
   unsigned get_prach_offset_to_first_re() const { return freq_mapping_info.k_bar; }
 
   /// Gets the maximum number of ports supported in PRACH buffer.
-  unsigned get_max_nof_ports() const { return empty() ? 0U : nof_ports; }
+  unsigned get_max_nof_ports() const { return empty() ? 0U : context_info.buffer->get_max_nof_ports(); }
 
   /// Returns a span of bitmaps that indicate the REs that have been written for the given symbol. Each element of the
   /// span corresponds to a port.
@@ -111,15 +114,18 @@ public:
     return buffer_stats[symbol].re_written;
   }
 
-  /// Returns the number of symbols used by the PRACH associated with the stored context.
-  unsigned get_prach_nof_symbols() const { return empty() ? 0U : nof_symbols; }
-
   /// Writes the given IQ buffer corresponding to the given symbol and port.
   void write_iq(unsigned port, unsigned symbol, unsigned re_start, span<const cf_t> iq_buffer)
   {
+    symbol -= context_info.context.start_symbol;
+
     srsran_assert(context_info.buffer, "No valid PRACH buffer in the context");
     srsran_assert(symbol < nof_symbols, "Invalid symbol index");
-    srsran_assert(port < buffer_stats[symbol].re_written.size(), "Invalid port index");
+
+    // Skip writing if the given port does not fit in the PRACH buffer.
+    if (port >= context_info.buffer->get_max_nof_ports()) {
+      return;
+    }
 
     // Update the buffer.
     span<cf_t> prach_out_buffer = context_info.buffer->get_symbol(
@@ -152,8 +158,6 @@ public:
   }
 
 private:
-  /// Number of ports.
-  unsigned nof_ports;
   /// PRACH context information
   prach_context_information context_info;
   /// Statistic of written data.
@@ -172,6 +176,7 @@ class prach_context_repository
   /// System frame number maximum value in this repository.
   static constexpr unsigned SFN_MAX_VALUE = 1U << 8;
 
+  srslog::basic_logger*      logger;
   std::vector<prach_context> buffer;
   //: TODO: make this lock free
   mutable std::mutex mutex;
@@ -193,13 +198,28 @@ class prach_context_repository
   }
 
 public:
-  explicit prach_context_repository(unsigned size_) : buffer(size_) {}
+  explicit prach_context_repository(unsigned size_, srslog::basic_logger* logger_ = nullptr) :
+    logger(logger_), buffer(size_)
+  {
+  }
 
   /// Adds the given entry to the repository at slot.
-  void add(const prach_buffer_context& context, prach_buffer& buffer_, unsigned nof_ports = 1)
+  void add(const prach_buffer_context& context, prach_buffer& buffer_, slot_point slot = slot_point())
   {
     std::lock_guard<std::mutex> lock(mutex);
-    entry(context.slot) = prach_context(context, buffer_, nof_ports);
+
+    slot_point current_slot = slot.valid() ? slot : context.slot;
+
+    if (logger) {
+      if (!entry(current_slot).empty()) {
+        const prach_buffer_context& previous_context = entry(current_slot).get_context();
+        logger->warning("Missed incoming User-Plane PRACH messages for slot '{}' and sector#{}",
+                        previous_context.slot,
+                        previous_context.sector);
+      }
+    }
+
+    entry(current_slot) = prach_context(context, buffer_);
   }
 
   /// Function to write the uplink PRACH buffer.

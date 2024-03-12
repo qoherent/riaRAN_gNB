@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -51,8 +51,8 @@ public:
 
   pseudo_random_generator_sequence(state_type x1_, state_type x2_) : x1(x1_), x2(x2_)
   {
-    srsran_assert(x1 <= mask_lsb_ones<state_type>(state_nof_bits), "Invalid X1 state (i.e., {}).", x1);
-    srsran_assert(x2 <= mask_lsb_ones<state_type>(state_nof_bits), "Invalid X1 state (i.e., {}).", x2);
+    srsran_assert((x1 & 1U) != 1U, "Invalid X1 state (i.e., {}).", x1);
+    srsran_assert((x2 & 1U) != 1U, "Invalid X2 state (i.e., {}).", x2);
   }
 
   /// \brief Steps the sequence a number of bits simultaneously.
@@ -68,18 +68,18 @@ public:
     sequence_type c = x1 ^ x2;
 
     // Perform XOR.
-    uint32_t f1 = x1 ^ (x1 >> 3U);
-    uint32_t f2 = x2 ^ (x2 >> 1U) ^ (x2 >> 2U) ^ (x2 >> 3U);
+    uint32_t f1 = x1 ^ (x1 << 3U);
+    uint32_t f2 = x2 ^ (x2 << 1U) ^ (x2 << 2U) ^ (x2 << 3U);
 
-    uint32_t mask = (1U << StepSize) - 1U;
+    uint32_t mask = ((1U << StepSize) - 1U) << (32U - StepSize);
 
     // Prepare feedback.
-    f1 = ((f1 & mask) << (31U - StepSize));
-    f2 = ((f2 & mask) << (31U - StepSize));
+    f1 = (f1 & mask) >> (31U - StepSize);
+    f2 = (f2 & mask) >> (31U - StepSize);
 
     // Insert feedback.
-    x1 = (x1 >> StepSize) ^ f1;
-    x2 = (x2 >> StepSize) ^ f2;
+    x1 = (x1 << StepSize) ^ f1;
+    x2 = (x2 << StepSize) ^ f2;
 
     return c;
   }
@@ -103,20 +103,29 @@ public:
     sequence_type c = x1 ^ x2;
 
     // Perform XOR.
-    uint32_t f1 = x1 ^ (x1 >> 3U);
-    uint32_t f2 = x2 ^ (x2 >> 1U) ^ (x2 >> 2U) ^ (x2 >> 3U);
+    uint32_t f1 = x1 ^ (x1 << 3U);
+    uint32_t f2 = x2 ^ (x2 << 1U) ^ (x2 << 2U) ^ (x2 << 3U);
 
-    uint32_t mask = (1U << step_size) - 1U;
+    uint32_t mask = ((1U << step_size) - 1U) << (32U - step_size);
 
     // Prepare feedback.
-    f1 = ((f1 & mask) << (31U - step_size));
-    f2 = ((f2 & mask) << (31U - step_size));
+    f1 = (f1 & mask) >> (31U - step_size);
+    f2 = (f2 & mask) >> (31U - step_size);
 
     // Insert feedback.
-    x1 = (x1 >> step_size) ^ f1;
-    x2 = (x2 >> step_size) ^ f2;
+    x1 = (x1 << step_size) ^ f1;
+    x2 = (x2 << step_size) ^ f2;
 
     return c;
+  }
+
+  /// Returns and steps the sequence 64 bits.
+  uint64_t step64()
+  {
+    uint64_t result = static_cast<uint64_t>(step<max_step_size>()) << 32;
+    result |= static_cast<uint64_t>(step<max_step_size>()) << 4;
+    result |= static_cast<uint64_t>(step<8>()) >> 24;
+    return result;
   }
 
   /// Gets the current \f$x_1(n)\f$ state.

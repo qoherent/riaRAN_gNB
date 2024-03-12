@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -70,7 +70,7 @@ public:
     setup->transaction_id                 = last_e2_msg.pdu.init_msg().value.e2setup_request()->transaction_id;
     setup->ra_nfunctions_accepted_present = true;
     asn1::protocol_ie_single_container_s<asn1::e2ap::ra_nfunction_id_item_ies_o> ran_func_item;
-    ran_func_item.value().ra_nfunction_id_item().ran_function_id       = 147;
+    ran_func_item.value().ra_nfunction_id_item().ran_function_id       = e2sm_kpm_asn1_packer::ran_func_id;
     ran_func_item.value().ra_nfunction_id_item().ran_function_revision = 0;
     setup->ra_nfunctions_accepted.value.push_back(ran_func_item);
     setup->global_ric_id.value.plmn_id.from_number(1);
@@ -143,9 +143,8 @@ protected:
     // simulate RIC side
     sctp_network_gateway_config ric_config;
     ric_config.bind_address = "127.0.0.1";
-    ric_config.bind_port    = get_unused_sctp_port(ric_config.bind_address);
+    ric_config.bind_port    = 0;
     ric_config.reuse_addr   = true;
-    ASSERT_NE(ric_config.bind_port, 0);
 
     ric_pcap        = std::make_unique<dummy_e2ap_pcap>();
     ric_net_adapter = std::make_unique<e2ap_network_adapter>(*epoll_broker, *ric_pcap);
@@ -154,10 +153,14 @@ protected:
     ric_e2_iface = std::make_unique<dummy_ric_e2>(*ric_net_adapter);
     ric_net_adapter->connect_e2ap(ric_e2_iface.get(), ric_e2_iface.get());
 
+    optional<uint16_t> ric_gw_port = ric_net_adapter->get_listen_port();
+    ASSERT_TRUE(ric_gw_port.has_value());
+    ASSERT_NE(ric_gw_port.value(), 0);
+
     // create E2 agent
     sctp_network_gateway_config e2agent_config;
     e2agent_config.connect_address = ric_config.bind_address;
-    e2agent_config.connect_port    = ric_config.bind_port;
+    e2agent_config.connect_port    = ric_gw_port.value();
     e2agent_config.bind_address    = "127.0.0.101";
     e2agent_config.bind_port       = 0;
 

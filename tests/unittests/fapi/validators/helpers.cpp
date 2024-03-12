@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -331,6 +331,8 @@ dl_tti_request_message unittest::build_valid_dl_tti_request()
   msg.pdus.back().pdu_type   = dl_pdu_type::CSI_RS;
   msg.pdus.back().csi_rs_pdu = build_valid_dl_csi_pdu();
 
+  msg.is_last_message_in_slot = false;
+
   return msg;
 }
 
@@ -348,6 +350,8 @@ ul_dci_request_message unittest::build_valid_ul_dci_request()
   msg.pdus.emplace_back();
   msg.pdus.back().pdu_type = ul_dci_pdu_type::PDCCH;
   msg.pdus.back().pdu      = build_valid_dl_pdcch_pdu();
+
+  msg.is_last_message_in_slot = true;
 
   return msg;
 }
@@ -387,6 +391,62 @@ error_indication_message unittest::build_valid_out_of_sync_error_indication()
   msg.error_code    = error_code_id::out_of_sync;
   msg.expected_sfn  = generate_sfn();
   msg.expected_slot = generate_slot();
+
+  return msg;
+}
+
+error_indication_message unittest::build_valid_invalid_sfn_error_indication()
+{
+  error_indication_message msg;
+  msg.message_type  = message_type_id::error_indication;
+  msg.slot          = generate_slot();
+  msg.sfn           = generate_sfn();
+  msg.message_id    = message_type_id::ul_dci_request;
+  msg.error_code    = error_code_id::msg_invalid_sfn;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
+
+  return msg;
+}
+
+error_indication_message unittest::build_valid_msg_slot_error_indication()
+{
+  error_indication_message msg;
+  msg.message_type  = message_type_id::error_indication;
+  msg.slot          = generate_slot();
+  msg.sfn           = generate_sfn();
+  msg.message_id    = message_type_id::dl_tti_request;
+  msg.error_code    = error_code_id::msg_slot_err;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
+
+  return msg;
+}
+
+error_indication_message unittest::build_valid_tx_err_error_indication()
+{
+  error_indication_message msg;
+  msg.message_type  = message_type_id::error_indication;
+  msg.slot          = generate_slot();
+  msg.sfn           = generate_sfn();
+  msg.message_id    = message_type_id::tx_data_request;
+  msg.error_code    = error_code_id::msg_tx_err;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
+
+  return msg;
+}
+
+error_indication_message unittest::build_valid_ul_dci_err_error_indication()
+{
+  error_indication_message msg;
+  msg.message_type  = message_type_id::error_indication;
+  msg.slot          = generate_slot();
+  msg.sfn           = generate_sfn();
+  msg.message_id    = message_type_id::ul_dci_request;
+  msg.error_code    = error_code_id::msg_ul_dci_err;
+  msg.expected_sfn  = std::numeric_limits<decltype(error_indication_message::expected_sfn)>::max();
+  msg.expected_slot = std::numeric_limits<decltype(error_indication_message::expected_slot)>::max();
 
   return msg;
 }
@@ -559,7 +619,7 @@ uci_pusch_pdu unittest::build_valid_uci_pusch_pdu()
   uci_pusch_pdu pdu;
 
   pdu.handle                   = generate_handle();
-  pdu.rnti                     = generate_rnti();
+  pdu.rnti                     = to_value(generate_rnti());
   pdu.ul_sinr_metric           = static_cast<int16_t>(generate_ul_sinr_metric());
   pdu.timing_advance_offset    = generate_timing_advance_offset();
   pdu.timing_advance_offset_ns = static_cast<int16_t>(generate_timing_advance_offset_in_ns());
@@ -609,7 +669,7 @@ uci_pucch_pdu_format_0_1 unittest::build_valid_uci_pucch_format01_pdu()
   uci_pucch_pdu_format_0_1 pdu;
 
   pdu.handle                   = generate_handle();
-  pdu.rnti                     = generate_rnti();
+  pdu.rnti                     = to_value(generate_rnti());
   pdu.ul_sinr_metric           = static_cast<int16_t>(generate_ul_sinr_metric());
   pdu.timing_advance_offset    = generate_timing_advance_offset();
   pdu.timing_advance_offset_ns = static_cast<int16_t>(generate_timing_advance_offset_in_ns());
@@ -643,7 +703,7 @@ uci_pucch_pdu_format_2_3_4 unittest::build_valid_uci_pucch_format234_pdu()
   uci_pucch_pdu_format_2_3_4 pdu;
 
   pdu.handle                   = generate_handle();
-  pdu.rnti                     = generate_rnti();
+  pdu.rnti                     = to_value(generate_rnti());
   pdu.ul_sinr_metric           = static_cast<int16_t>(generate_ul_sinr_metric());
   pdu.timing_advance_offset    = generate_timing_advance_offset();
   pdu.timing_advance_offset_ns = static_cast<int16_t>(generate_timing_advance_offset_in_ns());
@@ -1005,9 +1065,9 @@ ul_pusch_pdu unittest::build_valid_ul_pusch_pdu()
   pdu.uci_correspondence.part2.emplace_back();
   auto& corr                = pdu.uci_correspondence.part2.back();
   corr.priority             = 3;
-  corr.param_offsets        = {1, 2, 3};
-  corr.param_sizes          = {1, 2, 3};
-  corr.part2_size_map_index = 43;
+  corr.param_offsets        = {1, 2};
+  corr.param_sizes          = {1, 2};
+  corr.part2_size_map_index = 0;
   corr.part2_size_map_scope = uci_part1_to_part2_correspondence_v3::map_scope_type::common_context;
 
   auto& ptrs = pdu.pusch_ptrs;
@@ -1142,8 +1202,7 @@ tx_data_request_message unittest::build_valid_tx_data_request()
   pdu.pdu_index         = 4231;
   pdu.tlv_custom.length = units::bytes{12};
 
-  static uint8_t payload;
-  pdu.tlv_custom.payload = &payload;
+  pdu.tlv_custom.payload = &msg.padding[0];
 
   return msg;
 }

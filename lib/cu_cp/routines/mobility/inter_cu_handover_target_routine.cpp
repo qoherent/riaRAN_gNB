@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -48,18 +48,21 @@ inter_cu_handover_target_routine::inter_cu_handover_target_routine(
     const ngap_handover_request&           request_,
     du_processor_f1ap_ue_context_notifier& f1ap_ue_ctxt_notif_,
     du_processor_e1ap_control_notifier&    e1ap_ctrl_notif_,
-    du_processor_ue_handler&               du_proc_ue_handler_,
+    du_processor_cu_cp_notifier&           cu_cp_notifier_,
     du_processor_ue_manager&               ue_manager_,
     const security_indication_t&           default_security_indication_,
     srslog::basic_logger&                  logger_) :
   request(request_),
   f1ap_ue_ctxt_notifier(f1ap_ue_ctxt_notif_),
   e1ap_ctrl_notifier(e1ap_ctrl_notif_),
-  du_proc_ue_handler(du_proc_ue_handler_),
+  cu_cp_notifier(cu_cp_notifier_),
   ue_manager(ue_manager_),
   logger(logger_),
   default_security_indication(default_security_indication_)
 {
+  // Fill input for RRC UE creation.
+  rrc_context.is_inter_cu_handover = true;
+  rrc_context.sec_context          = request.security_context;
 }
 
 void inter_cu_handover_target_routine::operator()(
@@ -67,13 +70,13 @@ void inter_cu_handover_target_routine::operator()(
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", request.ue_index, name());
+  logger.debug("ue={}: \"{}\" initialized", request.ue_index, name());
 
   ue = ue_manager.find_ue(request.ue_index);
 
   // Perform initial sanity checks on incoming message.
   if (!ue->get_up_resource_manager().validate_request(request.pdu_session_res_setup_list_ho_req)) {
-    logger.error("ue={}: \"{}\" Invalid PDU Session Resource Setup", request.ue_index, name());
+    logger.warning("ue={}: \"{}\" Invalid PduSessionResourceSetupRequest during Handover", request.ue_index, name());
     CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
   }
 
@@ -85,12 +88,13 @@ void inter_cu_handover_target_routine::operator()(
   // Prepare E1AP Bearer Context Setup Request and call E1AP notifier
   {
     // Generate security keys for Bearer Context Setup Request (RRC UE is not created yet)
-    if (!generate_security_keys()) {
-      logger.error("ue={}: \"{}\" failed to generate security keys.", request.ue_index, name());
+    security_cfg = generate_security_keys(rrc_context.sec_context);
+    if (!security_cfg.has_value()) {
+      logger.warning("ue={}: \"{}\" failed to generate security keys", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
 
-    fill_e1ap_bearer_context_setup_request();
+    fill_e1ap_bearer_context_setup_request(security_cfg.value());
 
     // Call E1AP procedure
     CORO_AWAIT_VALUE(bearer_context_setup_response,
@@ -103,7 +107,7 @@ void inter_cu_handover_target_routine::operator()(
                                    next_config,
                                    ue->get_up_resource_manager(),
                                    logger)) {
-      logger.error("ue={}: \"{}\" failed to setup bearer at CU-UP.", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to setup bearer at CU-UP", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
   }
@@ -120,12 +124,12 @@ void inter_cu_handover_target_routine::operator()(
 
     // Call F1AP procedure
     CORO_AWAIT_VALUE(ue_context_setup_response,
-                     f1ap_ue_ctxt_notifier.on_ue_context_setup_request(ue_context_setup_request, true));
+                     f1ap_ue_ctxt_notifier.on_ue_context_setup_request(ue_context_setup_request, rrc_context));
     // Handle UE Context Setup Response
     if (!handle_procedure_response(
             bearer_context_modification_request, ue_context_setup_response, next_config, logger)) {
-      logger.error("ue={}: \"{}\" failed to setup UE context at DU.", request.ue_index, name());
-      du_proc_ue_handler.remove_ue(ue_context_setup_response.ue_index);
+      logger.warning("ue={}: \"{}\" failed to setup UE context at DU", request.ue_index, name());
+      cu_cp_notifier.on_ue_removal_required(ue_context_setup_response.ue_index);
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
   }
@@ -135,11 +139,6 @@ void inter_cu_handover_target_routine::operator()(
   // Setup SRB1 and initialize security context in RRC
   {
     create_srb1();
-
-    if (!ue->get_rrc_ue_notifier().on_new_security_context(request.security_context)) {
-      logger.error("ue={}: \"{}\" failed to setup security context at UE.", request.ue_index, name());
-      CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
-    }
   }
 
   // Prepare Bearer Context Modification Request and call E1AP notifier
@@ -153,7 +152,7 @@ void inter_cu_handover_target_routine::operator()(
 
     // Handle BearerContextModificationResponse
     if (!bearer_context_modification_response.success) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", request.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", request.ue_index, name());
       CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
     }
   }
@@ -161,12 +160,19 @@ void inter_cu_handover_target_routine::operator()(
   // Prepare RRC Reconfiguration and call RRC UE notifier
   // If default DRB is being setup, SRB2 needs to be setup as well
   {
-    fill_rrc_reconfig_args(rrc_reconfig_args,
-                           ue_context_setup_request.srbs_to_be_setup_list,
-                           next_config.pdu_sessions_to_setup_list,
-                           ue_context_setup_response.du_to_cu_rrc_info,
-                           {} /* No NAS PDUs required */,
-                           ue->get_rrc_ue_notifier().get_rrc_ue_meas_config());
+    if (!fill_rrc_reconfig_args(rrc_reconfig_args,
+                                ue_context_setup_request.srbs_to_be_setup_list,
+                                next_config.pdu_sessions_to_setup_list,
+                                ue_context_setup_response.du_to_cu_rrc_info,
+                                {} /* No NAS PDUs required */,
+                                ue->get_rrc_ue_notifier().generate_meas_config(),
+                                false,
+                                false,
+                                false,
+                                logger)) {
+      logger.warning("ue={}: \"{}\" failed to fill RRC Reconfiguration", request.ue_index, name());
+      CORO_EARLY_RETURN(generate_handover_resource_allocation_response(false));
+    }
 
     // Define transaction ID
     // We set this to zero, as only in the inter CU Handover case, the first RRC transaction of the target UE is an RRC
@@ -210,7 +216,7 @@ bool handle_procedure_response(e1ap_bearer_context_modification_request& bearer_
 {
   // Fail procedure if (single) DRB couldn't be setup
   if (!ue_context_setup_resp.drbs_failed_to_be_setup_list.empty()) {
-    logger.error("Couldn't setup {} DRBs at DU.", ue_context_setup_resp.drbs_failed_to_be_setup_list.size());
+    logger.warning("Couldn't setup {} DRBs at DU", ue_context_setup_resp.drbs_failed_to_be_setup_list.size());
     return false;
   }
 
@@ -223,10 +229,10 @@ bool handle_procedure_response(e1ap_bearer_context_modification_request& bearer_
   return ue_context_setup_resp.success;
 }
 
-bool inter_cu_handover_target_routine::generate_security_keys()
+optional<security::sec_as_config>
+inter_cu_handover_target_routine::generate_security_keys(security::security_context& sec_context)
 {
-  // Copy security context to RRC UE context
-  sec_context = request.security_context;
+  optional<security::sec_as_config> cfg;
 
   // Select preferred integrity algorithm.
   security::preferred_integrity_algorithms inc_algo_pref_list  = {security::integrity_algorithm::nia2,
@@ -238,10 +244,10 @@ bool inter_cu_handover_target_routine::generate_security_keys()
                                                                   security::ciphering_algorithm::nea1,
                                                                   security::ciphering_algorithm::nea3};
   if (not sec_context.select_algorithms(inc_algo_pref_list, ciph_algo_pref_list)) {
-    logger.error("ue={} could not select security algorithm.", request.ue_index);
-    return false;
+    logger.warning("ue={}: Could not select security algorithm", request.ue_index);
+    return cfg;
   }
-  logger.debug("ue={} selected security algorithms NIA=NIA{} NEA=NEA{}.",
+  logger.debug("ue={}: Selected security algorithms NIA=NIA{} NEA=NEA{}",
                request.ue_index,
                sec_context.sel_algos.integ_algo,
                sec_context.sel_algos.cipher_algo);
@@ -249,22 +255,21 @@ bool inter_cu_handover_target_routine::generate_security_keys()
   // Generate K_rrc_enc and K_rrc_int
   sec_context.generate_as_keys();
 
-  security_cfg = sec_context.get_as_config(security::sec_domain::rrc);
+  cfg = sec_context.get_as_config(security::sec_domain::rrc);
 
-  return true;
+  return cfg;
 }
 
-void inter_cu_handover_target_routine::fill_e1ap_bearer_context_setup_request()
+void inter_cu_handover_target_routine::fill_e1ap_bearer_context_setup_request(const security::sec_as_config& sec_info)
 {
   bearer_context_setup_request.ue_index = request.ue_index;
 
   // security info
-  bearer_context_setup_request.security_info.security_algorithm.ciphering_algo = security_cfg.cipher_algo;
-  bearer_context_setup_request.security_info.security_algorithm.integrity_protection_algorithm =
-      security_cfg.integ_algo;
-  bearer_context_setup_request.security_info.up_security_key.encryption_key = security_cfg.k_enc;
-  if (security_cfg.k_int.has_value()) {
-    bearer_context_setup_request.security_info.up_security_key.integrity_protection_key = security_cfg.k_int.value();
+  bearer_context_setup_request.security_info.security_algorithm.ciphering_algo                 = sec_info.cipher_algo;
+  bearer_context_setup_request.security_info.security_algorithm.integrity_protection_algorithm = sec_info.integ_algo;
+  bearer_context_setup_request.security_info.up_security_key.encryption_key                    = sec_info.k_enc;
+  if (sec_info.k_int.has_value()) {
+    bearer_context_setup_request.security_info.up_security_key.integrity_protection_key = sec_info.k_int.value();
   }
 
   bearer_context_setup_request.ue_dl_aggregate_maximum_bit_rate = request.ue_aggr_max_bit_rate.ue_aggr_max_bit_rate_dl;
@@ -287,9 +292,10 @@ void inter_cu_handover_target_routine::create_srb1()
 {
   // create SRB1
   srb_creation_message srb1_msg{};
-  srb1_msg.ue_index = request.ue_index;
-  srb1_msg.srb_id   = srb_id_t::srb1;
-  srb1_msg.pdcp_cfg = asn1::rrc_nr::pdcp_cfg_s{};
+  srb1_msg.ue_index        = request.ue_index;
+  srb1_msg.srb_id          = srb_id_t::srb1;
+  srb1_msg.pdcp_cfg        = {};
+  srb1_msg.enable_security = true;
   ue_manager.find_du_ue(request.ue_index)->get_rrc_ue_srb_notifier().create_srb(srb1_msg);
 }
 

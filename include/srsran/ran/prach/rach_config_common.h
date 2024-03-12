@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,6 +45,11 @@ struct rach_config_generic {
   /// \brief \c preambleReceivedTargetPower, part of \c RACH-ConfigGeneric, TS 38.311.
   /// Target power level at the network receiver side, in dBm. Only values multiple of 2 are valid.
   bounded_integer<int, -202, -60> preamble_rx_target_pw;
+  /// Max number of RA preamble transmissions performed before declaring a failure. Values {3, 4, 5, 6, 7, 8, 10, 20,
+  /// 50, 100, 200}.
+  uint8_t preamble_trans_max = 7;
+  /// Power ramping steps for PRACH. Values {0, 2, 4, 6}.
+  uint8_t power_ramping_step_db = 4;
 };
 
 /// Used to specify the cell-specific random-access parameters as per TS 38.331, "RACH-ConfigCommon".
@@ -64,6 +69,14 @@ struct rach_config_common {
   restricted_set_config restricted_set;
   /// Enables the transform precoder for Msg3 transmission according to clause 6.1.3 of TS 38.214.
   bool msg3_transform_precoder;
+  /// Indicates the number of SSBs per RACH occasion (L1 parameter 'SSB-per-rach-occasion'). See TS 38.331, \c
+  /// ssb-perRACH-OccasionAndCB-PreamblesPerSSB. Values {1/8, 1/4, 1/2, 1, 2, 4, 8, 16}.
+  /// Value 1/8 corresponds to one SSB associated with 8 RACH occasions and so on so forth.
+  float nof_ssb_per_ro = 1;
+  /// Indicates the number of Contention Based preambles per SSB (L1 parameter 'CB-preambles-per-SSB'). See TS 38.331,
+  /// \c ssb-perRACH-OccasionAndCB-PreamblesPerSSB.
+  /// \remark Values of \c cb_preambles_per_ssb depends on value of \c ssb_per_ro.
+  uint8_t nof_cb_preambles_per_ssb = 4;
 };
 
 } // namespace srsran

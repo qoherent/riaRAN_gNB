@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -42,7 +42,7 @@ cell_meas_manager_test::~cell_meas_manager_test()
 void cell_meas_manager_test::create_empty_manager()
 {
   cell_meas_manager_cfg cfg = {};
-  manager                   = create_cell_meas_manager(cfg, mobility_manager);
+  manager                   = std::make_unique<cell_meas_manager>(cfg, mobility_manager);
   ASSERT_NE(manager, nullptr);
 }
 
@@ -133,7 +133,7 @@ void cell_meas_manager_test::create_default_manager()
   a3_report_cfg.event_triggered = event_trigger_cfg;
   cfg.report_config_ids.emplace(uint_to_report_cfg_id(2), a3_report_cfg);
 
-  manager = create_cell_meas_manager(cfg, mobility_manager);
+  manager = std::make_unique<cell_meas_manager>(cfg, mobility_manager);
   ASSERT_NE(manager, nullptr);
 }
 
@@ -183,7 +183,7 @@ void cell_meas_manager_test::create_manager_without_ncells_and_periodic_report()
   a3_report_cfg.event_triggered = event_trigger_cfg;
   cfg.report_config_ids.emplace(uint_to_report_cfg_id(1), a3_report_cfg);
 
-  manager = create_cell_meas_manager(cfg, mobility_manager);
+  manager = std::make_unique<cell_meas_manager>(cfg, mobility_manager);
   ASSERT_NE(manager, nullptr);
 }
 
@@ -193,6 +193,34 @@ void cell_meas_manager_test::check_default_meas_cfg(const optional<rrc_meas_cfg>
   ASSERT_EQ(meas_cfg.value().meas_obj_to_add_mod_list.size(), 2);
   ASSERT_EQ((unsigned)meas_cfg.value().meas_obj_to_add_mod_list.begin()->meas_obj_id, meas_obj_id_to_uint(meas_obj_id));
   // TODO: Add checks for more values
+}
+
+void cell_meas_manager_test::verify_meas_cfg(const optional<rrc_meas_cfg>& meas_cfg)
+{
+  // Performs sanity check on the config without making any assumptions.
+  ASSERT_TRUE(meas_cfg.has_value());
+
+  std::vector<meas_id_t> used_meas_ids;
+
+  // Make sure sure all elements referenced in MeasIds exist.
+  for (const auto& meas_item : meas_cfg.value().meas_id_to_add_mod_list) {
+    // Check ID is not already used.
+    ASSERT_EQ(std::find(used_meas_ids.begin(), used_meas_ids.end(), meas_item.meas_id), used_meas_ids.end());
+    used_meas_ids.push_back(meas_item.meas_id);
+
+    // Report config must be valid/present in meas_cfg.
+    auto report_it = std::find_if(
+        begin(meas_cfg.value().report_cfg_to_add_mod_list),
+        end(meas_cfg.value().report_cfg_to_add_mod_list),
+        [meas_item](const rrc_report_cfg_to_add_mod& x) { return x.report_cfg_id == meas_item.report_cfg_id; });
+    ASSERT_NE(report_it, meas_cfg.value().report_cfg_to_add_mod_list.end());
+
+    auto meas_obj_it =
+        std::find_if(begin(meas_cfg.value().meas_obj_to_add_mod_list),
+                     end(meas_cfg.value().meas_obj_to_add_mod_list),
+                     [meas_item](const rrc_meas_obj_to_add_mod& x) { return x.meas_obj_id == meas_item.meas_obj_id; });
+    ASSERT_NE(meas_obj_it, meas_cfg.value().meas_obj_to_add_mod_list.end());
+  }
 }
 
 void cell_meas_manager_test::verify_empty_meas_cfg(const optional<rrc_meas_cfg>& meas_cfg)

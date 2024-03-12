@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,7 @@
 #include "procedures/f1ap_du_ue_context_setup_procedure.h"
 #include "procedures/gnb_cu_configuration_update_procedure.h"
 #include "ue_context/f1ap_du_ue_config_update.h"
+#include "srsran/asn1/f1ap/common.h"
 #include "srsran/asn1/f1ap/f1ap.h"
 #include "srsran/f1ap/common/f1ap_message.h"
 #include "srsran/f1ap/du/f1c_connection_client.h"
@@ -84,7 +85,13 @@ async_task<f1_setup_response_message> f1ap_du_impl::handle_f1_setup_request(cons
 
 f1ap_ue_creation_response f1ap_du_impl::handle_ue_creation_request(const f1ap_ue_creation_request& msg)
 {
-  return create_f1ap_ue(msg, ues, ctxt, *events);
+  f1ap_ue_creation_response resp = create_f1ap_ue(msg, ues, ctxt, *events);
+  if (resp.result) {
+    logger.info("{}: F1 UE context created successfully.", ues[msg.ue_index].context);
+  } else {
+    logger.warning("ue={} crnti={}: F1 UE context failed to be created.", msg.ue_index, msg.c_rnti);
+  }
+  return resp;
 }
 
 f1ap_ue_configuration_response f1ap_du_impl::handle_ue_configuration_request(const f1ap_ue_configuration_request& msg)
@@ -94,6 +101,9 @@ f1ap_ue_configuration_response f1ap_du_impl::handle_ue_configuration_request(con
 
 void f1ap_du_impl::handle_ue_deletion_request(du_ue_index_t ue_index)
 {
+  if (ues.contains(ue_index)) {
+    logger.info("{}: F1 UE context removed.", ues[ue_index].context);
+  }
   ues.remove_ue(ue_index);
 }
 
@@ -217,7 +227,10 @@ void f1ap_du_impl::handle_dl_rrc_message_transfer(const asn1::f1ap::dl_rrc_msg_t
 
   // Forward SDU to lower layers.
   byte_buffer sdu;
-  sdu.append(msg->rrc_container);
+  if (not sdu.append(msg->rrc_container)) {
+    logger.error("Discarding DlRrcMessageTransfer, could not append RRC container to SDU. srb_id={}", srb_id);
+    return;
+  }
   srb_bearer->handle_pdu(std::move(sdu));
 }
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,9 @@
  */
 
 #include "rrc_ue_test_messages.h"
+#include "srsran/asn1/rrc_nr/ul_ccch_msg.h"
 #include "srsran/asn1/rrc_nr/ul_dcch_msg.h"
+#include "srsran/asn1/rrc_nr/ul_dcch_msg_ies.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/security/security.h"
 
@@ -198,7 +200,7 @@ byte_buffer srsran::srs_cu_cp::generate_invalid_rrc_reestablishment_request_pdu(
   asn1::rrc_nr::ul_ccch_msg_s ul_ccch_msg{};
   auto&                       ccch_c1          = ul_ccch_msg.msg.set_c1();
   auto&                       rrc_reest_req    = ccch_c1.set_rrc_reest_request();
-  rrc_reest_req.rrc_reest_request.ue_id.c_rnti = c_rnti;
+  rrc_reest_req.rrc_reest_request.ue_id.c_rnti = to_value(c_rnti);
   rrc_reest_req.rrc_reest_request.ue_id.pci    = pci;
   rrc_reest_req.rrc_reest_request.ue_id.short_mac_i.from_number(0);
   rrc_reest_req.rrc_reest_request.reest_cause = asn1::rrc_nr::reest_cause_opts::options::other_fail;
@@ -210,8 +212,10 @@ byte_buffer srsran::srs_cu_cp::generate_invalid_rrc_reestablishment_request_pdu(
   return pdu;
 }
 
-byte_buffer
-srsran::srs_cu_cp::generate_valid_rrc_reestablishment_request_pdu(pci_t pci, rnti_t c_rnti, std::string short_mac_i)
+byte_buffer srsran::srs_cu_cp::generate_valid_rrc_reestablishment_request_pdu(pci_t                       pci,
+                                                                              rnti_t                      c_rnti,
+                                                                              std::string                 short_mac_i,
+                                                                              asn1::rrc_nr::reest_cause_e cause)
 {
   byte_buffer   pdu;
   asn1::bit_ref bref{pdu};
@@ -219,10 +223,10 @@ srsran::srs_cu_cp::generate_valid_rrc_reestablishment_request_pdu(pci_t pci, rnt
   asn1::rrc_nr::ul_ccch_msg_s ul_ccch_msg{};
   auto&                       ccch_c1          = ul_ccch_msg.msg.set_c1();
   auto&                       rrc_reest_req    = ccch_c1.set_rrc_reest_request();
-  rrc_reest_req.rrc_reest_request.ue_id.c_rnti = c_rnti;
+  rrc_reest_req.rrc_reest_request.ue_id.c_rnti = to_value(c_rnti);
   rrc_reest_req.rrc_reest_request.ue_id.pci    = pci;
   rrc_reest_req.rrc_reest_request.ue_id.short_mac_i.from_string(short_mac_i);
-  rrc_reest_req.rrc_reest_request.reest_cause = asn1::rrc_nr::reest_cause_opts::options::other_fail;
+  rrc_reest_req.rrc_reest_request.reest_cause = cause;
   rrc_reest_req.rrc_reest_request.spare.from_number(0);
 
   const asn1::SRSASN_CODE ret = ul_ccch_msg.pack(bref);

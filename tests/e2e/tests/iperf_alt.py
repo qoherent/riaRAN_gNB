@@ -1,9 +1,21 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
-# By using this file, you agree to the terms and conditions set
-# forth in the LICENSE file which can be found at the top level of
-# the distribution.
+# This file is part of srsRAN
+#
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
 #
 
 """
@@ -23,7 +35,7 @@ from retina.protocol.ue_pb2 import IPerfDir, IPerfProto
 from retina.protocol.ue_pb2_grpc import UEStub
 
 from .steps.configuration import configure_test_parameters
-from .steps.stub import iperf, start_and_attach, stop
+from .steps.stub import iperf_parallel, start_and_attach, stop
 
 
 @mark.parametrize(
@@ -36,14 +48,14 @@ from .steps.stub import iperf, start_and_attach, stop
 )
 @mark.parametrize(
     "config",
-    (param("log --hex_max_size=32", id=""),),
+    (param("log --hex_max_size=32", id="hex_max_size"),),
 )
 @mark.zmq_single_ue
 # pylint: disable=too-many-arguments
 def test_multiple_configs_zmq(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
-    ue_1: UEStub,
+    ue: UEStub,  # pylint: disable=invalid-name
     fivegc: FiveGCStub,
     gnb: GNBStub,
     config: str,
@@ -76,12 +88,12 @@ def test_multiple_configs_zmq(
     )
     configure_artifacts(
         retina_data=retina_data,
-        always_download_artifacts=True,
+        always_download_artifacts=False,
     )
 
-    ue_attach_info_dict = start_and_attach((ue_1,), gnb, fivegc, gnb_post_cmd=config)
+    ue_attach_info_dict = start_and_attach((ue,), gnb, fivegc, gnb_post_cmd=config)
 
-    iperf(
+    iperf_parallel(
         ue_attach_info_dict,
         fivegc,
         protocol,
@@ -91,4 +103,4 @@ def test_multiple_configs_zmq(
         bitrate_threshold_ratio=0,  # bitrate != 0
     )
     sleep(wait_before_power_off)
-    stop((ue_1,), gnb, fivegc, retina_data, warning_as_errors=True, fail_if_kos=True)
+    stop((ue,), gnb, fivegc, retina_data, warning_as_errors=True, fail_if_kos=True)

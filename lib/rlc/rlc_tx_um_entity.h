@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "rlc_sdu_queue.h"
+#include "rlc_sdu_queue_lockfree.h"
 #include "rlc_tx_entity.h"
 #include "srsran/support/executors/task_executor.h"
 #include "fmt/format.h"
@@ -53,9 +53,9 @@ private:
   rlc_tx_um_state st;
 
   // TX SDU buffers
-  rlc_sdu_queue sdu_queue;
-  rlc_sdu       sdu;
-  uint32_t      next_so = 0; // The segment offset for the next generated PDU
+  rlc_sdu_queue_lockfree sdu_queue;
+  rlc_sdu                sdu;
+  uint32_t               next_so = 0; // The segment offset for the next generated PDU
 
   // Mutexes
   std::mutex mutex;
@@ -70,6 +70,8 @@ private:
 
   task_executor& pcell_executor;
 
+  pcap_rlc_pdu_context pcap_context;
+
   // Storage for previous buffer state
   unsigned prev_buffer_state = 0;
 
@@ -80,21 +82,24 @@ private:
   std::atomic_flag pending_buffer_state = ATOMIC_FLAG_INIT;
 
 public:
-  rlc_tx_um_entity(du_ue_index_t                        du_index,
+  rlc_tx_um_entity(uint32_t                             du_index,
+                   du_ue_index_t                        ue_index,
                    rb_id_t                              rb_id,
                    const rlc_tx_um_config&              config,
                    rlc_tx_upper_layer_data_notifier&    upper_dn_,
                    rlc_tx_upper_layer_control_notifier& upper_cn_,
                    rlc_tx_lower_layer_notifier&         lower_dn_,
-                   task_executor&                       pcell_executor_);
+                   task_executor&                       pcell_executor_,
+                   bool                                 metrics_enabled,
+                   rlc_pcap&                            pcap_);
 
   // Interfaces for higher layers
   void handle_sdu(rlc_sdu sdu_) override;
   void discard_sdu(uint32_t pdcp_sn) override;
 
   // Interfaces for lower layers
-  byte_buffer_chain pull_pdu(uint32_t grant_len) override;
-  uint32_t          get_buffer_state() override;
+  size_t   pull_pdu(span<uint8_t> mac_sdu_buf) override;
+  uint32_t get_buffer_state() override;
 
 private:
   bool get_si_and_expected_header_size(uint32_t      so,

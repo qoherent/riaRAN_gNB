@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -65,7 +65,7 @@ protected:
 
   task_worker          worker{"GTP-U demux#0", 128};
   task_worker_executor exec{worker};
-  dummy_dlt_pcap       dummy_pcap = {};
+  null_dlt_pcap        dummy_pcap;
 
   std::unique_ptr<gtpu_demux> dut;
   srslog::basic_logger&       test_logger = srslog::fetch_basic_logger("TEST", false);

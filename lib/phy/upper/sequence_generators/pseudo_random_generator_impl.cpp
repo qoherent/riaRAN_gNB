@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,8 @@
  */
 
 #include "pseudo_random_generator_impl.h"
+#include "pseudo_random_generator_fast_advance.h"
+#include "pseudo_random_generator_initializers.h"
 #include "pseudo_random_generator_sequence.h"
 #include "srsran/support/math_utils.h"
 #include "srsran/support/srsran_assert.h"
@@ -35,57 +37,28 @@
 
 using namespace srsran;
 
-const pseudo_random_generator_impl::x1_init_s pseudo_random_generator_impl::x1_init =
-    pseudo_random_generator_impl::x1_init_s();
+/// \brief Parameter \f$N_{\textup{C}}\f$, as defined in TS38.211 Section 5.2.1.
+///
+/// Corresponds to the delay between the state sequences \f$x_1(n), x_2(n)\f$ and the output sequence \f$c(n) =
+/// x_1(n + N_{\textup{C}}) \oplus x_2(n + N_{\textup{C}})\f$.
+static constexpr unsigned pseudo_random_generator_Nc = 1600;
 
-const pseudo_random_generator_impl::x2_init_s pseudo_random_generator_impl::x2_init =
-    pseudo_random_generator_impl::x2_init_s();
+/// Maximum number of steps that can be the state advanced using the pseudo-random generator fast advance.
+static constexpr unsigned pseudo_random_state_fast_advance_max_steps = 1U << 15U;
 
-pseudo_random_generator_impl::x1_init_s::x1_init_s() : x1(1)
-{
-  pseudo_random_generator_sequence sequence(1, 0);
-  // Compute transition step.
-  for (uint32_t n = 0; n != SEQUENCE_NC; ++n) {
-    sequence.step(1);
-  }
-  x1 = sequence.get_x1();
-}
+/// Sequence \f$x_1(n)\f$ initializer object.
+static const pseudo_random_initializer_x1 x1_init(pseudo_random_generator_Nc);
 
-unsigned pseudo_random_generator_impl::x1_init_s::get() const
-{
-  return x1;
-}
+/// Sequence \f$x_2(n)\f$ initializer object.
+static const pseudo_random_initializer_x2 x2_init(pseudo_random_generator_Nc);
 
-pseudo_random_generator_impl::x2_init_s::x2_init_s() : x2()
-{
-  // For each bit of the seed.
-  for (uint32_t i = 0; i != SEQUENCE_SEED_LEN; ++i) {
-    // Compute transition step.
-    pseudo_random_generator_sequence sequence(0, 1 << i);
-    for (uint32_t n = 0; n != SEQUENCE_NC; ++n) {
-      sequence.step(1);
-    }
-    x2[i] = sequence.get_x2();
-  }
-}
-
-unsigned pseudo_random_generator_impl::x2_init_s::get(unsigned c_init) const
-{
-  unsigned ret = 0;
-
-  for (unsigned i = 0; i != SEQUENCE_SEED_LEN; ++i) {
-    if ((c_init >> i) & 1UL) {
-      ret ^= x2[i];
-    }
-  }
-
-  return ret;
-}
+/// Sequence state fast advance instance.
+static const pseudo_random_generator_fast_advance<pseudo_random_state_fast_advance_max_steps> fast_advance;
 
 void pseudo_random_generator_impl::init(unsigned c_init)
 {
-  x1 = x1_init.get();
-  x2 = x2_init.get(c_init);
+  x1 = x1_init.get_reverse();
+  x2 = x2_init.get_reverse(c_init);
 }
 
 void pseudo_random_generator_impl::init(const state_s& state)
@@ -96,27 +69,16 @@ void pseudo_random_generator_impl::init(const state_s& state)
 
 void pseudo_random_generator_impl::advance(unsigned count)
 {
-  unsigned i = 0;
+  while (count != 0) {
+    // Ceil the number of steps to advance to the maximum number of steps.
+    unsigned n = std::min(pseudo_random_state_fast_advance_max_steps, count);
 
-  static constexpr unsigned max_step_size = pseudo_random_generator_sequence::get_max_step_size();
+    // Advance sequence states.
+    fast_advance.advance(x1, x2, n);
 
-  // Create sequence with the current x1 and x2 states.
-  pseudo_random_generator_sequence sequence(x1, x2);
-
-  // Advance sequence states with the maximum parallel bits.
-  for (unsigned i_end = (count / max_step_size) * max_step_size; i != i_end; i += max_step_size) {
-    sequence.step<max_step_size>();
+    // Decrement count.
+    count -= n;
   }
-
-  // Advance the remainder in a smaller step.
-  unsigned remainder = count % max_step_size;
-  if (remainder != 0) {
-    sequence.step(remainder);
-  }
-
-  // Update x1 and x2 states.
-  x1 = sequence.get_x1();
-  x2 = sequence.get_x2();
 }
 
 void pseudo_random_generator_impl::generate(bit_buffer& data)
@@ -125,8 +87,7 @@ void pseudo_random_generator_impl::generate(bit_buffer& data)
   static constexpr unsigned nof_bits_per_byte = 8;
 
   // Calculate the maximum number of simultaneous words to process.
-  static constexpr unsigned max_nof_bytes_step =
-      pseudo_random_generator_sequence::get_max_step_size() / nof_bits_per_byte;
+  static constexpr unsigned max_nof_bytes_step = 64 / nof_bits_per_byte;
 
   // Calculate the maximum number of simultaneous bits to process.
   static constexpr unsigned max_nof_bits_step = max_nof_bytes_step * nof_bits_per_byte;
@@ -134,53 +95,48 @@ void pseudo_random_generator_impl::generate(bit_buffer& data)
   // Create sequence with the current x1 and x2 states.
   pseudo_random_generator_sequence sequence(x1, x2);
 
-  // Processes batches of 24 bits in parallel.
-  for (unsigned i_byte = 0, i_byte_end = (data.size() / max_nof_bits_step) * max_nof_bytes_step;
-       i_byte != i_byte_end;) {
-    uint32_t c = sequence.step(max_nof_bits_step);
-
-    // Processes each byte of the batch.
-    for (unsigned i_byte_batch = 0; i_byte_batch != max_nof_bytes_step; ++i_byte, ++i_byte_batch) {
-      // Calculate the output byte.
-      uint8_t output_byte = reverse_byte(static_cast<uint8_t>(c & mask_lsb_ones<uint32_t>(nof_bits_per_byte)));
-
-      // Insert the output byte.
-      data.set_byte(output_byte, i_byte);
-
-      // Advance sequence one byte.
-      c = c >> nof_bits_per_byte;
-    }
+  // Processes batches of 64 bits in parallel.
+  for (unsigned i_byte = 0, i_byte_end = (data.size() / max_nof_bits_step) * max_nof_bytes_step; i_byte != i_byte_end;
+       i_byte += 8) {
+    uint64_t c                 = sequence.step64();
+    c                          = __builtin_bswap64(c);
+    span<uint8_t> output_chunk = data.get_buffer().subspan(i_byte, max_nof_bytes_step);
+    memcpy(output_chunk.data(), &c, max_nof_bytes_step);
   }
 
   // Process spare bits in a batch of the remainder bits.
   unsigned i_bit     = (data.size() / max_nof_bits_step) * max_nof_bits_step;
   unsigned remainder = data.size() - i_bit;
-  uint32_t c         = sequence.step(remainder);
-
+  unsigned count     = 0;
   while (remainder != 0) {
-    // Process per byte basis, ceiling at the remainder.
-    unsigned word_size = std::min(remainder, nof_bits_per_byte);
+    unsigned batch_size    = std::min(remainder, pseudo_random_generator_sequence::get_max_step_size());
+    unsigned reminder_size = batch_size;
+    uint32_t c             = sequence.step(batch_size);
 
-    // Mask the LSB of the sequence.
-    uint32_t mask = mask_lsb_ones<uint32_t>(nof_bits_per_byte);
+    while (batch_size != 0) {
+      // Process per byte basis, ceiling at the remainder.
+      unsigned word_size = std::min(batch_size, nof_bits_per_byte);
 
-    // Shift to align the reversed sequence LSB with the remainder bits.
-    unsigned right_shift = nof_bits_per_byte - word_size;
+      // Mask the LSB of the sequence.
+      uint32_t mask = mask_lsb_ones<uint32_t>(nof_bits_per_byte);
 
-    // Calculate the output byte.
-    uint8_t output_word = (reverse_byte(static_cast<uint8_t>(c & mask)) >> right_shift);
+      // Shift to align the reversed sequence LSB with the remainder bits.
+      unsigned right_shift = nof_bits_per_byte - word_size;
 
-    // Insert the output byte.
-    data.insert(output_word, i_bit, word_size);
+      // Calculate the output byte.
+      uint8_t output_word = ((c >> (24u - (count * nof_bits_per_byte))) & mask) >> right_shift;
 
-    // Advance sequence.
-    c = c >> word_size;
+      // Insert the output byte.
+      data.insert(output_word, i_bit, word_size);
 
-    // Advance bit index.
-    i_bit += word_size;
+      // Advance bit index.
+      i_bit += word_size;
 
-    // Decrement remainder.
-    remainder -= word_size;
+      // Decrement remainder.
+      batch_size -= word_size;
+      ++count;
+    }
+    remainder -= reminder_size;
   }
 
   x1 = sequence.get_x1();
@@ -220,14 +176,17 @@ void pseudo_random_generator_impl::generate(span<float> out, float value)
     uint32_t j = 0;
 #ifdef __SSE3__
     for (; j != max_nof_bits_step; j += nof_bits_per_simd) {
-      // Preloads bits of interest in the 4 LSB.
-      __m128i mask = _mm_set1_epi32(c >> j);
+      // Preloads bits of interest in the 4 MSB.
+      __m128i mask = _mm_set1_epi32(c << j);
 
       // Masks each bit.
-      mask = _mm_and_si128(mask, _mm_setr_epi32(1, 2, 4, 8));
+      mask = _mm_and_si128(mask, _mm_setr_epi32(0x80000000, 0x40000000, 0x20000000, 0x10000000));
 
       // Get non zero mask.
-      mask = _mm_cmpgt_epi32(mask, _mm_set1_epi32(0));
+      __m128i offset        = _mm_set1_epi32(0x80000000);
+      mask                  = _mm_add_epi32(mask, offset);
+      __m128i adjusted_zero = _mm_add_epi32(_mm_set1_epi32(0), offset);
+      mask                  = _mm_cmpgt_epi32(mask, adjusted_zero);
 
       // And with MSB.
       mask = _mm_and_si128(mask, (__m128i)_mm_set1_ps(-0.0F));
@@ -243,25 +202,25 @@ void pseudo_random_generator_impl::generate(span<float> out, float value)
 #endif // __SSE3__
 #ifdef __aarch64__
     for (; j != max_nof_bits_step; j += nof_bits_per_simd) {
-      // Preloads bits of interest in the 4 LSB.
-      int32x4_t mask_s32 = vdupq_n_s32(c >> j);
+      // Preloads bits of interest in the 4 MSB.
+      uint32x4_t mask_u32 = vdupq_n_u32(c << j);
 
       // Masks each bit.
-      const int32x4_t tmp_mask = vcombine_s32(vcreate_s32(1ULL | (2ULL << 32)), vcreate_s32(4ULL | (8ULL << 32)));
+      const uint32x4_t tmp_mask = vcombine_u32(vcreate_u32(0x4000000080000000UL), vcreate_u32(0x1000000020000000UL));
 
-      mask_s32 = vandq_s32(mask_s32, tmp_mask);
+      mask_u32 = vandq_u32(mask_u32, tmp_mask);
 
       // Get non zero mask.
-      uint32x4_t mask_u32 = vcgtq_s32(mask_s32, vdupq_n_s32(0));
+      mask_u32 = vcgtq_u32(mask_u32, vdupq_n_u32(0));
 
       // And with MSB.
-      mask_s32 = vandq_s32(vreinterpretq_s32_u32(mask_u32), vreinterpretq_s32_f32(vdupq_n_f32(-0.0F)));
+      mask_u32 = vandq_u32(mask_u32, vreinterpretq_u32_f32(vdupq_n_f32(-0.0F)));
 
       // Load input.
       float32x4_t v = vdupq_n_f32(value);
 
       // Loads input and perform sign XOR.
-      v = vreinterpretq_f32_s32(veorq_s32(mask_s32, vreinterpretq_s32_f32(v)));
+      v = vreinterpretq_f32_u32(veorq_u32(mask_u32, vreinterpretq_u32_f32(v)));
 
       vst1q_f32(&out[i + j], v);
     }
@@ -269,16 +228,16 @@ void pseudo_random_generator_impl::generate(span<float> out, float value)
 
     // Finish the parallel bits with generic code.
     for (; j != max_nof_bits_step; ++j) {
-      FLOAT_U32_XOR(out[i + j], value, (c << (31U - j)) & 0x80000000);
+      FLOAT_U32_XOR(out[i + j], value, (c << j) & 0x80000000);
     }
   }
 
   unsigned remainder = length - i;
   uint32_t c         = sequence.step(remainder);
   for (; i != length; ++i) {
-    FLOAT_U32_XOR(out[i], value, c << 31U);
+    FLOAT_U32_XOR(out[i], value, c & 0x80000000);
 
-    c = c >> 1U;
+    c = c << 1U;
   }
 
   // Update x1 and x2 states.
@@ -297,8 +256,7 @@ void pseudo_random_generator_impl::apply_xor(bit_buffer& out, const bit_buffer& 
   static constexpr unsigned nof_bits_per_byte = 8;
 
   // Calculate the maximum number of simultaneous words to process.
-  static constexpr unsigned max_nof_bytes_step =
-      pseudo_random_generator_sequence::get_max_step_size() / nof_bits_per_byte;
+  static constexpr unsigned max_nof_bytes_step = 64 / nof_bits_per_byte;
 
   // Calculate the maximum number of simultaneous bits to process.
   static constexpr unsigned max_nof_bits_step = max_nof_bytes_step * nof_bits_per_byte;
@@ -307,57 +265,51 @@ void pseudo_random_generator_impl::apply_xor(bit_buffer& out, const bit_buffer& 
   pseudo_random_generator_sequence sequence(x1, x2);
 
   // Processes batches of words.
-  for (unsigned i_byte = 0, i_byte_end = (in.size() / max_nof_bits_step) * max_nof_bytes_step; i_byte != i_byte_end;) {
-    uint32_t c = sequence.step<max_nof_bits_step>();
-
-    // Processes each byte of the batch.
-    for (unsigned i_byte_batch = 0; i_byte_batch != max_nof_bytes_step; ++i_byte, ++i_byte_batch) {
-      // Extract input byte.
-      uint8_t input_byte = in.get_byte(i_byte);
-
-      // Calculate the output byte.
-      uint8_t output_byte = input_byte ^ reverse_byte(static_cast<uint8_t>(c & 0xff));
-
-      // Insert the output byte.
-      out.set_byte(output_byte, i_byte);
-
-      // Advance sequence one byte.
-      c = c >> nof_bits_per_byte;
-    }
+  for (unsigned i_byte = 0, i_byte_end = (in.size() / max_nof_bits_step) * max_nof_bytes_step; i_byte != i_byte_end;
+       i_byte += 8) {
+    uint64_t c = sequence.step64();
+    c          = __builtin_bswap64(c);
+    uint64_t temp;
+    memcpy(&temp, &in.get_buffer()[i_byte], 8);
+    temp ^= c;
+    memcpy(&out.get_buffer()[i_byte], &temp, 8);
   }
 
   // Process spare bits in a batch of the remainder bits.
   unsigned i_bit     = (in.size() / max_nof_bits_step) * max_nof_bits_step;
   unsigned remainder = in.size() - i_bit;
-
-  uint32_t c = sequence.step(remainder);
-
-  // Process bits.
+  unsigned count     = 0;
   while (remainder != 0) {
-    // Process per byte basis, ceiling at the remainder.
-    unsigned word_size = std::min(remainder, nof_bits_per_byte);
+    unsigned batch_size    = std::min(remainder, pseudo_random_generator_sequence::get_max_step_size());
+    unsigned reminder_size = batch_size;
+    uint32_t c             = sequence.step(batch_size);
 
-    uint8_t input_word = in.extract(i_bit, word_size);
+    // Process bits.
+    while (batch_size != 0) {
+      // Process per byte basis, ceiling at the remainder.
+      unsigned word_size = std::min(batch_size, nof_bits_per_byte);
 
-    // Shift to align the reversed sequence LSB with the remainder bits.
-    unsigned right_shift = nof_bits_per_byte - word_size;
+      uint8_t input_word = in.extract(i_bit, word_size);
 
-    // Calculate the output byte.
-    uint8_t output_word = input_word ^ (reverse_byte(static_cast<uint8_t>(c & 0xff)) >> right_shift);
+      // Shift to align the reversed sequence LSB with the remainder bits.
+      unsigned right_shift = nof_bits_per_byte - word_size;
 
-    // Insert the output byte.
-    out.insert(output_word, i_bit, word_size);
+      // Calculate the output byte.
+      uint8_t output_word =
+          input_word ^ ((static_cast<uint8_t>((c >> (24u - (count * nof_bits_per_byte))) & 0xff)) >> right_shift);
 
-    // Advance sequence.
-    c = c >> word_size;
+      // Insert the output byte.
+      out.insert(output_word, i_bit, word_size);
 
-    // Advance bit index.
-    i_bit += word_size;
+      // Advance bit index.
+      i_bit += word_size;
 
-    // Decrement remainder.
-    remainder -= word_size;
+      // Decrement remainder.
+      batch_size -= word_size;
+      ++count;
+    }
+    remainder -= reminder_size;
   }
-
   // Update x1 and x2 states.
   x1 = sequence.get_x1();
   x2 = sequence.get_x2();
@@ -394,13 +346,13 @@ void pseudo_random_generator_impl::apply_xor(span<uint8_t> out, span<const uint8
     for (; j != max_nof_bits_step; j += nof_bits_per_simd) {
       // Preloads bits of interest in the 16 LSB
       __m128i mask = _mm_set1_epi32(c);
-      mask         = _mm_shuffle_epi8(mask, _mm_setr_epi8(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1));
+      mask         = _mm_shuffle_epi8(mask, _mm_setr_epi8(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2));
 
       // Masks each bit.
-      mask = _mm_and_si128(mask, _mm_set_epi64x(0x8040201008040201, 0x8040201008040201));
+      mask = _mm_and_si128(mask, _mm_set_epi64x(0x102040810204080, 0x102040810204080));
 
       // Get non zero mask.
-      mask = _mm_cmpeq_epi8(mask, _mm_set_epi64x(0x8040201008040201, 0x8040201008040201));
+      mask = _mm_cmpeq_epi8(mask, _mm_set_epi64x(0x102040810204080, 0x102040810204080));
 
       // Reduce to 1s and 0s.
       mask = _mm_and_si128(mask, _mm_set1_epi8(1));
@@ -420,10 +372,10 @@ void pseudo_random_generator_impl::apply_xor(span<uint8_t> out, span<const uint8
       // Preloads bits of interest in the 16 LSB.
       uint32x2_t c_dup_u32 = vdup_n_u32(c);
       uint8x16_t mask_u8 =
-          vcombine_u8(vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 0), vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 1));
+          vcombine_u8(vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 3), vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 2));
 
       // Create bit masks.
-      const uint8_t    bit_masks[8] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+      const uint8_t    bit_masks[8] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01};
       const uint8x16_t bit_masks_u8 = vcombine_u8(vcreate_u8(*(reinterpret_cast<const uint64_t*>(bit_masks))),
                                                   vcreate_u8(*(reinterpret_cast<const uint64_t*>(bit_masks))));
       // Mask each bit.
@@ -448,8 +400,9 @@ void pseudo_random_generator_impl::apply_xor(span<uint8_t> out, span<const uint8
 
     // Apply mask to remainder bits.
     for (; j != max_nof_bits_step; ++j) {
-      out[i + j] = in[i + j] ^ (c & 1U);
-      c          = c >> 1U;
+      unsigned bit = (c & (1U << 31U)) != 0;
+      out[i + j]   = in[i + j] ^ bit;
+      c            = c << 1U;
     }
   }
 
@@ -457,8 +410,9 @@ void pseudo_random_generator_impl::apply_xor(span<uint8_t> out, span<const uint8
   unsigned remainder = length - i;
   uint32_t c         = sequence.step(remainder);
   for (; i != length; ++i) {
-    out[i] = in[i] ^ (c & 1U);
-    c      = c >> 1U;
+    unsigned bit = (c & (1U << 31U)) != 0;
+    out[i]       = in[i] ^ bit;
+    c            = c << 1U;
   }
 
   // Update x1 and x2 states.
@@ -497,13 +451,13 @@ void pseudo_random_generator_impl::apply_xor(span<log_likelihood_ratio> out, spa
     for (; j != max_nof_bits_step; j += nof_bits_per_simd) {
       // Preloads bits of interest in the 16 LSB.
       __m128i mask = _mm_set1_epi32(c);
-      mask         = _mm_shuffle_epi8(mask, _mm_setr_epi8(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1));
+      mask         = _mm_shuffle_epi8(mask, _mm_setr_epi8(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2));
 
       // Masks each bit.
-      mask = _mm_and_si128(mask, _mm_set_epi64x(0x8040201008040201, 0x8040201008040201));
+      mask = _mm_and_si128(mask, _mm_set_epi64x(0x102040810204080, 0x102040810204080));
 
       // Get non zero mask.
-      mask = _mm_cmpeq_epi8(mask, _mm_set_epi64x(0x8040201008040201, 0x8040201008040201));
+      mask = _mm_cmpeq_epi8(mask, _mm_set_epi64x(0x102040810204080, 0x102040810204080));
 
       // Load input.
       __m128i v = _mm_loadu_si128((__m128i*)(&in[i + j]));
@@ -523,10 +477,10 @@ void pseudo_random_generator_impl::apply_xor(span<log_likelihood_ratio> out, spa
       // Preloads bits of interest in the 16 LSB.
       uint32x2_t c_dup_u32 = vdup_n_u32(c);
       uint8x16_t mask_u8 =
-          vcombine_u8(vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 0), vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 1));
+          vcombine_u8(vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 3), vdup_lane_u8(vreinterpret_u8_u32(c_dup_u32), 2));
 
       // Create bit masks.
-      const uint8_t    bit_masks[8] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+      const uint8_t    bit_masks[8] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01};
       const uint8x16_t bit_masks_u8 = vcombine_u8(vcreate_u8(*(reinterpret_cast<const uint64_t*>(bit_masks))),
                                                   vcreate_u8(*(reinterpret_cast<const uint64_t*>(bit_masks))));
       // Mask each bit.
@@ -550,7 +504,7 @@ void pseudo_random_generator_impl::apply_xor(span<log_likelihood_ratio> out, spa
     }
 #endif // __aarch64__
     for (; j != max_nof_bits_step; ++j) {
-      out[i + j] = in[i + j].to_value_type() * (((c >> j) & 1U) ? -1 : +1);
+      out[i + j] = in[i + j].to_value_type() * ((c << j & 0x80000000) ? -1 : +1);
     }
   }
 
@@ -558,9 +512,9 @@ void pseudo_random_generator_impl::apply_xor(span<log_likelihood_ratio> out, spa
   unsigned remainder = length - i;
   uint32_t c         = sequence.step(remainder);
   for (; i != length; ++i) {
-    out[i] = in[i].to_value_type() * ((c & 1U) ? -1 : 1);
+    out[i] = in[i].to_value_type() * (c & 0x80000000 ? -1 : 1);
 
-    c = c >> 1;
+    c = c << 1;
   }
 
   // Update x1 and x2 states.

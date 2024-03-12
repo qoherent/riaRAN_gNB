@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,9 +20,10 @@
  *
  */
 
-#include "../../ran/gnb_format.h"
 #include "rrc_ue_helpers.h"
 #include "rrc_ue_impl.h"
+#include "srsran/asn1/rrc_nr/dl_ccch_msg.h"
+#include "srsran/asn1/rrc_nr/dl_dcch_msg.h"
 
 using namespace srsran;
 using namespace srs_cu_cp;
@@ -31,50 +32,31 @@ using namespace asn1::rrc_nr;
 void rrc_ue_impl::send_dl_ccch(const dl_ccch_msg_s& dl_ccch_msg)
 {
   // pack DL CCCH msg
-  byte_buffer pdu = pack_into_pdu(dl_ccch_msg);
+  byte_buffer pdu = pack_into_pdu(dl_ccch_msg, "DL-CCCH-Message");
 
-  fmt::memory_buffer fmtbuf, fmtbuf2;
-  fmt::format_to(fmtbuf, "ue={}", context.ue_index);
-  fmt::format_to(fmtbuf2, "CCCH DL {}", dl_ccch_msg.msg.c1().type().to_string());
-  log_rrc_message(to_c_str(fmtbuf), Tx, pdu, dl_ccch_msg, to_c_str(fmtbuf2));
+  // Log Tx message
+  log_rrc_message(logger, Tx, pdu, dl_ccch_msg, "CCCH DL");
 
   // send down the stack
-  logger.debug(pdu.begin(), pdu.end(), "ue={} C-RNTI={} TX {} PDU", context.ue_index, context.c_rnti, srb_id_t::srb0);
+  logger.log_debug(pdu.begin(), pdu.end(), "TX {} PDU", srb_id_t::srb0);
   f1ap_pdu_notifier.on_new_rrc_pdu(srb_id_t::srb0, std::move(pdu));
 }
 
-void rrc_ue_impl::send_dl_dcch(srb_id_t srb_id, const dl_dcch_msg_s& dl_dcch_msg, ue_index_t old_ue_index)
+void rrc_ue_impl::send_dl_dcch(srb_id_t srb_id, const dl_dcch_msg_s& dl_dcch_msg)
 {
   if (context.srbs.find(srb_id) == context.srbs.end()) {
-    logger.error(
-        "ue={} C-RNTI={} TX {} is not set up - dropping DL DCCH message.", context.ue_index, context.c_rnti, srb_id);
+    logger.log_error("Dropping DlDcchMessage. TX {} is not set up", srb_id);
     return;
   }
 
   // pack DL CCCH msg
-  byte_buffer pdu = pack_into_pdu(dl_dcch_msg);
+  byte_buffer pdu = pack_into_pdu(dl_dcch_msg, "DL-DCCH-Message");
 
-  fmt::memory_buffer fmtbuf, fmtbuf2;
-  fmt::format_to(fmtbuf, "ue={}", context.ue_index);
-  fmt::format_to(fmtbuf2, "DCCH DL {}", dl_dcch_msg.msg.c1().type().to_string());
-  log_rrc_message(to_c_str(fmtbuf), Tx, pdu, dl_dcch_msg, to_c_str(fmtbuf2));
+  // Log Tx message
+  log_rrc_message(logger, Tx, pdu, dl_dcch_msg, "DCCH DL");
 
   // pack PDCP PDU and send down the stack
   byte_buffer pdcp_pdu = context.srbs.at(srb_id).pack_rrc_pdu(std::move(pdu));
-  logger.debug(pdcp_pdu.begin(), pdcp_pdu.end(), "ue={} C-RNTI={} TX {} PDU", context.ue_index, context.c_rnti, srb_id);
-  f1ap_pdu_notifier.on_new_rrc_pdu(srb_id, std::move(pdcp_pdu), old_ue_index);
-}
-
-void rrc_ue_impl::send_rrc_reject(uint8_t reject_wait_time_secs)
-{
-  dl_ccch_msg_s     dl_ccch_msg;
-  rrc_reject_ies_s& reject = dl_ccch_msg.msg.set_c1().set_rrc_reject().crit_exts.set_rrc_reject();
-
-  // See TS 38.331, RejectWaitTime
-  if (reject_wait_time_secs > 0) {
-    reject.wait_time_present = true;
-    reject.wait_time         = reject_wait_time_secs;
-  }
-
-  send_dl_ccch(dl_ccch_msg);
+  logger.log_debug(pdcp_pdu.begin(), pdcp_pdu.end(), "TX {} PDU", context.ue_index, context.c_rnti, srb_id);
+  f1ap_pdu_notifier.on_new_rrc_pdu(srb_id, std::move(pdcp_pdu));
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
  */
 
 #include "srsran/ran/resource_allocation/resource_allocation_frequency.h"
-#include "srsran/ran/sliv.h"
+#include "srsran/ran/resource_allocation/sliv.h"
 #include "srsran/support/srsran_assert.h"
 
 using namespace srsran;

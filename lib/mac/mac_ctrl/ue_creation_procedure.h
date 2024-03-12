@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -52,7 +52,7 @@ public:
 
   void operator()(coro_context<async_task<mac_ue_create_response>>& ctx);
 
-  static const char* name() { return "UE Create Request"; }
+  static const char* name() { return "MAC UE Creation"; }
 
 private:
   mac_ue_create_response handle_mac_ue_create_result(bool result);
@@ -65,7 +65,7 @@ private:
   mac_dl_configurator&        dl_unit;
   mac_scheduler_configurator& sched_configurator;
 
-  rnti_t crnti_assigned = INVALID_RNTI;
+  rnti_t crnti_assigned = rnti_t::INVALID_RNTI;
   bool   add_ue_result  = false;
 };
 

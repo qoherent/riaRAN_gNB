@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,6 +36,7 @@ using namespace srsran::ofh::testing;
 static const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> eaxc            = {2};
 static const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> prach_eaxc      = {4};
 static constexpr unsigned                                    REPOSITORY_SIZE = 20U;
+static constexpr units::bytes                                mtu_size{9000};
 
 namespace {
 
@@ -87,23 +88,16 @@ class resource_grid_dummy : public resource_grid
   class resource_grid_mapper_dummy : public resource_grid_mapper
   {
   public:
-    void map(const re_buffer_reader&        input,
-             const re_pattern_list&         pattern,
-             const precoding_configuration& precoding) override
-    {
-    }
-
-    void map(const re_buffer_reader&        input,
-             const re_pattern_list&         pattern,
-             const re_pattern_list&         reserved,
-             const precoding_configuration& precoding) override
+    void
+    map(const re_buffer_reader& input, const re_pattern& pattern, const precoding_configuration& precoding) override
     {
     }
 
     void map(symbol_buffer&                 buffer,
              const re_pattern_list&         pattern,
              const re_pattern_list&         reserved,
-             const precoding_configuration& precoding) override
+             const precoding_configuration& precoding,
+             unsigned                       re_skip) override
     {
     }
   };
@@ -131,6 +125,7 @@ class resource_grid_dummy : public resource_grid
     }
 
     void put(unsigned port, unsigned l, unsigned k_init, span<const cf_t> symbols) override {}
+    void put(unsigned port, unsigned l, unsigned k_init, unsigned stride, span<const cf_t> symbols) override {}
   };
 
   class resource_grid_reader_dummy : public resource_grid_reader
@@ -140,6 +135,7 @@ class resource_grid_dummy : public resource_grid
     unsigned   get_nof_subc() const override { return 1; }
     unsigned   get_nof_symbols() const override { return 1; }
     bool       is_empty(unsigned port) const override { return true; }
+    bool       is_empty() const override { return true; }
     span<cf_t> get(span<cf_t> symbols, unsigned port, unsigned l, unsigned k_init, span<const bool> mask) const override
     {
       return {};
@@ -175,16 +171,17 @@ public:
 class ofh_uplink_request_handler_impl_fixture : public ::testing::Test
 {
 protected:
-  std::shared_ptr<uplink_context_repository<ul_slot_context>>  ul_slot_repo;
-  std::shared_ptr<uplink_context_repository<ul_prach_context>> ul_prach_repo;
-  data_flow_cplane_scheduling_commands_spy*                    data_flow;
-  data_flow_cplane_scheduling_commands_spy*                    data_flow_prach;
-  uplink_request_handler_impl                                  handler;
-  uplink_request_handler_impl                                  handler_prach_cp_en;
+  uplink_request_handler_impl_config         cfg;
+  std::shared_ptr<uplink_context_repository> ul_slot_repo;
+  std::shared_ptr<prach_context_repository>  ul_prach_repo;
+  data_flow_cplane_scheduling_commands_spy*  data_flow;
+  data_flow_cplane_scheduling_commands_spy*  data_flow_prach;
+  uplink_request_handler_impl                handler;
+  uplink_request_handler_impl                handler_prach_cp_en;
 
   explicit ofh_uplink_request_handler_impl_fixture() :
-    ul_slot_repo(std::make_shared<uplink_context_repository<ul_slot_context>>(REPOSITORY_SIZE)),
-    ul_prach_repo(std::make_shared<uplink_context_repository<ul_prach_context>>(REPOSITORY_SIZE)),
+    ul_slot_repo(std::make_shared<uplink_context_repository>(REPOSITORY_SIZE)),
+    ul_prach_repo(std::make_shared<prach_context_repository>(REPOSITORY_SIZE)),
     handler(get_config_prach_cp_disabled(), get_dependencies_prach_cp_disabled()),
     handler_prach_cp_en(get_config_prach_cp_enabled(), get_dependencies_prach_cp_enabled())
   {
@@ -193,11 +190,13 @@ protected:
   uplink_request_handler_impl_dependencies get_dependencies_prach_cp_disabled()
   {
     uplink_request_handler_impl_dependencies dependencies;
-    dependencies.ul_slot_repo  = ul_slot_repo;
-    dependencies.ul_prach_repo = ul_prach_repo;
-    auto temp                  = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
-    data_flow                  = temp.get();
-    dependencies.data_flow     = std::move(temp);
+    dependencies.logger         = &srslog::fetch_basic_logger("TEST");
+    dependencies.ul_slot_repo   = ul_slot_repo;
+    dependencies.ul_prach_repo  = ul_prach_repo;
+    dependencies.frame_pool_ptr = std::make_shared<ether::eth_frame_pool>(mtu_size, 2);
+    auto temp                   = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
+    data_flow                   = temp.get();
+    dependencies.data_flow      = std::move(temp);
 
     return dependencies;
   }
@@ -205,11 +204,13 @@ protected:
   uplink_request_handler_impl_dependencies get_dependencies_prach_cp_enabled()
   {
     uplink_request_handler_impl_dependencies dependencies;
-    dependencies.ul_slot_repo  = ul_slot_repo;
-    dependencies.ul_prach_repo = ul_prach_repo;
-    auto temp                  = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
-    data_flow_prach            = temp.get();
-    dependencies.data_flow     = std::move(temp);
+    dependencies.logger         = &srslog::fetch_basic_logger("TEST");
+    dependencies.ul_slot_repo   = ul_slot_repo;
+    dependencies.ul_prach_repo  = ul_prach_repo;
+    dependencies.frame_pool_ptr = std::make_shared<ether::eth_frame_pool>(mtu_size, 2);
+    auto temp                   = std::make_unique<data_flow_cplane_scheduling_commands_spy>();
+    data_flow_prach             = temp.get();
+    dependencies.data_flow      = std::move(temp);
 
     return dependencies;
   }
@@ -296,10 +297,4 @@ TEST_F(ofh_uplink_request_handler_impl_fixture, handle_uplink_slot_generates_cpl
   ASSERT_EQ(rg_context.slot, info.slot);
   ASSERT_EQ(eaxc[0], info.eaxc);
   ASSERT_EQ(data_direction::uplink, info.direction);
-
-  // Assert repository.
-  ul_slot_context               slot_ctx = ul_slot_repo->get(rg_context.slot);
-  uplane_rx_symbol_notifier_spy notif_spy;
-  slot_ctx.notify_symbol(0, notif_spy);
-  ASSERT_EQ(notif_spy.get_reasource_grid_reader(), &rg.get_reader());
 }

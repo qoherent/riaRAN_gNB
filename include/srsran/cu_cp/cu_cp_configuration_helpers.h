@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "cell_meas_manager_config.h"
 #include "cu_cp_configuration.h"
 #include "srsran/ngap/ngap_configuration_helpers.h"
 

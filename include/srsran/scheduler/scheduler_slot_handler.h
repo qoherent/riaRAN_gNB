@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,15 +32,15 @@
 #include "srsran/ran/csi_rs/csi_rs_types.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/lcid.h"
-#include "srsran/ran/modulation_scheme.h"
-#include "srsran/ran/ofdm_symbol_range.h"
 #include "srsran/ran/pci.h"
 #include "srsran/ran/pdsch/pdsch_mcs.h"
 #include "srsran/ran/prach/prach_format_type.h"
 #include "srsran/ran/precoding/precoding_constants.h"
 #include "srsran/ran/pucch/pucch_mapping.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
+#include "srsran/ran/resource_allocation/ofdm_symbol_range.h"
 #include "srsran/ran/rnti.h"
+#include "srsran/ran/sch/modulation_scheme.h"
 #include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/slot_point.h"
 #include "srsran/ran/subcarrier_spacing.h"
@@ -286,21 +286,33 @@ struct pusch_information {
 };
 
 struct uci_info {
-  /// Number of bits of ACK to be reported.
-  uint16_t harq_ack_nof_bits;
-  /// Number of bits of CSI Part 1 to be reported.
-  uint16_t csi_part1_nof_bits;
-  /// Number of bits of CSI Part 2 to be reported.
-  uint16_t csi_part2_nof_bits;
+  /// Contains the HARQ-ACK information for UCI on PUSCH.
+  struct harq_info {
+    /// Number of bits of ACK to be reported.
+    uint16_t harq_ack_nof_bits = 0;
+    /// \f$\beta^{HARQ-ACK}_{offset}\f$ parameter, as per Section 9.3, TS 38.213. The default value is defined in \c
+    /// BetaOffsets, TS 38.331.
+    uint8_t beta_offset_harq_ack = 11;
+  };
 
+  /// Contains the CSI part 1 and part 2 information for UCI on PUSCH.
+  struct csi_info {
+    /// Contains information how the CSI bits are to be decoded.
+    csi_report_configuration csi_rep_cfg;
+    /// Number of bits of CSI Part 1 to be reported.
+    uint16_t csi_part1_nof_bits = 0;
+    /// \f$\beta^{CSI-1}_{offset}\f$ parameter, as per Section 9.3, TS 38.213. The default value is defined in \c
+    /// BetaOffsets, TS 38.331.
+    uint8_t beta_offset_csi_1 = 13;
+    /// \f$\beta^{CSI-2}_{offset}\f$ parameter, as per Section 9.3, TS 38.213.
+    /// If set, the CSI report includes CSI Part 2.
+    optional<uint8_t> beta_offset_csi_2;
+  };
+
+  optional<harq_info> harq;
+  optional<csi_info>  csi;
   /// \f$\alpha\f$ parameter, as per Section 6.3.2.4.1.1-3, TS 38.212.
   alpha_scaling_opt alpha;
-  /// \f$\beta^{HARQ-ACK}_{offset}\f$ parameter, as per Section 9.3, TS 38.213.
-  uint8_t beta_offset_harq_ack;
-  /// \f$\beta^{CSI-1}_{offset}\f$ parameter, as per Section 9.3, TS 38.213.
-  uint8_t beta_offset_csi_1;
-  /// \f$\beta^{CSI-2}_{offset}\f$ parameter, as per Section 9.3, TS 38.213.
-  uint8_t beta_offset_csi_2;
 };
 
 /// \brief RAR grant composed of subheader as per TS38.321 6.2.2, payload as per TS38.321 6.2.3,
@@ -338,14 +350,15 @@ struct ssb_information {
 /// Stores the information associated with an SIB1 or other SI allocation.
 struct sib_information {
   enum si_indicator_type { sib1, other_si } si_indicator;
+  optional<uint8_t> si_msg_index;
   unsigned          nof_txs;
   pdsch_information pdsch_cfg;
 };
 
 /// See ORAN WG8, 9.2.3.3.12 - Downlink Broadcast Allocation.
 struct dl_broadcast_allocation {
-  static_vector<ssb_information, MAX_SSB_PER_SLOT>       ssb_info;
-  static_vector<sib_information, MAX_SIB1_PDUS_PER_SLOT> sibs;
+  static_vector<ssb_information, MAX_SSB_PER_SLOT>     ssb_info;
+  static_vector<sib_information, MAX_SI_PDUS_PER_SLOT> sibs;
 };
 
 struct paging_ue_info {
@@ -497,8 +510,21 @@ struct sched_result {
 class scheduler_slot_handler
 {
 public:
-  virtual ~scheduler_slot_handler()                                                         = default;
+  /// \brief Effect that the errors in the lower layers had on the results provided by the scheduler for a given
+  /// slot and cell.
+  struct error_outcome {
+    bool pdcch_discarded : 1;
+    bool pdsch_discarded : 1;
+    bool pusch_and_pucch_discarded : 1;
+  };
+
+  virtual ~scheduler_slot_handler() = default;
+
+  /// \brief Handle slot indications that arrive to the scheduler for a given cell.
   virtual const sched_result& slot_indication(slot_point sl_tx, du_cell_index_t cell_index) = 0;
+
+  /// \brief Handle error indications caused by lates or invalid scheduling results.
+  virtual void handle_error_indication(slot_point sl_tx, du_cell_index_t cell_index, error_outcome event) = 0;
 };
 
 } // namespace srsran

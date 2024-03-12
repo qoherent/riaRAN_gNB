@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 // This file was generated using the following MATLAB class on 14-09-2023 (seed 0):
 //   + "srsShortBlockEncoderUnittest.m"
 
-#include "srsran/ran/modulation_scheme.h"
+#include "srsran/ran/sch/modulation_scheme.h"
 #include "srsran/support/file_vector.h"
 
 namespace srsran {

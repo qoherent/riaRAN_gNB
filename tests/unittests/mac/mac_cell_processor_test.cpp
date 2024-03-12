@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,11 +37,12 @@ class mac_cell_processor_tester : public ::testing::TestWithParam<test_params>
 {
 protected:
   mac_cell_processor_tester() :
-    ue_mng(rnti_table, rlf_handler),
+    ue_mng(rnti_table),
     mac_cell(test_helpers::make_default_mac_cell_config(),
              sched_adapter,
              ue_mng,
              phy_notifier,
+             task_worker,
              task_worker,
              task_worker,
              task_worker,
@@ -51,11 +52,10 @@ protected:
 
   test_helpers::dummy_mac_scheduler_adapter    sched_adapter;
   du_rnti_table                                rnti_table;
-  rlf_detector                                 rlf_handler{10000, 10000};
   mac_dl_ue_manager                            ue_mng;
   test_helpers::dummy_mac_cell_result_notifier phy_notifier;
   manual_task_worker                           task_worker{128};
-  test_helpers::dummy_mac_pcap                 pcap;
+  null_mac_pcap                                pcap;
   mac_cell_processor                           mac_cell;
 
   bool is_pdsch_scheduled() const
@@ -71,7 +71,7 @@ protected:
     sched_adapter.next_sched_result.dl.nof_dl_symbols = NOF_OFDM_SYM_PER_SLOT_NORMAL_CP;
     sched_adapter.next_sched_result.dl.bc.sibs.resize(params.nof_sib_allocated);
     for (auto& sib_grant : sched_adapter.next_sched_result.dl.bc.sibs) {
-      sib_grant.pdsch_cfg.rnti = SI_RNTI;
+      sib_grant.pdsch_cfg.rnti = rnti_t::SI_RNTI;
       sib_grant.pdsch_cfg.codewords.resize(1);
       sib_grant.pdsch_cfg.codewords[0].tb_size_bytes = 128;
     }

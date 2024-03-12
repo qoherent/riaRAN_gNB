@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,18 +26,27 @@
 #include "rrc_types.h"
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/adt/static_vector.h"
-#include "srsran/asn1/rrc_nr/dl_dcch_msg.h"
-#include "srsran/asn1/rrc_nr/msg_common.h"
 #include "srsran/asn1/rrc_nr/ue_cap.h"
 #include "srsran/cu_cp/cu_cp_types.h"
+#include "srsran/cu_cp/cu_cp_ue_messages.h"
 #include "srsran/cu_cp/up_resource_manager.h"
 #include "srsran/rrc/rrc.h"
+#include "srsran/rrc/rrc_ue_config.h"
 #include "srsran/security/security.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/timers.h"
 
-namespace srsran {
+namespace asn1 {
+namespace rrc_nr {
 
+// ASN.1 forward declarations
+struct dl_ccch_msg_s;
+struct dl_dcch_msg_s;
+
+} // namespace rrc_nr
+} // namespace asn1
+
+namespace srsran {
 namespace srs_cu_cp {
 
 /// Interface to notify F1AP about a new SRB PDU.
@@ -49,31 +58,29 @@ public:
   /// \brief Notify the PDCP about a new RRC PDU that needs ciphering and integrity protection.
   /// \param[in] pdu The RRC PDU.
   /// \param[in] srb_id The SRB ID of the PDU.
-  /// \param[in] old_ue_index Optional old index of UE, e.g. for reestablishment.
-  virtual void
-  on_new_rrc_pdu(const srb_id_t srb_id, const byte_buffer& pdu, ue_index_t old_ue_index = ue_index_t::invalid) = 0;
+  virtual void on_new_rrc_pdu(const srb_id_t srb_id, const byte_buffer& pdu) = 0;
 };
 
-/// Interface used by the RRC Setup procedure to notifiy the RRC UE.
+/// Interface used by the RRC Setup procedure to notify the RRC UE.
 class rrc_ue_setup_proc_notifier
 {
 public:
-  rrc_ue_setup_proc_notifier()          = default;
   virtual ~rrc_ue_setup_proc_notifier() = default;
 
   /// \brief Notify about a DL CCCH message.
   /// \param[in] dl_ccch_msg The DL CCCH message.
   virtual void on_new_dl_ccch(const asn1::rrc_nr::dl_ccch_msg_s& dl_ccch_msg) = 0;
 
-  /// \brief Notify about the need to delete a UE.
-  virtual void on_ue_delete_request(const cause_t& cause) = 0;
+  /// \brief Notify about the need to release a UE.
+  virtual void on_ue_release_required(const cause_t& cause) = 0;
 };
 
 struct srb_creation_message {
-  ue_index_t               ue_index     = ue_index_t::invalid;
-  ue_index_t               old_ue_index = ue_index_t::invalid;
-  srb_id_t                 srb_id       = srb_id_t::nulltype;
-  asn1::rrc_nr::pdcp_cfg_s pdcp_cfg;
+  ue_index_t      ue_index        = ue_index_t::invalid;
+  ue_index_t      old_ue_index    = ue_index_t::invalid;
+  srb_id_t        srb_id          = srb_id_t::nulltype;
+  bool            enable_security = false; // Activate security upon SRB creation.
+  srb_pdcp_config pdcp_cfg;
 };
 
 /// Interface to handle the creation of SRBs.
@@ -103,8 +110,8 @@ public:
   /// \param[in] dl_dcch_msg The DL DCCH message.
   virtual void on_new_dl_dcch(srb_id_t srb_id, const asn1::rrc_nr::dl_dcch_msg_s& dl_dcch_msg) = 0;
 
-  /// \brief Notify about the need to delete a UE.
-  virtual void on_ue_delete_request(const cause_t& cause) = 0;
+  /// \brief Notify about the need to release a UE.
+  virtual void on_ue_release_required(const cause_t& cause) = 0;
 };
 
 /// Interface used by the RRC security mode procedure
@@ -119,12 +126,13 @@ public:
   /// \param[in] dl_dcch_msg The DL DCCH message.
   virtual void on_new_dl_dcch(srb_id_t srb_id, const asn1::rrc_nr::dl_dcch_msg_s& dl_dcch_msg) = 0;
 
-  /// \brief Notify about the need to delete a UE.
-  virtual void on_ue_delete_request(const cause_t& cause) = 0;
-
   /// \brief Setup AS security in the UE. This includes configuring
   /// the PDCP entity security on SRB1 with the new AS keys.
   virtual void on_new_as_security_context() = 0;
+
+  /// \brief Setup AS security in the UE. This includes configuring
+  /// the PDCP entity security on SRB1 with the new AS keys.
+  virtual void on_security_context_sucessful() = 0;
 };
 
 /// Interface used by the RRC reestablishment procedure to
@@ -139,25 +147,9 @@ public:
   /// \param[in] dl_dcch_msg The DL DCCH message.
   virtual void on_new_dl_dcch(srb_id_t srb_id, const asn1::rrc_nr::dl_dcch_msg_s& dl_dcch_msg) = 0;
 
-  /// \brief Notify about a DL DCCH message.
-  /// \param[in] dl_dcch_msg The DL DCCH message.
-  /// \param[in] ue_index The old index of the UE.
-  virtual void
-  on_new_dl_dcch(srb_id_t srb_id, const asn1::rrc_nr::dl_dcch_msg_s& dl_dcch_msg, ue_index_t old_ue_index) = 0;
-
   /// \brief Refresh AS security keys after horizontal key derivation.
   /// This includes configuring the PDCP entity security on SRB1 with the new AS keys.
   virtual void on_new_as_security_context() = 0;
-
-  /// \brief Notify about the need to delete a UE.
-  virtual void on_ue_delete_request(const cause_t& cause) = 0;
-};
-
-struct rrc_ue_context_release_command {
-  ue_index_t         ue_index = ue_index_t::invalid;
-  cause_t            cause;
-  byte_buffer        rrc_release_pdu;
-  optional<srb_id_t> srb_id;
 };
 
 /// Interface to notify about RRC UE Context messages.
@@ -169,7 +161,7 @@ public:
   /// \brief Notify about a UE Context Release Command.
   /// \param[in] cmd The UE Context Release Command.
   virtual async_task<cu_cp_ue_context_release_complete>
-  on_ue_context_release_command(const rrc_ue_context_release_command& cmd) = 0;
+  on_ue_context_release_command(const cu_cp_ue_context_release_command& cmd) = 0;
 
   /// \brief Notify about a required reestablishment context modification.
   /// \param[in] ue_index The index of the UE that needs the context modification.
@@ -180,24 +172,16 @@ public:
 class rrc_ue_task_scheduler
 {
 public:
-  virtual ~rrc_ue_task_scheduler()                                   = default;
-  virtual void          schedule_async_task(async_task<void>&& task) = 0;
-  virtual unique_timer  make_unique_timer()                          = 0;
-  virtual timer_factory get_timer_factory()                          = 0;
-};
+  virtual ~rrc_ue_task_scheduler() = default;
 
-struct initial_ue_message {
-  ue_index_t                             ue_index = ue_index_t::invalid;
-  byte_buffer                            nas_pdu;
-  rrc_cell_context                       cell;
-  asn1::rrc_nr::establishment_cause_opts establishment_cause;
-  optional<cu_cp_five_g_s_tmsi>          five_g_s_tmsi;
-};
+  /// \brief Schedule an asynchronous task for the UE.
+  virtual void schedule_async_task(async_task<void> task) = 0;
 
-struct ul_nas_transport_message {
-  ue_index_t       ue_index = ue_index_t::invalid;
-  byte_buffer      nas_pdu;
-  rrc_cell_context cell;
+  /// \brief Create a new timer for the UE.
+  virtual unique_timer make_unique_timer() = 0;
+
+  /// \brief Get UE timer factory.
+  virtual timer_factory get_timer_factory() = 0;
 };
 
 /// Interface to notify about NAS messages.
@@ -208,11 +192,11 @@ public:
 
   /// \brief Notify about the Initial UE Message.
   /// \param[in] msg The initial UE message.
-  virtual void on_initial_ue_message(const initial_ue_message& msg) = 0;
+  virtual void on_initial_ue_message(const cu_cp_initial_ue_message& msg) = 0;
 
   /// \brief Notify about an Uplink NAS Transport message.
   /// \param[in] msg The Uplink NAS Transport message.
-  virtual void on_ul_nas_transport_message(const ul_nas_transport_message& msg) = 0;
+  virtual void on_ul_nas_transport_message(const cu_cp_ul_nas_transport& msg) = 0;
 };
 
 struct rrc_reconfiguration_response_message {
@@ -226,7 +210,7 @@ class rrc_ue_control_notifier
 public:
   virtual ~rrc_ue_control_notifier() = default;
 
-  virtual void on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) = 0;
+  virtual async_task<bool> on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) = 0;
 
   /// \brief Notify about the reception of an inter CU handove related RRC Reconfiguration Complete.
   virtual void on_inter_cu_ho_rrc_recfg_complete_received(const ue_index_t           ue_index,
@@ -265,12 +249,19 @@ public:
   virtual async_task<bool> handle_rrc_ue_capability_transfer_request(const rrc_ue_capability_transfer_request& msg) = 0;
 
   /// \brief Get the RRC UE release context.
-  /// \returns The release context of the UE.
+  /// \returns The release context of the UE.  If SRB1 is not created yet, a RrcReject message is contained in the
+  /// release context, see section 5.3.15 in TS 38.331. Otherwise, a RrcRelease message is contained in the release
+  /// context.
   virtual rrc_ue_release_context get_rrc_ue_release_context() = 0;
 
+  /// \brief Retrieve RRC context of a UE to perform mobility (handover, reestablishment).
+  /// \return Transfer context including UP context, security, SRBs, HO preparation, etc.
+  virtual rrc_ue_transfer_context get_transfer_context() = 0;
+
   /// \brief Get the RRC measurement config for the current serving cell of the UE.
+  /// \params[in] current_meas_config The current meas config of the UE (if applicable).
   /// \return The measurement config, if present.
-  virtual optional<rrc_meas_cfg> get_rrc_ue_meas_config() = 0;
+  virtual optional<rrc_meas_cfg> generate_meas_config(optional<rrc_meas_cfg> current_meas_config) = 0;
 
   /// \brief Handle the reception of a new security context.
   /// \return True if the security context was applied successfully, false otherwise
@@ -290,9 +281,9 @@ class rrc_ue_init_security_context_handler
 public:
   virtual ~rrc_ue_init_security_context_handler() = default;
 
-  /// \brief Handle the received Downlink NAS Transport message.
-  /// \param[in] msg The Downlink NAS Transport message.
-  virtual async_task<bool> handle_init_security_context(const security::security_context& msg) = 0;
+  /// \brief Handle the received Init Security Context.
+  /// \param[in] sec_ctxt The Init Security Context.
+  virtual async_task<bool> handle_init_security_context(const security::security_context& sec_ctxt) = 0;
 
   /// \brief Get the status of the security context.
   virtual bool get_security_enabled() = 0;
@@ -321,11 +312,15 @@ struct rrc_reestablishment_ue_context_t {
   bool                                old_ue_fully_attached = false;
 };
 
-/// Interface to notify about RRC Reestablishment Requests.
-class rrc_ue_reestablishment_notifier
+/// Interface to notify about UE context updates.
+class rrc_ue_context_update_notifier
 {
 public:
-  virtual ~rrc_ue_reestablishment_notifier() = default;
+  virtual ~rrc_ue_context_update_notifier() = default;
+
+  /// \brief Notifies that a new RRC UE needs to be setup.
+  /// \return True if the UE is accepted.
+  virtual bool on_ue_setup_request() = 0;
 
   /// \brief Notify about the reception of an RRC Reestablishment Request.
   /// \param[in] old_pci The old PCI contained in the RRC Reestablishment Request.
@@ -338,7 +333,27 @@ public:
   /// \brief Notify the CU-CP to transfer and remove ue contexts.
   /// \param[in] ue_index The new UE index of the UE that sent the Reestablishment Request.
   /// \param[in] old_ue_index The old UE index of the UE that sent the Reestablishment Request.
-  virtual void on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) = 0;
+  virtual async_task<bool> on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) = 0;
+
+  /// \brief Notify the CU-CP to completly remove a UE from the CU-CP.
+  /// \param[in] ue_index The index of the UE to remove.
+  virtual void on_ue_removal_required(ue_index_t ue_index) = 0;
+};
+
+/// Interface to notify about measurements
+class rrc_ue_measurement_notifier
+{
+public:
+  virtual ~rrc_ue_measurement_notifier() = default;
+
+  /// \brief Retrieve the measurement config (for any UE) connected to the given serving cell.
+  /// \param[in] nci The cell id of the serving cell to update.
+  /// \param[in] current_meas_config The current meas config of the UE (if applicable).
+  virtual optional<rrc_meas_cfg> on_measurement_config_request(nr_cell_id_t           nci,
+                                                               optional<rrc_meas_cfg> current_meas_config = {}) = 0;
+
+  /// \brief Submit measurement report for given UE to cell manager.
+  virtual void on_measurement_report(const ue_index_t ue_index, const rrc_meas_results& meas_results) = 0;
 };
 
 class rrc_ue_context_handler

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -58,7 +58,7 @@ private:
   /// Provides the DMRS for PDCCH.
   std::unique_ptr<dmrs_pdcch_processor> dmrs;
   /// Temporary encoded bits.
-  std::array<uint8_t, pdcch_constants::MAX_NOF_BITS> temp_encoded = {};
+  std::array<uint8_t, pdcch_constants::MAX_NOF_BITS> temp_encoded;
 
   /// \brief Calculates the number of encoded bits for a PDCCH transmission.
   /// \param[in] aggregation_level Indicates the PDCCH transmission aggregation level.

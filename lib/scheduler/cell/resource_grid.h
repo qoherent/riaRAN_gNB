@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,9 @@
 
 #pragma once
 
+#include "../config/cell_configuration.h"
 #include "../support/bwp_helpers.h"
 #include "../support/rb_helper.h"
-#include "cell_configuration.h"
 #include "resource_grid_util.h"
 #include "srsran/adt/circular_array.h"
 #include "srsran/ran/slot_point.h"
@@ -94,11 +94,22 @@ public:
   /// \param crbs CRB interval, where CRB=0 corresponds to the CRB closest to pointA.
   void fill(ofdm_symbol_range symbols, crb_interval crbs);
 
+  /// Allocates the symbol x CRB list in the carrier resource grid.
+  /// \param symbols OFDM symbol interval of the allocation. Interval must fall within [0, 14).
+  /// \param crbs List of CRBs, where CRB=0 corresponds to the CRB closest to pointA.
+  void fill(ofdm_symbol_range symbols, span<const uint16_t> crb_list);
+
   /// Checks whether the provided symbol x CRB range collides with any other allocation in the carrier resource grid.
   /// \param symbols OFDM symbol interval of the allocation. Interval must fall within [0, 14).
   /// \param crbs CRB interval, where CRB=0 corresponds to the CRB closest to pointA.
   /// \return true if a collision was detected. False otherwise.
   bool collides(ofdm_symbol_range symbols, crb_interval crbs) const;
+
+  /// Checks whether the provided symbol x CRB list collides with any other allocation in the carrier resource grid.
+  /// \param symbols OFDM symbol interval of the allocation. Interval must fall within [0, 14).
+  /// \param crbs List of CRBs, where CRB=0 corresponds to the CRB closest to pointA.
+  /// \return true if a collision was detected. False otherwise.
+  bool collides(ofdm_symbol_range symbols, span<const uint16_t> crb_list) const;
 
   /// \brief Calculates a bitmap where each bit set one represents a CRB that is occupied or unavailable.
   /// A CRB is considered occupied if it is outside of the provided BWP CRB boundaries or if it is already allocated
@@ -145,12 +156,14 @@ public:
   /// \param prbs PRB interval of the allocation. PRB=0 corresponds to the first PRB of the BWP.
   /// \param symbols OFDM symbol interval of the allocation.
   void fill(grant_info grant);
+  void fill(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, span<const uint16_t> crbs);
 
   /// Checks whether the provided symbol x RB range collides with any other allocation in the cell resource grid.
   /// \param grant contains the symbol x RB range whose available we want to check.
   /// \return true if at least one symbol x RB of grant is currently occupied in the resource grid.
   bool collides(grant_info grant) const;
   bool collides(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, crb_interval crbs) const;
+  bool collides(subcarrier_spacing scs, ofdm_symbol_range ofdm_symbols, span<const uint16_t> crbs) const;
 
   /// \brief Calculates a bitmap where each bit set to one represents a CRB that is occupied or unavailable.
   /// A CRB is considered occupied if it is outside of the provided BWP CRB boundaries or if it is already allocated
@@ -232,12 +245,21 @@ struct cell_slot_resource_allocator {
 /// Circular Ring of cell_slot_resource_grid objects. This class manages the automatic resetting of
 /// cell_slot_resource_grid objects, once they become old.
 struct cell_resource_allocator {
+  /// \brief Number of previous slot results to keep in history before they get deleted.
+  ///
+  /// Having access to past decisions is useful during the handling of error indications.
+  static const size_t RING_MAX_HISTORY_SIZE = 8;
   /// Number of slots managed by this container.
   static const size_t RING_ALLOCATOR_SIZE =
-      get_allocator_ring_size_gt_min(std::max(SCHEDULER_MAX_K0 + SCHEDULER_MAX_K1, SCHEDULER_MAX_K2 + MAX_MSG3_DELTA));
+      get_allocator_ring_size_gt_min(RING_MAX_HISTORY_SIZE + SCHEDULER_MAX_K0 + NTN_CELL_SPECIFIC_KOFFSET_MAX +
+                                     std::max(SCHEDULER_MAX_K1, SCHEDULER_MAX_K2 + MAX_MSG3_DELTA));
 
   /// Cell configuration
   const cell_configuration& cfg;
+
+  /// Maximum number of slots that can be allocated in advance.
+  const unsigned max_dl_slot_alloc_delay;
+  const unsigned max_ul_slot_alloc_delay;
 
   explicit cell_resource_allocator(const cell_configuration& cfg_);
 
@@ -278,11 +300,23 @@ struct cell_resource_allocator {
     return this->operator[](slot - last_slot_ind);
   }
 
+  /// \brief Access a past slot decision made by the scheduler for the given cell.
+  const cell_slot_resource_allocator* get_history(slot_point slot) const
+  {
+    int diff = last_slot_ind - slot;
+    if (diff < 0 or diff >= static_cast<int>(RING_MAX_HISTORY_SIZE)) {
+      return nullptr;
+    }
+    const cell_slot_resource_allocator& r = *slots[slot.to_uint() % slots.size()];
+    srsran_assert(r.slot == slot, "Bad access to uninitialized cell_resource_grid");
+    return &r;
+  }
+
 private:
   /// Ensure we are not overflowing the ring.
   void assert_valid_sl(unsigned slot_delay) const
   {
-    srsran_sanity_check(slot_delay < RING_ALLOCATOR_SIZE,
+    srsran_sanity_check(slot_delay <= max_ul_slot_alloc_delay,
                         "The cell resource pool is too small for accessing a slot with delay: {}",
                         slot_delay);
   }

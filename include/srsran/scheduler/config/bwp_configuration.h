@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,13 +28,13 @@
 #include "srsran/ran/band_helper.h"
 #include "srsran/ran/cyclic_prefix.h"
 #include "srsran/ran/frame_types.h"
-#include "srsran/ran/ofdm_symbol_range.h"
 #include "srsran/ran/pcch/pcch_configuration.h"
 #include "srsran/ran/pdcch/coreset.h"
 #include "srsran/ran/pdcch/search_space.h"
 #include "srsran/ran/prach/rach_config_common.h"
 #include "srsran/ran/prach/restricted_set_config.h"
 #include "srsran/ran/pucch/pucch_configuration.h"
+#include "srsran/ran/resource_allocation/ofdm_symbol_range.h"
 #include "srsran/ran/resource_block.h"
 #include "srsran/scheduler/vrb_alloc.h"
 #include <bitset>
@@ -50,7 +50,7 @@ struct pdcch_config_common {
   /// Contains SearchSpaceZero and commonSearchSpaceList. Size: (0..4).
   std::vector<search_space_configuration> search_spaces;
   search_space_id                         sib1_search_space_id;
-  search_space_id                         other_si_search_space_id;
+  optional<search_space_id>               other_si_search_space_id;
   optional<search_space_id>               paging_search_space_id;
   /// SearchSpace of RA procedure. If field is invalid, the UE does not receive RAR in this BWP.
   search_space_id ra_search_space_id;

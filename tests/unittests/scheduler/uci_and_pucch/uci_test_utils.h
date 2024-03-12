@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "lib/du_manager/converters/mac_config_helpers.h"
 #include "lib/scheduler/pucch_scheduling/pucch_allocator_impl.h"
 #include "lib/scheduler/uci_scheduling/uci_allocator_impl.h"
 #include "lib/scheduler/uci_scheduling/uci_scheduler_impl.h"
@@ -30,6 +29,7 @@
 #include "tests/unittests/scheduler/test_utils/dummy_test_components.h"
 #include "tests/unittests/scheduler/test_utils/scheduler_test_suite.h"
 #include "srsran/du/du_cell_config_helpers.h"
+#include "srsran/mac/config/mac_config_helpers.h"
 #include <gtest/gtest.h>
 
 namespace srsran {
@@ -93,20 +93,24 @@ inline sched_cell_configuration_request_message make_custom_sched_cell_configura
 /////////        TEST BENCH for PUCCH scheduler        /////////
 
 struct test_bench_params {
-  unsigned               pucch_res_common = 11;
-  unsigned               n_cces           = 0;
-  sr_periodicity         period           = sr_periodicity::sl_40;
-  unsigned               offset           = 0;
-  csi_report_periodicity csi_period       = csi_report_periodicity::slots320;
-  unsigned               csi_offset       = 9;
-  bool                   is_tdd           = false;
+  unsigned               pucch_res_common   = 11;
+  unsigned               n_cces             = 0;
+  sr_periodicity         period             = sr_periodicity::sl_40;
+  unsigned               offset             = 0;
+  csi_report_periodicity csi_period         = csi_report_periodicity::slots320;
+  unsigned               csi_offset         = 9;
+  bool                   is_tdd             = false;
+  bool                   pucch_f2_more_prbs = false;
+  bool                   cfg_for_mimo_4x4   = false;
 };
 
 // Test bench with all that is needed for the PUCCH.
 class test_bench
 {
 public:
-  explicit test_bench(const test_bench_params& params = {});
+  explicit test_bench(const test_bench_params& params                  = {},
+                      unsigned                 max_pucchs_per_slot_    = 32U,
+                      unsigned                 max_ul_grants_per_slot_ = 32U);
 
   // Return the main UE, which has RNTI 0x4601.
   const ue& get_main_ue() const;
@@ -119,16 +123,22 @@ public:
 
   void fill_all_grid(slot_point slot_tx);
 
-  scheduler_expert_config              expert_cfg;
-  cell_configuration                   cell_cfg;
-  sched_cfg_dummy_notifier             mac_notif;
-  scheduler_harq_timeout_dummy_handler harq_timeout_handler;
-  cell_resource_allocator              res_grid{cell_cfg};
-  pdcch_dl_information                 dci_info;
-  const unsigned                       k0;
-  const unsigned                       k1{4};
-  du_ue_index_t                        main_ue_idx{du_ue_index_t::MIN_DU_UE_INDEX};
-  ue_repository                        ues;
+  scheduler_expert_config                        expert_cfg;
+  sched_cfg_dummy_notifier                       mac_notif;
+  scheduler_harq_timeout_dummy_handler           harq_timeout_handler;
+  cell_common_configuration_list                 cell_cfg_list{};
+  const cell_configuration&                      cell_cfg;
+  std::vector<std::unique_ptr<ue_configuration>> ue_ded_cfgs;
+
+  cell_resource_allocator res_grid{cell_cfg};
+  pdcch_dl_information    dci_info;
+  const unsigned          k0;
+  const unsigned          k1{4};
+  const unsigned          max_pucchs_per_slot;
+  const unsigned          max_ul_grants_per_slot;
+  du_ue_index_t           main_ue_idx{du_ue_index_t::MIN_DU_UE_INDEX};
+  ue_repository           ues;
+  bool                    pucch_f2_more_prbs;
 
   // last_allocated_rnti keeps track of the last RNTI allocated.
   rnti_t                last_allocated_rnti;

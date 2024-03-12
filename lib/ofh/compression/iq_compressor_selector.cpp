@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,7 +33,7 @@ iq_compressor_selector::iq_compressor_selector(
   // Sanity check that all the positions in the array has a valid compressor.
   for (unsigned i = 0, e = compressors.size(); i != e; ++i) {
     report_fatal_error_if_not(compressors[i],
-                              "Null compressor detected for compression type {}",
+                              "Null compressor detected for compression type '{}'",
                               to_string(static_cast<compression_type>(i)));
   }
 }

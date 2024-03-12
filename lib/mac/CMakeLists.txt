@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -18,7 +18,7 @@
 # and at http://www.gnu.org/licenses/.
 #
 
-set(SOURCES config/mac_cell_group_config_factory.cpp)
+set(SOURCES config/mac_cell_group_config_factory.cpp config/mac_config_helpers.cpp)
 add_library(mac_configuration_helpers STATIC ${SOURCES})
 target_link_libraries(mac_configuration_helpers srsran_support srsran_ran)
 set(SOURCES mac_factory.cpp

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "ldpc_segmenter_impl.h"
+#include "srsran/phy/upper/channel_coding/ldpc/ldpc.h"
 #include "srsran/phy/upper/codeblock_metadata.h"
 #include "srsran/srsvec/bit.h"
 #include "srsran/srsvec/copy.h"
@@ -301,13 +302,13 @@ void ldpc_segmenter_impl::segment(static_vector<described_rx_codeblock, MAX_NOF_
     cw_offset += rm_length;
   }
   // After accumulating all codeblock rate-matched lengths, cw_offset should be the same as cw_length.
-  assert(cw_length.value() == cw_offset);
+  srsran_assert(cw_length.value() == cw_offset, "Cw offset must be equal to the cw length");
 }
 
 codeblock_metadata ldpc_segmenter_impl::generate_cb_metadata(const segment_internal& seg_extra,
                                                              const segmenter_config& cfg) const
 {
-  codeblock_metadata tmp_description = {};
+  codeblock_metadata tmp_description;
 
   tmp_description.tb_common.base_graph   = base_graph;
   tmp_description.tb_common.lifting_size = static_cast<lifting_size_t>(lifting_size);
@@ -316,13 +317,9 @@ codeblock_metadata ldpc_segmenter_impl::generate_cb_metadata(const segment_inter
   tmp_description.tb_common.Nref         = cfg.Nref;
   tmp_description.tb_common.cw_length    = seg_extra.cw_length.value();
 
-  // BG1 has rate 1/3 and BG2 has rate 1/5.
-  constexpr unsigned INVERSE_BG1_RATE = 3;
-  constexpr unsigned INVERSE_BG2_RATE = 5;
-  unsigned           inverse_rate     = (base_graph == ldpc_base_graph_type::BG1) ? INVERSE_BG1_RATE : INVERSE_BG2_RATE;
-  unsigned           rm_length        = compute_rm_length(seg_extra.i_segment, cfg.mod, cfg.nof_layers);
+  unsigned rm_length = compute_rm_length(seg_extra.i_segment, cfg.mod, cfg.nof_layers);
 
-  tmp_description.cb_specific.full_length     = segment_length.value() * inverse_rate;
+  tmp_description.cb_specific.full_length     = compute_full_codeblock_size(base_graph, segment_length).value();
   tmp_description.cb_specific.nof_filler_bits = seg_extra.nof_filler_bits.value();
   tmp_description.cb_specific.rm_length       = rm_length;
   tmp_description.cb_specific.cw_offset       = seg_extra.cw_offset;

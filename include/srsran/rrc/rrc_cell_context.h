@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,7 +38,8 @@ struct rrc_cell_context {
   nr_cell_global_id_t  cgi;
   uint32_t             tac;
   pci_t                pci;
-  std::vector<nr_band> bands; // Required for capability band filter.
+  unsigned             ssb_arfcn; ///< Absolute SSB position.
+  std::vector<nr_band> bands;     ///< Required for capability band filter.
 };
 
 } // namespace srs_cu_cp

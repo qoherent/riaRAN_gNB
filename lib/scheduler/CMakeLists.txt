@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -41,7 +41,6 @@ set(SOURCES
         support/pusch/pusch_default_time_allocation.cpp
         support/pusch/pusch_dmrs_symbol_mask.cpp
         support/mcs_tbs_calculator.cpp
-        support/tbs_calculator.cpp
         support/prbs_calculator.cpp
         support/mcs_calculator.cpp
         support/pdcch_aggregation_level_calculator.cpp
@@ -55,6 +54,7 @@ set(SOURCES
         scheduler_impl.cpp)
 
 add_library(srsran_sched STATIC ${SOURCES}
+        $<TARGET_OBJECTS:sched_config_manager>
         $<TARGET_OBJECTS:sched_cell>
         $<TARGET_OBJECTS:common_sched>
         $<TARGET_OBJECTS:ue_sched>)

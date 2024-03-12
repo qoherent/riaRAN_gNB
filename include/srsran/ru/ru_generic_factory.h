@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,7 +29,7 @@ namespace srsran {
 
 struct ru_generic_configuration;
 
-/// Returns an generic Radio Unit using the given configuration.
+/// Returns a generic Radio Unit using the given configuration.
 std::unique_ptr<radio_unit> create_generic_ru(ru_generic_configuration& config);
 
 } // namespace srsran

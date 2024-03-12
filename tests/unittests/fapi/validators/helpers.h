@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -58,6 +58,22 @@ srsran::fapi::error_indication_message build_valid_error_indication();
 /// Builds and returns a valid OUT_OF_SYNC ERROR.indication message. Every parameter is within the range defined in
 /// SCF-222 v4.0 Section 3.3.6.1.
 srsran::fapi::error_indication_message build_valid_out_of_sync_error_indication();
+
+/// Builds and returns a valid MSG_INVALID_SFN ERROR.indication message. Every parameter is within the range defined in
+/// SCF-222 v4.0 Section 3.3.6.1.
+srsran::fapi::error_indication_message build_valid_invalid_sfn_error_indication();
+
+/// Builds and returns a valid MSG_SLOT_ERR ERROR.indication message. Every parameter is within the range defined in
+/// SCF-222 v4.0 Section 3.3.6.1.
+srsran::fapi::error_indication_message build_valid_msg_slot_error_indication();
+
+/// Builds and returns a valid MSG_TX_ERR ERROR.indication message. Every parameter is within the range defined in
+/// SCF-222 v4.0 Section 3.3.6.1.
+srsran::fapi::error_indication_message build_valid_tx_err_error_indication();
+
+/// Builds and returns a valid MSG_UL_DCI_ERR ERROR.indication message. Every parameter is within the range defined in
+/// SCF-222 v4.0 Section 3.3.6.1.
+srsran::fapi::error_indication_message build_valid_ul_dci_err_error_indication();
 
 /// Builds and returns a RACH.indication message. Every parameter is within the range defined in SCF-222 v4.0
 /// Section 3.4.11.

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,33 +29,50 @@ using namespace srsran;
 const std::string e2sm_kpm_asn1_packer::short_name       = "ORAN-E2SM-KPM";
 const std::string e2sm_kpm_asn1_packer::oid              = "1.3.6.1.4.1.53148.1.2.2.2";
 const std::string e2sm_kpm_asn1_packer::func_description = "KPM Monitor";
-const uint32_t    e2sm_kpm_asn1_packer::ran_func_id      = 147;
+const uint32_t    e2sm_kpm_asn1_packer::ran_func_id      = 2;
 const uint32_t    e2sm_kpm_asn1_packer::revision         = 0;
 
 e2sm_kpm_asn1_packer::e2sm_kpm_asn1_packer(e2sm_kpm_meas_provider& meas_provider_) : meas_provider(meas_provider_) {}
 
-e2_sm_action_definition_s
+e2sm_action_definition
 e2sm_kpm_asn1_packer::handle_packed_e2sm_action_definition(const srsran::byte_buffer& action_definition)
 {
-  e2_sm_action_definition_s action_def;
-  asn1::cbit_ref            bref(action_definition);
+  e2sm_action_definition action_def;
+  asn1::cbit_ref         bref(action_definition);
+  action_def.service_model = e2sm_service_model_t::KPM;
   if (variant_get<e2_sm_kpm_action_definition_s>(action_def.action_definition).unpack(bref) != asn1::SRSASN_SUCCESS) {
     printf("Failed to unpack E2SM KPM Action Definition\n");
+    action_def.service_model = e2sm_service_model_t::UNKNOWN_SM;
   }
   return action_def;
 }
 
-e2_sm_event_trigger_definition_s
+e2sm_ric_control_request
+e2sm_kpm_asn1_packer::handle_packed_ric_control_request(const asn1::e2ap::ri_cctrl_request_s& req)
+{
+  printf("Failure - RIC control not available in e2sm_kpm.\n");
+  e2sm_ric_control_request control_request = {};
+  return control_request;
+}
+
+e2_ric_control_response e2sm_kpm_asn1_packer::pack_ric_control_response(const e2sm_ric_control_response& e2sm_response)
+{
+  printf("Failure - RIC control not available in e2sm_kpm.\n");
+  e2_ric_control_response control_response = {};
+  return control_response;
+}
+
+e2sm_event_trigger_definition
 e2sm_kpm_asn1_packer::handle_packed_event_trigger_definition(const srsran::byte_buffer& event_trigger_definition)
 {
-  e2_sm_event_trigger_definition_s     e2sm_event_trigger_def;
+  e2sm_event_trigger_definition        e2sm_event_trigger_def;
   e2_sm_kpm_event_trigger_definition_s e2sm_kpm_event_trigger_def;
   asn1::cbit_ref                       bref(event_trigger_definition);
   if (e2sm_kpm_event_trigger_def.unpack(bref) != asn1::SRSASN_SUCCESS) {
     printf("Failed to unpack E2SM KPM Event Trigger Definition\n");
   }
 
-  e2sm_event_trigger_def.ric_service_type = e2_sm_event_trigger_definition_s::e2sm_ric_service_type_t::REPORT;
+  e2sm_event_trigger_def.ric_service_type = e2sm_event_trigger_definition::e2sm_ric_service_type_t::REPORT;
   e2sm_event_trigger_def.report_period =
       e2sm_kpm_event_trigger_def.event_definition_formats.event_definition_format1().report_period;
 
@@ -65,7 +82,6 @@ e2sm_kpm_asn1_packer::handle_packed_event_trigger_definition(const srsran::byte_
 asn1::unbounded_octstring<true> e2sm_kpm_asn1_packer::pack_ran_function_description()
 {
   e2_sm_kpm_ra_nfunction_description_s ran_function_desc;
-  asn1::unbounded_octstring<true>      ran_function_description;
   // Add ran_function_name item.
   ran_function_desc.ran_function_name.ran_function_short_name.resize(short_name.size());
   ran_function_desc.ran_function_name.ran_function_e2_sm_oid.resize(oid.size());
@@ -163,10 +179,10 @@ asn1::unbounded_octstring<true> e2sm_kpm_asn1_packer::pack_ran_function_descript
   asn1::bit_ref       bref(buf);
   if (ran_function_desc.pack(bref) != asn1::SRSASN_SUCCESS) {
     printf("Failed to pack E2SM KPM RAN Function Description\n");
-    return ran_function_description;
+    asn1::unbounded_octstring<true> err_buf;
+    return err_buf;
   }
 
-  ran_function_description.resize(buf.length());
-  std::copy(buf.begin(), buf.end(), ran_function_description.begin());
+  asn1::unbounded_octstring<true> ran_function_description(buf.begin(), buf.end());
   return ran_function_description;
 }

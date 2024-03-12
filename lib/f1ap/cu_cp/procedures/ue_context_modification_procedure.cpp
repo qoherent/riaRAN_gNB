@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,9 +33,8 @@ using namespace asn1::f1ap;
 ue_context_modification_procedure::ue_context_modification_procedure(
     const f1ap_ue_context_modification_request& request_,
     f1ap_ue_context&                            ue_ctxt_,
-    f1ap_message_notifier&                      f1ap_notif_,
-    srslog::basic_logger&                       logger_) :
-  request(request_), ue_ctxt(ue_ctxt_), f1ap_notifier(f1ap_notif_), logger(logger_)
+    f1ap_message_notifier&                      f1ap_notif_) :
+  request(request_), ue_ctxt(ue_ctxt_), f1ap_notifier(f1ap_notif_), logger(srslog::fetch_basic_logger("CU-CP-F1"))
 {
 }
 
@@ -43,7 +42,7 @@ void ue_context_modification_procedure::operator()(coro_context<async_task<f1ap_
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", ue_ctxt.ue_index, name());
+  logger.debug("{}: Procedure started...", f1ap_ue_log_prefix{ue_ctxt.ue_ids, name()});
 
   // Subscribe to respective publisher to receive UE CONTEXT MODIFICATION RESPONSE/FAILURE message.
   transaction_sink.subscribe_to(ue_ctxt.ev_mng.context_modification_outcome);
@@ -67,13 +66,15 @@ void ue_context_modification_procedure::send_ue_context_modification_request()
 
   fill_asn1_ue_context_modification_request(ctx_mod, request);
 
-  ctx_mod->gnb_du_ue_f1ap_id = gnb_du_ue_f1ap_id_to_uint(ue_ctxt.du_ue_f1ap_id);
-  ctx_mod->gnb_cu_ue_f1ap_id = gnb_cu_ue_f1ap_id_to_uint(ue_ctxt.cu_ue_f1ap_id);
+  ctx_mod->gnb_du_ue_f1ap_id = gnb_du_ue_f1ap_id_to_uint(ue_ctxt.ue_ids.du_ue_f1ap_id);
+  ctx_mod->gnb_cu_ue_f1ap_id = gnb_cu_ue_f1ap_id_to_uint(ue_ctxt.ue_ids.cu_ue_f1ap_id);
 
-  if (logger.debug.enabled()) {
+  if (ue_ctxt.logger.get_basic_logger().debug.enabled()) {
     asn1::json_writer js;
     f1ap_ue_ctxt_mod_request_msg.pdu.to_json(js);
-    logger.debug("Containerized UeContextModificationRequest: {}", js.to_string());
+    logger.debug("{}: Containerized UEContextModificationRequest: {}",
+                 f1ap_ue_log_prefix{ue_ctxt.ue_ids, name()},
+                 js.to_string());
   }
 
   // send UE context modification request message
@@ -84,34 +85,27 @@ f1ap_ue_context_modification_response ue_context_modification_procedure::create_
 {
   f1ap_ue_context_modification_response res{};
 
+  auto logger_prefix = f1ap_ue_log_prefix{ue_ctxt.ue_ids, name()};
+
   if (transaction_sink.successful()) {
     const asn1::f1ap::ue_context_mod_resp_s& resp = transaction_sink.response();
-    logger.debug("Received UeContextModificationResponse");
-    if (logger.debug.enabled()) {
-      asn1::json_writer js;
-      resp.to_json(js);
-      logger.debug("Containerized UeContextModificationResponse: {}", js.to_string());
-    }
+
+    logger.info("{}: Procedure finished successfully", logger_prefix);
+
     fill_f1ap_ue_context_modification_response(res, resp);
 
-    logger.debug("ue={}: \"{}\" finalized.", ue_ctxt.ue_index, name());
   } else if (transaction_sink.failed()) {
     const asn1::f1ap::ue_context_mod_fail_s& fail = transaction_sink.failure();
-    logger.debug("Received UeContextModificationFailure cause={}", get_cause_str(fail->cause));
-    if (logger.debug.enabled()) {
-      asn1::json_writer js;
-      (*transaction_sink.failure()).to_json(js);
-      logger.debug("Containerized UeContextModificationFailure: {}", js.to_string());
-    }
-    fill_f1ap_ue_context_modification_response(res, fail);
 
-    logger.error("ue={}: \"{}\" failed.", ue_ctxt.ue_index, name());
+    logger.warning("{}: Procedure failed. Cause: {}", logger_prefix, get_cause_str(fail->cause));
+
+    fill_f1ap_ue_context_modification_response(res, fail);
   } else {
-    logger.warning("UeContextModificationResponse timeout");
+    logger.warning("{}: Procedure failed. Cause: Timeout reached for UEContextModificationResponse reception",
+                   logger_prefix);
+
     res.success = false;
     res.cause   = cause_misc_t::unspecified;
-
-    logger.error("ue={}: \"{}\" failed.", ue_ctxt.ue_index, name());
   }
 
   return res;

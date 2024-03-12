@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -23,6 +23,7 @@ set(SOURCES
   rrc_du_impl.cpp
   ue/meas_types_validators.cpp
   ue/rrc_ue_impl.cpp
+  ue/rrc_ue_context.cpp
   ue/rrc_ue_message_handlers.cpp
   ue/rrc_ue_message_senders.cpp
   ue/rrc_ue_helpers.cpp

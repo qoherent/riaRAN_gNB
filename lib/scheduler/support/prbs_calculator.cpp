@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
  */
 
 #include "prbs_calculator.h"
-#include "tbs_calculator.h"
+#include "srsran/ran/sch/tbs_calculator.h"
 
 using namespace srsran;
 

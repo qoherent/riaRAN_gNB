@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -27,11 +27,14 @@ add_executable(gnb
         gnb_e2_metric_connector_manager.cpp
         gnb_du_factory.cpp
         helpers/metrics_plotter_stdout.cpp
+        helpers/metrics_plotter_json.cpp
+        helpers/rlc_metrics_plotter_json.cpp
         helpers/gnb_console_helper.cpp
         helpers/metrics_hub.cpp
         adapters/e1ap_gateway_local_connector.cpp
         adapters/f1c_gateway_local_connector.cpp
         adapters/e2_gateway_remote_connector.cpp
+        adapters/ngap_adapter.cpp
         )
 
 install(TARGETS gnb
@@ -59,6 +62,7 @@ target_link_libraries(gnb
         srsran_channel_processors
         srsran_channel_equalizer
         srsran_channel_precoder
+        srsran_ru_dummy
         srsran_ru_generic
         srsran_ru_ofh
         srsran_pcap

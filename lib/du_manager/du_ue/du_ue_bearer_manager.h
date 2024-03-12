@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,7 +32,7 @@ class du_ue_bearer_manager
 {
 public:
   /// Add new SRB with specified SRB-Id and configuration.
-  du_ue_srb& add_srb(srb_id_t srb_id, const rlc_config& rlc_cfg);
+  du_ue_srb& add_srb(srb_id_t srb_id, const rlc_config& rlc_cfg, optional<const mac_lc_config> mac_cfg = {});
 
   /// Add new bearer to list of bearers.
   void add_drb(std::unique_ptr<du_ue_drb> drb);

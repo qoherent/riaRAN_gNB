@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,7 @@
 /// according to TS38.212 Section 5.3.2.
 #pragma once
 
-#include "srsran/ran/ldpc_base_graph.h"
+#include "srsran/ran/sch/ldpc_base_graph.h"
 #include "srsran/support/math_utils.h"
 #include "srsran/support/units.h"
 #include <array>
@@ -187,7 +187,7 @@ inline unsigned compute_lifting_size(units::bits tbs, ldpc_base_graph_type base_
       break;
     }
   }
-  assert(lifting_size != 0);
+  srsran_assert(lifting_size != 0, "Lifting size cannot be 0");
 
   return lifting_size;
 }
@@ -204,6 +204,17 @@ inline units::bits compute_codeblock_size(ldpc_base_graph_type base_graph, unsig
   unsigned           base_length     = (base_graph == ldpc_base_graph_type::BG1) ? base_length_BG1 : base_length_BG2;
 
   return units::bits(base_length * lifting_size);
+}
+
+/// Computes the codeblock size after the LDPC encoding.
+inline units::bits compute_full_codeblock_size(ldpc_base_graph_type base_graph, units::bits codeblock_size)
+{
+  // BG1 has rate 1/3 and BG2 has rate 1/5.
+  constexpr unsigned INVERSE_BG1_RATE = 3;
+  constexpr unsigned INVERSE_BG2_RATE = 5;
+  unsigned           inverse_rate     = (base_graph == ldpc_base_graph_type::BG1) ? INVERSE_BG1_RATE : INVERSE_BG2_RATE;
+
+  return codeblock_size * inverse_rate;
 }
 
 } // namespace ldpc

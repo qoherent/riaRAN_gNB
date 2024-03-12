@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,9 +24,9 @@
 
 using namespace srsran;
 
-ue_repository::ue_repository(sched_configuration_notifier& mac_notif_) :
-  mac_notif(mac_notif_), logger(srslog::fetch_basic_logger("SCHED"))
+ue_repository::ue_repository() : logger(srslog::fetch_basic_logger("SCHED"))
 {
+  rnti_to_ue_index_lookup.reserve(MAX_NOF_DU_UES);
 }
 
 /// \brief This function checks whether it is safe to remove a UE. Currently we verify that:
@@ -53,39 +53,56 @@ static bool is_ue_ready_for_removal(ue& u)
   return true;
 }
 
+// Helper function to search in lookup.
+static auto search_rnti(const std::vector<std::pair<rnti_t, du_ue_index_t>>& rnti_to_ue_index, rnti_t rnti)
+{
+  auto it =
+      std::lower_bound(rnti_to_ue_index.begin(), rnti_to_ue_index.end(), rnti, [](const auto& lhs, rnti_t rnti_v) {
+        return lhs.first < rnti_v;
+      });
+  return it != rnti_to_ue_index.end() and it->first == rnti ? it : rnti_to_ue_index.end();
+}
+
 void ue_repository::slot_indication(slot_point sl_tx)
 {
-  for (du_ue_index_t& ue_index : ues_to_rem) {
-    if (ue_index == INVALID_DU_UE_INDEX) {
+  for (ue_config_delete_event& p : ues_to_rem) {
+    if (not p.valid()) {
       // Already removed.
       continue;
     }
-    if (not ues.contains(ue_index)) {
-      logger.warning("Unexpected removal of ue={} already took place", ue_index);
-      ue_index = INVALID_DU_UE_INDEX;
-      // Notify MAC of the successful UE removal.
-      mac_notif.on_ue_delete_response(ue_index);
+    const du_ue_index_t ue_idx = p.ue_index();
+    if (not ues.contains(ue_idx)) {
+      logger.error("ue={}: Unexpected UE removal from UE repository", ue_idx);
+      p.reset();
       continue;
     }
-    ue& u = *ues[ue_index];
+    ue&    u     = *ues[ue_idx];
+    rnti_t crnti = u.crnti;
 
     // Check if UEs can be safely removed.
-    if (is_ue_ready_for_removal(u)) {
-      logger.debug("ue={} has been successfully removed.", ue_index);
-
-      // Notify MAC of the successful UE removal.
-      mac_notif.on_ue_delete_response(ue_index);
-
-      // Remove UE from the repository.
-      ues.erase(ue_index);
-
-      // Mark UE as ready for removal.
-      ue_index = INVALID_DU_UE_INDEX;
+    if (not is_ue_ready_for_removal(u)) {
+      continue;
     }
+
+    // Remove UE from lookup.
+    auto it = search_rnti(rnti_to_ue_index_lookup, crnti);
+    if (it != rnti_to_ue_index_lookup.end()) {
+      rnti_to_ue_index_lookup.erase(it);
+    } else {
+      logger.error("ue={} rnti={}: UE with provided c-rnti not found in RNTI-to-UE-index lookup table.", ue_idx, crnti);
+    }
+
+    // Remove UE from the repository.
+    ues.erase(ue_idx);
+
+    // Marks UE config removal as complete.
+    p.reset();
+
+    logger.debug("ue={} rnti={}: UE has been successfully removed.", ue_idx, crnti);
   }
 
   // In case the elements at the front of the ring has been marked for removal, pop them from the queue.
-  while (not ues_to_rem.empty() and ues_to_rem[0] == INVALID_DU_UE_INDEX) {
+  while (not ues_to_rem.empty() and not ues_to_rem[0].valid()) {
     ues_to_rem.pop();
   }
 
@@ -97,17 +114,35 @@ void ue_repository::slot_indication(slot_point sl_tx)
 
 void ue_repository::add_ue(std::unique_ptr<ue> u)
 {
+  // Add UE in repository.
   du_ue_index_t ue_index = u->ue_index;
+  rnti_t        rnti     = u->crnti;
   ues.insert(ue_index, std::move(u));
+
+  // Update RNTI -> UE index lookup.
+  rnti_to_ue_index_lookup.emplace_back(rnti, ue_index);
+  std::sort(rnti_to_ue_index_lookup.begin(), rnti_to_ue_index_lookup.end());
 }
 
-void ue_repository::schedule_ue_rem(du_ue_index_t ue_index)
+void ue_repository::schedule_ue_rem(ue_config_delete_event ev)
 {
-  if (contains(ue_index)) {
+  if (contains(ev.ue_index())) {
     // Start deactivation of UE bearers.
-    ues[ue_index]->deactivate();
+    ues[ev.ue_index()]->deactivate();
 
     // Register UE for later removal.
-    ues_to_rem.push(ue_index);
+    ues_to_rem.push(std::move(ev));
   }
+}
+
+ue* ue_repository::find_by_rnti(rnti_t rnti)
+{
+  auto it = search_rnti(rnti_to_ue_index_lookup, rnti);
+  return it != rnti_to_ue_index_lookup.end() ? ues[it->second].get() : nullptr;
+}
+
+const ue* ue_repository::find_by_rnti(rnti_t rnti) const
+{
+  auto it = search_rnti(rnti_to_ue_index_lookup, rnti);
+  return it != rnti_to_ue_index_lookup.end() ? ues[it->second].get() : nullptr;
 }

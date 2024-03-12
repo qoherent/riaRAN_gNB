@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -39,7 +39,7 @@ public:
   template <typename FormatContext>
   auto format(const srsran::pusch_context& context, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
   {
-    helper.format_always(ctx, "rnti=0x{:04x}", context.rnti);
+    helper.format_always(ctx, "rnti={}", context.rnti);
     helper.format_always(ctx, "h_id={}", context.h_id);
     return ctx.out();
   }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -99,4 +99,49 @@ enum class cause_misc_t : uint8_t {
 
 using cause_t = variant<cause_radio_network_t, cause_transport_t, cause_nas_t, cause_protocol_t, cause_misc_t>;
 
+// Establishment cause
+
+enum class establishment_cause_t : uint8_t {
+  emergency = 0,
+  high_prio_access,
+  mt_access,
+  mo_sig,
+  mo_data,
+  mo_voice_call,
+  mo_video_call,
+  mo_sms,
+  mps_prio_access,
+  mcs_prio_access
+};
+
 } // namespace srsran
+
+namespace fmt {
+
+// cause_t formatter
+template <>
+struct formatter<srsran::cause_t> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(srsran::cause_t o, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  {
+    if (srsran::variant_holds_alternative<srsran::cause_radio_network_t>(o)) {
+      return format_to(ctx.out(), "radio_network-id{}", srsran::variant_get<srsran::cause_radio_network_t>(o));
+    } else if (srsran::variant_holds_alternative<srsran::cause_transport_t>(o)) {
+      return format_to(ctx.out(), "transport-id{}", srsran::variant_get<srsran::cause_transport_t>(o));
+    } else if (srsran::variant_holds_alternative<srsran::cause_nas_t>(o)) {
+      return format_to(ctx.out(), "nas-id{}", srsran::variant_get<srsran::cause_nas_t>(o));
+    } else if (srsran::variant_holds_alternative<srsran::cause_protocol_t>(o)) {
+      return format_to(ctx.out(), "protocol-id{}", srsran::variant_get<srsran::cause_protocol_t>(o));
+    } else {
+      return format_to(ctx.out(), "misc-id{}", srsran::variant_get<srsran::cause_misc_t>(o));
+    }
+  }
+};
+
+} // namespace fmt

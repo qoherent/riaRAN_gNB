@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -26,10 +26,11 @@ target_link_libraries(srsran_mac_to_fapi_translator srsran_mac_fapi_adaptors srs
 
 set(SOURCES
         fapi_to_mac_data_msg_translator.cpp
+        fapi_to_mac_error_msg_translator.cpp
         fapi_to_mac_time_msg_translator.cpp)
 
 add_library(srsran_fapi_to_mac_translator STATIC ${SOURCES})
-target_link_libraries(srsran_fapi_to_mac_translator srsvec)
+target_link_libraries(srsran_fapi_to_mac_translator srsvec srsran_support)
 
 add_library(mac_fapi_adaptor STATIC mac_fapi_adaptor_impl.cpp)
 target_link_libraries(mac_fapi_adaptor srsran_mac_to_fapi_translator srsran_fapi_to_mac_translator)

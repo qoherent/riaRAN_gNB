@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -20,7 +20,6 @@
 
 set(SOURCES
         harq_process.cpp
-        ue_configuration.cpp
         dl_logical_channel_manager.cpp
         ul_logical_channel_manager.cpp
         ta_manager.cpp

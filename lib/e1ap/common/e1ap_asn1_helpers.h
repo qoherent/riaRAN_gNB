@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "e1ap_asn1_converters.h"
+#include "srsran/asn1/e1ap/e1ap_pdu_contents.h"
 #include "srsran/ran/bcd_helpers.h"
 #include "srsran/ran/qos_prio_level.h"
 

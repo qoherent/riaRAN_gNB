@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,8 +45,10 @@ static inline __m512i loadu_epi16_avx512(const void* mem_address)
 static void
 compress_prb_avx512(compressed_prb& c_prb, const int16_t* uncompr_samples, uint8_t exponent, unsigned data_width)
 {
+  const __mmask32 load_mask = 0x00ffffff;
+
   // Load from memory.
-  __m512i rb_epi16 = loadu_epi16_avx512(uncompr_samples);
+  __m512i rb_epi16 = _mm512_maskz_loadu_epi16(load_mask, uncompr_samples);
 
   // Apply exponent (compress).
   __m512i rb_shifted_epi16 = _mm512_srai_epi16(rb_epi16, exponent);
@@ -77,7 +79,8 @@ void iq_compression_bfp_avx512::compress(span<compressed_prb>         output,
   quantize_input(input_quantized_span, float_samples_span);
 
   // Compression algorithm implemented according to Annex A.1.2 in O-RAN.WG4.CUS.
-  unsigned sample_idx = 0, rb = 0;
+  unsigned sample_idx = 0;
+  unsigned rb         = 0;
 
   // With 3 AVX512 registers we can process 4 PRBs at a time (48 16bit IQ pairs).
   for (size_t rb_index_end = (output.size() / 4) * 4; rb != rb_index_end; rb += 4) {
@@ -90,7 +93,7 @@ void iq_compression_bfp_avx512::compress(span<compressed_prb>         output,
     __m512i exp_epu32 = mm512::determine_bfp_exponent(r0_epi16, r1_epi16, r2_epi16, params.data_width);
 
     // Exponents are stored in the first bytes of each 128bit lane of the result.
-    const uint8_t* exp_byte_ptr = reinterpret_cast<const uint8_t*>(&exp_epu32);
+    const auto* exp_byte_ptr = reinterpret_cast<const uint8_t*>(&exp_epu32);
     output[rb].set_compression_param(exp_byte_ptr[0]);
     output[rb + 1].set_compression_param(exp_byte_ptr[16]);
     output[rb + 2].set_compression_param(exp_byte_ptr[32]);
@@ -114,27 +117,20 @@ void iq_compression_bfp_avx512::compress(span<compressed_prb>         output,
   }
 
   // Process the remaining PRBs (one PRB at a time),
-  // except the last one - to avoid reading behind the input data memory.
-  for (size_t rb_index_end = output.size() - 1; rb != rb_index_end; ++rb) {
-    const __m512i AVX512_ZERO = _mm512_set1_epi16(0);
-    __m512i       rb_epi16    = loadu_epi16_avx512(&input_quantized[sample_idx]);
+  for (size_t rb_index_end = output.size(); rb != rb_index_end; ++rb) {
+    const __m512i   AVX512_ZERO = _mm512_set1_epi16(0);
+    const __mmask32 load_mask   = 0x00ffffff;
+    __m512i         rb_epi16    = _mm512_maskz_loadu_epi16(load_mask, &input_quantized[sample_idx]);
 
     // Determine BFP exponent and extract it from the first byte of the first 128bit lane.
-    __m512i        exp_epu32    = mm512::determine_bfp_exponent(rb_epi16, AVX512_ZERO, AVX512_ZERO, params.data_width);
-    const uint8_t* exp_byte_ptr = reinterpret_cast<const uint8_t*>(&exp_epu32);
+    __m512i     exp_epu32    = mm512::determine_bfp_exponent(rb_epi16, AVX512_ZERO, AVX512_ZERO, params.data_width);
+    const auto* exp_byte_ptr = reinterpret_cast<const uint8_t*>(&exp_epu32);
     output[rb].set_compression_param(exp_byte_ptr[0]);
 
     // Shift and pack the first PRB using utility function.
     __m512i rb_shifted_epi16 = _mm512_srai_epi16(rb_epi16, exp_byte_ptr[0]);
     mm512::pack_prb_big_endian(output[rb], rb_shifted_epi16, params.data_width);
 
-    sample_idx += NOF_SAMPLES_PER_PRB;
-  }
-
-  // Use generic implementation for the remaining resource blocks.
-  for (size_t rb_index_end = output.size(); rb != rb_index_end; ++rb) {
-    const auto* start_it = input_quantized.begin() + sample_idx;
-    compress_prb_generic(output[rb], {start_it, NOF_SAMPLES_PER_PRB}, params.data_width);
     sample_idx += NOF_SAMPLES_PER_PRB;
   }
 }

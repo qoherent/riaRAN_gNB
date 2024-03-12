@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -24,6 +24,11 @@ add_executable(pcap_mac_test mac_pcap_test.cpp)
 target_link_libraries(pcap_mac_test srsran_pcap srsran_support srslog gtest gtest_main)
 target_include_directories(pcap_mac_test PRIVATE ${CMAKE_SOURCE_DIR})
 gtest_discover_tests(pcap_mac_test)
+
+add_executable(pcap_rlc_test rlc_pcap_test.cpp)
+target_link_libraries(pcap_rlc_test srsran_pcap srsran_support srslog gtest gtest_main)
+target_include_directories(pcap_rlc_test PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(pcap_rlc_test)
 
 add_executable(pcap_ngap_test ngap_pcap_test.cpp)
 target_link_libraries(pcap_ngap_test srsran_pcap srsran_support srslog gtest gtest_main)

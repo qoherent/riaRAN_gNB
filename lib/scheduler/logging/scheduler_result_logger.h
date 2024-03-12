@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,8 +30,11 @@ namespace srsran {
 class scheduler_result_logger
 {
 public:
-  explicit scheduler_result_logger(bool log_broadcast_ = true) :
-    logger(srslog::fetch_basic_logger("SCHED")), log_broadcast(log_broadcast_), enabled(logger.info.enabled())
+  explicit scheduler_result_logger(bool log_broadcast_ = true, du_cell_index_t cell_idx = to_du_cell_index(0)) :
+    logger(srslog::fetch_basic_logger("SCHED")),
+    log_broadcast(log_broadcast_),
+    enabled(logger.info.enabled()),
+    cell_index(cell_idx)
   {
   }
 
@@ -52,6 +55,8 @@ private:
   srslog::basic_logger& logger;
   bool                  log_broadcast;
   bool                  enabled;
+
+  du_cell_index_t cell_index;
 
   std::chrono::time_point<std::chrono::high_resolution_clock> slot_start_tp;
   fmt::memory_buffer                                          fmtbuf;

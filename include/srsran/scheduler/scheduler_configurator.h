@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,7 +31,7 @@
 #include "srsran/ran/phy_time_unit.h"
 #include "srsran/ran/prach/prach_constants.h"
 #include "srsran/ran/rnti.h"
-#include "srsran/ran/sib_configuration.h"
+#include "srsran/ran/sib/sib_configuration.h"
 #include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/slot_point.h"
 #include "srsran/ran/sr_configuration.h"
@@ -42,6 +42,7 @@
 #include "srsran/scheduler/config/dmrs.h"
 #include "srsran/scheduler/config/logical_channel_config.h"
 #include "srsran/scheduler/config/serving_cell_config.h"
+#include "srsran/scheduler/config/si_scheduling_config.h"
 #include "srsran/scheduler/scheduler_dci.h"
 
 namespace srsran {
@@ -86,6 +87,9 @@ struct sched_cell_configuration_request_message {
   /// Payload size is in bytes.
   unsigned sib1_payload_size;
 
+  /// Scheduling of SI messages.
+  optional<si_scheduling_config> si_scheduling;
+
   /// List of PUCCH guardbands.
   std::vector<sched_grid_resource> pucch_guardbands;
 
@@ -94,6 +98,8 @@ struct sched_cell_configuration_request_message {
 
   /// List of nzp-CSI-RS resources common to all UEs.
   std::vector<nzp_csi_rs_resource> nzp_csi_rs_res_list;
+
+  unsigned ntn_cs_koffset = 0;
 };
 
 /// Parameters provided to the scheduler to configure the resource allocation of a specific UE.

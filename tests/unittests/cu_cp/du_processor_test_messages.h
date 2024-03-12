@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,36 +22,39 @@
 
 #pragma once
 
+#include "lib/cu_cp/du_processor/du_processor_impl_interface.h"
 #include "srsran/cu_cp/cu_cp_types.h"
-#include "srsran/cu_cp/du_processor.h"
 #include "srsran/e1ap/common/e1ap_types.h"
+#include "srsran/f1ap/common/f1ap_message.h"
 
 namespace srsran {
 namespace srs_cu_cp {
 
 /// \brief Generate a valid dummy F1 Setup Request.
-void generate_valid_f1_setup_request(f1ap_f1_setup_request& f1_setup_request,
-                                     unsigned               gnb_du_id = 0x11,
-                                     unsigned               nrcell_id = 6576,
-                                     pci_t                  pci       = 0);
+void generate_valid_f1_setup_request(du_setup_request& setup_request,
+                                     gnb_du_id_t       gnb_du_id = int_to_gnb_du_id(0x11),
+                                     unsigned          nrcell_id = 6576,
+                                     pci_t             pci       = 0);
 
 /// \brief Generate a dummy F1 Setup Request base to extend.
-void generate_f1_setup_request_base(f1ap_f1_setup_request& f1_setup_request);
+void generate_f1_setup_request_base(du_setup_request& setup_request);
 
 /// \brief Generate a dummy F1 Setup Request with unsupported number of cells.
-void generate_f1_setup_request_with_too_many_cells(f1ap_f1_setup_request& f1_setup_request);
+f1ap_message create_f1_setup_request_with_too_many_cells(const f1ap_message& base = {});
+void         generate_f1_setup_request_with_too_many_cells(du_setup_request& setup_request);
 
 /// \brief Generate a dummy UE Creation Message.
 /// \param[in] ue_index The UE index to use.
 /// \param[in] c_rnti The C-RNTI to use.
 /// \param[in] nrcell_id The NR Cell Id to use.
 /// \return The dummy UE Creation Message.
-cu_cp_ue_creation_message generate_ue_creation_message(ue_index_t ue_index, rnti_t c_rnti, unsigned nrcell_id);
+ue_rrc_context_creation_request
+generate_ue_rrc_context_creation_request(ue_index_t ue_index, rnti_t c_rnti, unsigned nrcell_id);
 
 /// \brief Generate a dummy UE Context Release Command.
 /// \param[in] ue_index The UE Index to use.
 /// \return The dummy UE Context Release Command.
-rrc_ue_context_release_command generate_ue_context_release_command(ue_index_t ue_index);
+cu_cp_ue_context_release_command generate_ue_context_release_command(ue_index_t ue_index);
 
 /// \brief Generate a dummy PDU Session Resource Setup request.
 cu_cp_pdu_session_resource_setup_request generate_pdu_session_resource_setup(unsigned num_pdu_sessions = 1,

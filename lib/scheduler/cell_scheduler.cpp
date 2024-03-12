@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,24 +28,26 @@ using namespace srsran;
 
 cell_scheduler::cell_scheduler(const scheduler_expert_config&                  sched_cfg,
                                const sched_cell_configuration_request_message& msg,
+                               const cell_configuration&                       cell_cfg_,
                                ue_scheduler&                                   ue_sched_,
                                scheduler_event_logger&                         ev_logger,
                                scheduler_metrics_handler&                      metrics_handler) :
-  cell_cfg(sched_cfg, msg),
+  cell_cfg(cell_cfg_),
   ue_sched(ue_sched_),
   res_grid(cell_cfg),
   event_logger(ev_logger),
   metrics(metrics_handler),
-  result_logger(sched_cfg.log_broadcast_messages),
+  result_logger(sched_cfg.log_broadcast_messages, cell_cfg.cell_index),
   logger(srslog::fetch_basic_logger("SCHED")),
   ssb_sch(cell_cfg),
   pdcch_sch(cell_cfg),
   csi_sch(cell_cfg),
   ra_sch(sched_cfg.ra, cell_cfg, pdcch_sch, ev_logger),
   prach_sch(cell_cfg),
-  pucch_alloc(cell_cfg),
+  pucch_alloc(cell_cfg, sched_cfg.ue.max_pucchs_per_slot, sched_cfg.ue.max_ul_grants_per_slot),
   uci_alloc(pucch_alloc),
   sib1_sch(sched_cfg.si, cell_cfg, pdcch_sch, msg),
+  si_msg_sch(sched_cfg.si, cell_cfg, pdcch_sch, msg),
   pucch_guard_sch(cell_cfg),
   pg_sch(sched_cfg, cell_cfg, pdcch_sch, msg)
 {
@@ -90,6 +92,7 @@ void cell_scheduler::run_slot(slot_point sl_tx)
       res_grid.slot_indication(skipped_slot);
       pdcch_sch.slot_indication(skipped_slot);
       pucch_alloc.slot_indication(skipped_slot);
+      uci_alloc.slot_indication(skipped_slot);
     }
   }
 
@@ -97,6 +100,7 @@ void cell_scheduler::run_slot(slot_point sl_tx)
   res_grid.slot_indication(sl_tx);
   pdcch_sch.slot_indication(sl_tx);
   pucch_alloc.slot_indication(sl_tx);
+  uci_alloc.slot_indication(sl_tx);
 
   // > Mark slot start for logging purposes.
   result_logger.on_slot_start();
@@ -107,8 +111,9 @@ void cell_scheduler::run_slot(slot_point sl_tx)
   // > Schedule CSI-RS.
   csi_sch.run_slot(res_grid[0]);
 
-  // > Schedule SI signalling.
+  // > Schedule SIB1 and SI-message signalling.
   sib1_sch.schedule_sib1(res_grid[0], sl_tx);
+  si_msg_sch.run_slot(res_grid[0]);
 
   // > Schedule PUCCH guardbands.
   pucch_guard_sch.run_slot(res_grid);

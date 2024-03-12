@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -110,6 +110,9 @@ struct uci_indication {
     variant<uci_pucch_f0_or_f1_pdu, uci_pusch_pdu, uci_pucch_f2_or_f3_or_f4_pdu> pdu;
   };
   using uci_pdu_list = static_vector<uci_pdu, MAX_UCI_PDUS_PER_UCI_IND>;
+
+  // Note: user-defined ctor to avoid zero-initialization of uci_pdu_list.
+  uci_indication() {}
 
   du_cell_index_t cell_index;
   slot_point      slot_rx;

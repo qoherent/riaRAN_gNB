@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,9 @@
 
 #pragma once
 
-#include "srsran/ran/modulation_scheme.h"
 #include "srsran/ran/resource_block.h"
-#include "srsran/ran/sch_mcs.h"
+#include "srsran/ran/sch/modulation_scheme.h"
+#include "srsran/ran/sch/sch_mcs.h"
 #include "srsran/support/math_utils.h"
 
 namespace srsran {

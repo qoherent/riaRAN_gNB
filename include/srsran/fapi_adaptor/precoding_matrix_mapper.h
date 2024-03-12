@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -77,6 +77,8 @@ public:
   unsigned map(const mac_ssb_precoding_info& precoding_info) const;
 
 private:
+  /// Logger.
+  srslog::basic_logger& logger;
   /// Number of ports.
   const unsigned nof_ports;
   /// Codebook offset for the omnidirectional PDSCH.

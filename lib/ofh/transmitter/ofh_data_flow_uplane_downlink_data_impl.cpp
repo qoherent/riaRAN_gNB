@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,7 @@
 #include "scoped_frame_buffer.h"
 #include "srsran/phy/support/resource_grid_context.h"
 #include "srsran/phy/support/resource_grid_reader.h"
+#include <thread>
 
 using namespace srsran;
 using namespace ofh;
@@ -68,18 +69,19 @@ static ecpri::iq_data_parameters generate_ecpri_data_parameters(uint16_t seq_id,
 }
 
 data_flow_uplane_downlink_data_impl::data_flow_uplane_downlink_data_impl(
-    data_flow_uplane_downlink_data_impl_config&& config) :
-  logger(*config.logger),
+    const data_flow_uplane_downlink_data_impl_config&  config,
+    data_flow_uplane_downlink_data_impl_dependencies&& dependencies) :
+  logger(*dependencies.logger),
+  nof_symbols_per_slot(get_nsymb_per_slot(config.cp)),
   ru_nof_prbs(config.ru_nof_prbs),
   vlan_params(config.vlan_params),
   compr_params(config.compr_params),
-  frame_pool_ptr(config.frame_pool),
+  frame_pool_ptr(dependencies.frame_pool),
   frame_pool(*frame_pool_ptr),
-  compressor_sel(std::move(config.compressor_sel)),
-  eth_builder(std::move(config.eth_builder)),
-  ecpri_builder(std::move(config.ecpri_builder)),
-  up_builder(std::move(config.up_builder)),
-  iq_temp_data_buffer(ru_nof_prbs * NOF_SUBCARRIERS_PER_RB, {0, 0})
+  compressor_sel(std::move(dependencies.compressor_sel)),
+  eth_builder(std::move(dependencies.eth_builder)),
+  ecpri_builder(std::move(dependencies.ecpri_builder)),
+  up_builder(std::move(dependencies.up_builder))
 {
   srsran_assert(eth_builder, "Invalid Ethernet VLAN packet builder");
   srsran_assert(ecpri_builder, "Invalid eCPRI packet builder");
@@ -95,24 +97,17 @@ void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message(
   enqueue_section_type_1_message_symbol_burst(context, grid);
 }
 
-span<const cf_t>
-data_flow_uplane_downlink_data_impl::read_grid(unsigned symbol, unsigned port, const resource_grid_reader& grid)
-{
-  if (ru_nof_prbs == grid.get_nof_subc()) {
-    return grid.get_view(port, symbol);
-  }
-
-  // The DU grid is copied at the beginning (lowest frequencies) of the RU grid.
-  span<cf_t> grid_data = span<cf_t>(iq_temp_data_buffer).first(grid.get_nof_subc());
-  grid.get(grid_data, port, symbol, 0);
-
-  return iq_temp_data_buffer;
-}
-
 void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_symbol_burst(
     const data_flow_uplane_resource_grid_context& context,
     const resource_grid_reader&                   grid)
 {
+  // Temporary buffer used to store IQ data when the RU operating bandwidth is not the same to the cell bandwidth.
+  std::array<cf_t, MAX_NOF_PRBS * NOF_SUBCARRIERS_PER_RB> temp_buffer;
+  if (SRSRAN_UNLIKELY(ru_nof_prbs != grid.get_nof_subc())) {
+    // Zero out the elements that won't be filled after reading the resource grid.
+    std::fill(temp_buffer.begin() + grid.get_nof_subc(), temp_buffer.end(), 0);
+  }
+
   units::bytes headers_size = eth_builder->get_header_size() +
                               ecpri_builder->get_header_size(ecpri::message_type::iq_data) +
                               up_builder->get_header_size(compr_params);
@@ -121,15 +116,31 @@ void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_symbol_
   for (unsigned symbol_id = context.symbol_range.start(), symbol_end = context.symbol_range.length();
        symbol_id != symbol_end;
        ++symbol_id) {
-    scoped_frame_buffer scoped_buffer(
-        frame_pool, context.slot, symbol_id, message_type::user_plane, data_direction::downlink);
-    ofh_uplane_fragment_size_calculator prb_fragment_calculator(0, ru_nof_prbs, compr_params);
-    span<const cf_t>                    iq_data = read_grid(symbol_id, context.port, grid);
-    // Split the data into multiple messages when it does not fit into a single one.
-    bool     is_last_fragment   = false;
-    unsigned fragment_start_prb = 0U;
-    unsigned fragment_nof_prbs  = 0U;
+    slot_symbol_point   symbol_point(context.slot, symbol_id, nof_symbols_per_slot);
+    scoped_frame_buffer scoped_buffer(frame_pool, symbol_point, message_type::user_plane, data_direction::downlink);
+    if (scoped_buffer.empty()) {
+      logger.warning("Not enough space in the buffer pool to create a downlink User-Plane message for slot '{}' and "
+                     "eAxC '{}', symbol_id '{}'",
+                     context.slot,
+                     context.eaxc,
+                     symbol_id);
+      return;
+    }
 
+    span<const cf_t> iq_data;
+    if (SRSRAN_LIKELY(ru_nof_prbs == grid.get_nof_subc())) {
+      iq_data = grid.get_view(context.port, symbol_id);
+    } else {
+      span<cf_t> temp_iq_data(temp_buffer.data(), ru_nof_prbs * NOF_SUBCARRIERS_PER_RB);
+      grid.get(temp_iq_data.first(grid.get_nof_subc()), context.port, symbol_id, 0);
+      iq_data = temp_iq_data;
+    }
+
+    // Split the data into multiple messages when it does not fit into a single one.
+    ofh_uplane_fragment_size_calculator prb_fragment_calculator(0, ru_nof_prbs, compr_params);
+    bool                                is_last_fragment   = false;
+    unsigned                            fragment_start_prb = 0U;
+    unsigned                            fragment_nof_prbs  = 0U;
     do {
       ether::frame_buffer& frame_buffer = scoped_buffer.get_next_frame();
       span<uint8_t>        data         = frame_buffer.data();
@@ -139,7 +150,9 @@ void data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_symbol_
 
       // Skip frame buffers so small that cannot carry one PRB.
       if (fragment_nof_prbs == 0) {
-        logger.warning("Skipping frame buffer as it cannot carry a PRB. Frame buffer size={}", data.size());
+        logger.warning(
+            "Skipped frame buffer as it cannot store data for a single PRB, required buffer size is '{}' bytes",
+            data.size());
 
         continue;
       }
@@ -181,8 +194,10 @@ unsigned data_flow_uplane_downlink_data_impl::enqueue_section_type_1_message_sym
   span<uint8_t> eth_buffer = span<uint8_t>(buffer).first(ether_header_size.value() + bytes_written);
   eth_builder->build_vlan_frame(eth_buffer, vlan_params);
 
-  logger.debug("Creating User-Plane message for downlink at slot={}, symbol_id={}, prbs={}:{}, size={}",
+  logger.debug("Packing a downlink User-Plane message for slot '{}' and eAxC '{}', symbol_id '{}', PRB range '{}:{}', "
+               "size '{}' bytes",
                params.slot,
+               eaxc,
                params.symbol_id,
                params.start_prb,
                params.nof_prb,

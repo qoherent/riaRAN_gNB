@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,6 +31,9 @@
 using namespace srsran;
 using namespace srsran::ldpc;
 
+static const std::array<double, 4> shift_factor_bg1 = {0, 17, 33, 56};
+static const std::array<double, 4> shift_factor_bg2 = {0, 13, 25, 43};
+
 void ldpc_rate_matcher_impl::init(const codeblock_metadata& cfg, unsigned block_length, unsigned rm_length)
 {
   srsran_assert((cfg.tb_common.rv >= 0) && (cfg.tb_common.rv <= 3), "RV should an integer between 0 and 3.");
@@ -55,17 +58,17 @@ void ldpc_rate_matcher_impl::init(const codeblock_metadata& cfg, unsigned block_
   srsran_assert(rm_length % modulation_order == 0, "The output length should be a multiple of the modulation order.");
 
   // Compute shift_k0 according to TS38.212 Table 5.4.2.1-2.
-  std::array<double, 4> shift_factor = {};
-  unsigned              BG_N_short   = 0;
-  unsigned              BG_K         = 0;
+  span<const double> shift_factor;
+  unsigned           BG_N_short = 0;
+  unsigned           BG_K       = 0;
   if ((block_length % BG1_N_SHORT) == 0) {
     // input is a BG1 codeblock
-    shift_factor = {0, 17, 33, 56};
+    shift_factor = shift_factor_bg1;
     BG_N_short   = BG1_N_SHORT;
     BG_K         = BG1_N_FULL - BG1_M;
   } else if ((block_length % BG2_N_SHORT) == 0) {
     // input is a BG2 codeblock
-    shift_factor = {0, 13, 25, 43};
+    shift_factor = shift_factor_bg2;
     BG_N_short   = BG2_N_SHORT;
     BG_K         = BG2_N_FULL - BG2_M;
   } else {
@@ -87,18 +90,16 @@ void ldpc_rate_matcher_impl::init(const codeblock_metadata& cfg, unsigned block_
   shift_k0   = static_cast<uint16_t>(floor(tmp)) * lifting_size;
 }
 
-void ldpc_rate_matcher_impl::rate_match(bit_buffer& output, span<const uint8_t> input, const codeblock_metadata& cfg)
+void ldpc_rate_matcher_impl::rate_match(bit_buffer& output, const bit_buffer& input, const codeblock_metadata& cfg)
 {
   init(cfg, input.size(), output.size());
 
-  buffer = input.first(buffer_length);
-
   span<uint8_t> aux = span<uint8_t>(auxiliary_buffer).first(output.size());
-  select_bits(aux, buffer);
+  select_bits(aux, input.first(buffer_length));
   interleave_bits(output, aux);
 }
 
-void ldpc_rate_matcher_impl::select_bits(span<uint8_t> out, span<const uint8_t> in) const
+void ldpc_rate_matcher_impl::select_bits(span<uint8_t> out, const bit_buffer& in) const
 {
   unsigned output_length = out.size();
   unsigned out_index     = 0;
@@ -134,7 +135,7 @@ void ldpc_rate_matcher_impl::select_bits(span<uint8_t> out, span<const uint8_t> 
     unsigned count = std::min(input_chunk_range.length(), output_length - out_index);
 
     // Append the consecutive number of bits.
-    srsvec::copy(out.subspan(out_index, count), in.subspan(in_index, count));
+    srsvec::bit_unpack(out.subspan(out_index, count), in, in_index);
     out_index += count;
 
     // Advance in_index the amount of written bits.

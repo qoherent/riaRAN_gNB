@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,10 +31,12 @@ namespace srsran {
 
 /// Container to hold TX/RX metrics
 struct rlc_metrics {
+  uint32_t       du_index;
   du_ue_index_t  ue_index;
   rb_id_t        rb_id;
   rlc_tx_metrics tx;
   rlc_rx_metrics rx;
+  unsigned       counter;
 };
 
 /// \brief Notifier interface used to report RLC metrics.

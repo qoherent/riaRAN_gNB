@@ -1,19 +1,32 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
-# By using this file, you agree to the terms and conditions set
-# forth in the LICENSE file which can be found at the top level of
-# the distribution.
+# This file is part of srsRAN
+#
+# srsRAN is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# srsRAN is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# A copy of the GNU Affero General Public License can be found in
+# the LICENSE file in the top-level directory of this distribution
+# and at http://www.gnu.org/licenses/.
 #
 
 """
 Validate Configuration Examples
 """
 import logging
+import tempfile
 from pathlib import Path
 from pprint import pformat
 
-from pytest import mark
+from pytest import mark, param
 from retina.client.manager import RetinaTestManager
 from retina.launcher.artifacts import RetinaTestData
 from retina.launcher.utils import configure_artifacts
@@ -25,22 +38,29 @@ from retina.protocol.gnb_pb2_grpc import GNBStub
 
 from .steps.stub import RF_MAX_TIMEOUT, stop
 
-B200_CONFIG_FILE: str = "configs/gnb_rf_b200_tdd_n78_20mhz.yml"
 N300_CONFIG_FILE: str = "configs/gnb_rf_n310_fdd_n3_20mhz.yml"
 
 
+@mark.parametrize(
+    "config_file",
+    (
+        param("configs/gnb_rf_b200_tdd_n78_20mhz.yml", id="tdd"),
+        param("configs/gnb_rf_b210_fdd_srsUE.yml", id="fdd"),
+    ),
+)
 @mark.rf_b200
 def test_rf_b200_config(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
     fivegc: FiveGCStub,
     gnb: GNBStub,
+    config_file: str,
     timeout: int = RF_MAX_TIMEOUT,
-):
+):  # pylint: disable=too-many-arguments
     """
     Run gnb with B200 example config and validate it doesn't crash.
     """
-    run_config(retina_manager, retina_data, fivegc, gnb, timeout, B200_CONFIG_FILE, "")
+    run_config(retina_manager, retina_data, fivegc, gnb, timeout, config_file, "")
 
 
 @mark.rf_n300
@@ -58,7 +78,7 @@ def test_rf_n300_config(
     run_config(retina_manager, retina_data, fivegc, gnb, timeout, N300_CONFIG_FILE, extra_config)
 
 
-# pylint: disable=R0913
+# pylint: disable=too-many-arguments
 def run_config(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
@@ -72,11 +92,21 @@ def run_config(
     Run gnb with B200 example config and validate it doesn't crash.
     """
 
-    retina_data.test_config = {
-        "gnb": {"templates": {"main": str(Path(__file__).joinpath(f"../../../../{config_file}").resolve())}}
-    }
-    retina_manager.parse_configuration(retina_data.test_config)
-    retina_manager.push_all_config()
+    with tempfile.NamedTemporaryFile(mode="w+") as tmp_file:
+        tmp_file.write(" ")  # Make it not empty to overwrite default one
+        tmp_file.flush()
+        retina_data.test_config = {
+            "gnb": {
+                "templates": {
+                    "main": str(Path(__file__).joinpath(f"../../../../{config_file}").resolve()),
+                    "cell": tmp_file.name,
+                    "ru": tmp_file.name,
+                }
+            }
+        }
+        retina_manager.parse_configuration(retina_data.test_config)
+        retina_manager.push_all_config()
+
     logging.info("Test config: \n%s", pformat(retina_data.test_config))
 
     configure_artifacts(

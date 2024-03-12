@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -133,7 +133,7 @@ private:
   const re_prb_mask format2_prb_re_mask = {true, false, true, true, false, true, true, false, true, true, false, true};
 
   /// PRB mask indicating the used PRB within the resource grid.
-  bounded_bitset<MAX_RB> prb_mask = {};
+  bounded_bitset<MAX_RB> prb_mask;
 };
 
 } // namespace srsran

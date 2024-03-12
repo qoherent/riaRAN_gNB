@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,8 @@
 #pragma once
 
 #include "rrc_ue_srb_context.h"
-#include "srsran/asn1/rrc_nr/rrc_nr.h"
+#include "srsran/asn1/rrc_nr/ul_ccch_msg_ies.h"
+#include "srsran/asn1/rrc_nr/ul_dcch_msg_ies.h"
 #include "srsran/cu_cp/up_resource_manager.h"
 #include "srsran/rrc/rrc_cell_context.h"
 #include "srsran/rrc/rrc_ue.h"
@@ -39,20 +40,18 @@ enum class rrc_state { idle = 0, connected, connected_inactive };
 class rrc_ue_context_t
 {
 public:
-  rrc_ue_context_t(const ue_index_t        ue_index_,
-                   const rnti_t            c_rnti_,
-                   const rrc_cell_context& cell_,
-                   const rrc_ue_cfg_t&     cfg_,
-                   bool                    is_inter_cu_handover_ = false) :
-    ue_index(ue_index_), c_rnti(c_rnti_), cell(cell_), cfg(cfg_), is_inter_cu_handover(is_inter_cu_handover_)
-  {
-  }
+  rrc_ue_context_t(const ue_index_t                  ue_index_,
+                   const rnti_t                      c_rnti_,
+                   const rrc_cell_context&           cell_,
+                   const rrc_ue_cfg_t&               cfg_,
+                   optional<rrc_ue_transfer_context> rrc_context_);
 
   const ue_index_t                                    ue_index; // UE index assigned by the DU processor
   const rnti_t                                        c_rnti;   // current C-RNTI
   const rrc_cell_context                              cell;     // current cell
   const rrc_ue_cfg_t                                  cfg;
   rrc_state                                           state = rrc_state::idle;
+  optional<rrc_meas_cfg>                              meas_cfg;
   optional<uint32_t>                                  five_g_tmsi;
   uint64_t                                            setup_ue_id;
   asn1::rrc_nr::establishment_cause_opts              connection_cause;
@@ -61,7 +60,8 @@ public:
   bool                                                security_enabled = false;
   optional<asn1::rrc_nr::ue_nr_cap_s>                 capabilities;
   optional<asn1::rrc_nr::ue_cap_rat_container_list_l> capabilities_list;
-  bool                                                is_inter_cu_handover = false;
+  optional<rrc_ue_transfer_context> transfer_context; // Context of old UE when created through mobility.
+  srslog::basic_logger&             logger;
 };
 
 } // namespace srs_cu_cp

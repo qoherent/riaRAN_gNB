@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "mobility_helpers.h"
+#include "../pdu_session_routine_helpers.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
@@ -30,28 +31,29 @@ bool srsran::srs_cu_cp::handle_context_setup_response(
     e1ap_bearer_context_modification_request& bearer_context_modification_request,
     const f1ap_ue_context_setup_response&     target_ue_context_setup_response,
     up_config_update&                         next_config,
-    const srslog::basic_logger&               logger)
+    const srslog::basic_logger&               logger,
+    bool                                      reestablish_drb)
 {
   // Sanity checks.
   if (target_ue_context_setup_response.ue_index == ue_index_t::invalid) {
-    logger.error("Failed to create UE at the target DU.");
+    logger.warning("Failed to create UE at the target DU");
     return false;
   }
 
   if (!target_ue_context_setup_response.srbs_failed_to_be_setup_list.empty()) {
-    logger.error("Couldn't setup {} SRBs at target DU",
-                 target_ue_context_setup_response.srbs_failed_to_be_setup_list.size());
+    logger.warning("Couldn't setup {} SRBs at target DU",
+                   target_ue_context_setup_response.srbs_failed_to_be_setup_list.size());
     return false;
   }
 
   if (!target_ue_context_setup_response.drbs_failed_to_be_setup_list.empty()) {
-    logger.error("Couldn't setup {} DRBs at target DU",
-                 target_ue_context_setup_response.drbs_failed_to_be_setup_list.size());
+    logger.warning("Couldn't setup {} DRBs at target DU",
+                   target_ue_context_setup_response.drbs_failed_to_be_setup_list.size());
     return false;
   }
 
   if (!target_ue_context_setup_response.c_rnti.has_value()) {
-    logger.error("No C-RNTI present in UE context setup");
+    logger.warning("No C-RNTI present in UE context setup");
     return false;
   }
 
@@ -82,6 +84,14 @@ bool srsran::srs_cu_cp::handle_context_setup_response(
 
           e1ap_drb_item.dl_up_params.push_back(e1ap_dl_up_param);
         }
+
+        if (reestablish_drb) {
+          // Reestablish PDCP.
+          e1ap_drb_item.pdcp_cfg.emplace();
+          fill_e1ap_drb_pdcp_config(e1ap_drb_item.pdcp_cfg.value(), drb_item.second.pdcp_cfg);
+          e1ap_drb_item.pdcp_cfg->pdcp_reest = true;
+        }
+
         e1ap_mod_item.drb_to_modify_list_ng_ran.emplace(e1ap_drb_item.drb_id, e1ap_drb_item);
       }
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,8 +23,9 @@
 #pragma once
 
 #include "../rrc_ue_context.h"
+#include "../rrc_ue_logger.h"
 #include "rrc_ue_event_manager.h"
-#include "srsran/asn1/rrc_nr/rrc_nr.h"
+#include "srsran/asn1/rrc_nr/dl_dcch_msg_ies.h"
 #include "srsran/rrc/rrc_du.h"
 #include "srsran/rrc/rrc_ue.h"
 #include "srsran/support/async/async_task.h"
@@ -42,7 +43,7 @@ public:
                                       security::security_context                  sec_ctx,
                                       rrc_ue_security_mode_command_proc_notifier& rrc_ue_notifier_,
                                       rrc_ue_event_manager&                       ev_mng_,
-                                      srslog::basic_logger&                       logger_);
+                                      rrc_ue_logger&                              logger_);
 
   void operator()(coro_context<async_task<bool>>& ctx);
 
@@ -64,7 +65,7 @@ private:
 
   rrc_ue_security_mode_command_proc_notifier& rrc_ue;    // handler to the parent RRC UE object
   rrc_ue_event_manager&                       event_mng; // event manager for the RRC UE entity
-  srslog::basic_logger&                       logger;
+  rrc_ue_logger&                              logger;
 
   rrc_transaction               transaction;
   eager_async_task<rrc_outcome> task;

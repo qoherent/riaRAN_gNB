@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -35,11 +35,11 @@ class ldpc_encoder_neon : public ldpc_encoder_impl
 {
 private:
   void select_strategy() override;
-  void load_input(span<const uint8_t> in) override;
+  void load_input(const bit_buffer& in) override;
   void preprocess_systematic_bits() override { (this->*systematic_bits)(); }
   void encode_high_rate() override { (this->*high_rate)(); }
   void encode_ext_region() override { (this->*ext_region)(); }
-  void write_codeblock(span<uint8_t> out) override;
+  void write_codeblock(bit_buffer& out) override;
 
   /// Alias for pointer to private methods.
   using strategy_method = void (ldpc_encoder_neon::*)();
@@ -93,19 +93,19 @@ private:
   void ext_region_inner();
 
   /// Buffer containing the codeblock.
-  std::array<uint8_t, ldpc::MAX_BG_N_FULL* ldpc::MAX_LIFTING_SIZE> codeblock_buffer = {};
+  std::array<uint8_t, ldpc::MAX_BG_N_FULL * ldpc::MAX_LIFTING_SIZE> codeblock_buffer;
   /// Length of the portion of the codeblock buffer actually used for the current configuration (as a number of NEON
   /// registers).
   size_t codeblock_used_size = 0;
 
   /// Auxiliary buffer for storing chunks of codeblocks (corresponds to the four redundancy nodes of the high-rate
   /// region).
-  std::array<uint8_t, bg_hr_parity_nodes* ldpc::MAX_LIFTING_SIZE> auxiliary_buffer = {};
+  std::array<uint8_t, bg_hr_parity_nodes * ldpc::MAX_LIFTING_SIZE> auxiliary_buffer;
   /// Length of the extended region actually used for the current configuration (as a number of NEON registers).
   size_t length_extended = 0;
 
   /// Auxiliary buffer for storing a single node during rotations.
-  std::array<uint8_t, ldpc::MAX_LIFTING_SIZE> rotated_node_buffer = {};
+  std::array<uint8_t, ldpc::MAX_LIFTING_SIZE> rotated_node_buffer;
 
   /// Node size as a number of NEON vectors.
   unsigned node_size_neon = 0;

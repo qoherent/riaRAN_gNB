@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,6 @@
  */
 
 #include "mac_dl_processor.h"
-#include "srsran/ran/pdsch/pdsch_constants.h"
 #include "srsran/support/async/execute_on.h"
 
 using namespace srsran;
@@ -29,7 +28,7 @@ using namespace srsran;
 mac_dl_processor::mac_dl_processor(const mac_dl_config&             mac_cfg,
                                    mac_scheduler_cell_info_handler& sched_,
                                    du_rnti_table&                   rnti_table_) :
-  cfg(mac_cfg), ue_mng(rnti_table_, cfg.rlf_handler), sched(sched_)
+  cfg(mac_cfg), ue_mng(rnti_table_), sched(sched_)
 {
 }
 
@@ -50,6 +49,7 @@ void mac_dl_processor::add_cell(const mac_cell_creation_request& cell_cfg_req)
                                            cfg.phy_notifier.get_cell(cell_cfg_req.cell_index),
                                            cfg.cell_exec_mapper.executor(cell_cfg_req.cell_index),
                                            cfg.cell_exec_mapper.slot_ind_executor(cell_cfg_req.cell_index),
+                                           cfg.cell_exec_mapper.error_ind_executor(cell_cfg_req.cell_index),
                                            cfg.ctrl_exec,
                                            cfg.pcap);
 }
@@ -66,20 +66,16 @@ async_task<bool> mac_dl_processor::add_ue(const mac_ue_create_request& request)
 {
   // > Allocate UE DL HARQ buffers.
   // Note: This is a large allocation, and therefore, should be done outside of the cell thread to avoid causing lates.
-  std::vector<std::vector<uint8_t>> harq_buffers;
-  harq_buffers.resize(MAX_NOF_HARQS);
-  for (auto& h : harq_buffers) {
-    h.resize(MAX_DL_PDU_LENGTH);
-  }
+  mac_dl_ue_context ue_inst(request);
 
-  return launch_async([this, request, harq_buffers = std::move(harq_buffers)](coro_context<async_task<bool>>& ctx) {
+  return launch_async([this, request, ue_inst = std::move(ue_inst)](coro_context<async_task<bool>>& ctx) mutable {
     CORO_BEGIN(ctx);
 
     // > Change to respective DL executor
     CORO_AWAIT(execute_on(cfg.cell_exec_mapper.executor(request.cell_index)));
 
     // > Insert UE and DL bearers
-    ue_mng.add_ue(request, std::move(harq_buffers));
+    ue_mng.add_ue(std::move(ue_inst));
 
     // > Change back to CTRL executor before returning
     CORO_AWAIT(execute_on(cfg.ctrl_exec));

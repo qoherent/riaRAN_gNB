@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -22,6 +22,7 @@
 add_library(srsran_f1ap_cu
         f1ap_cu_impl.cpp
         f1ap_cu_factory.cpp
+        procedures/f1_setup_procedure.cpp
         procedures/ue_context_setup_procedure.cpp
         procedures/ue_context_modification_procedure.cpp
         procedures/ue_context_release_procedure.cpp)

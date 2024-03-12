@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -20,11 +20,13 @@
 
 set(SOURCES
         ru_ofh_config_validator.cpp
+        ru_ofh_controller_impl.cpp
         ru_ofh_downlink_plane_handler_proxy.cpp
+        ru_ofh_error_handler_impl.cpp
         ru_ofh_factory.cpp
         ru_ofh_impl.cpp
-        ru_ofh_controller_impl.cpp
         ru_ofh_rx_symbol_handler_impl.cpp
+        ru_ofh_timing_notifier_impl.cpp
         ru_ofh_uplink_plane_handler_proxy.cpp)
 
 add_library(srsran_ru_ofh STATIC ${SOURCES})

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -65,7 +65,8 @@ public:
 
   size_t nof_ues() override;
 
-  async_task<ric_control_config_response> configure_ue_mac_scheduler(srsran::ric_control_config reconf) override;
+  async_task<du_mac_sched_control_config_response>
+  configure_ue_mac_scheduler(srsran::du_mac_sched_control_config reconf) override;
 
 private:
   // DU manager configuration that will be visible to all running procedures
@@ -81,7 +82,7 @@ private:
   bool       running{false};
 
   // Handler for DU tasks.
-  async_task_sequencer main_ctrl_loop;
+  fifo_async_task_scheduler main_ctrl_loop;
 };
 
 } // namespace srs_du

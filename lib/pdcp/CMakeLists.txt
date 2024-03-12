@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -21,4 +21,4 @@
 set(SOURCES pdcp_factory.cpp pdcp_entity_tx.cpp pdcp_entity_rx.cpp pdcp_pdu.cpp)
 
 add_library(srsran_pdcp STATIC ${SOURCES})
-target_link_libraries(srsran_pdcp srsran_security srsran_support)
+target_link_libraries(srsran_pdcp srsran_security srsran_instrumentation srsran_support)

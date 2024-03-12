@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -221,6 +221,11 @@ bool radio_config_uhd_config_validator::is_configuration_valid(const radio_confi
   }
 
   if (!validate_log_level(config.log_level)) {
+    return false;
+  }
+
+  if (config.discontinuous_tx && (config.power_ramping_us < 0)) {
+    fmt::print("Power ramping time, i.e., {:.1f} us, must be positive or zero.\n", config.power_ramping_us);
     return false;
   }
 

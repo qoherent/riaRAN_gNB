@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -43,7 +43,7 @@ private:
   /// Maximum amplitude allowed by the clipping.
   float ceiling_lin;
   /// Runtime metrics reported by the amplitude controller.
-  amplitude_controller_metrics metrics = {};
+  amplitude_controller_metrics metrics = {0.0F, 0.0F, 0.0F, 0.0F, 0UL, 0UL, 0.0, false};
 
 public:
   /// \brief Constructs an amplitude controller.

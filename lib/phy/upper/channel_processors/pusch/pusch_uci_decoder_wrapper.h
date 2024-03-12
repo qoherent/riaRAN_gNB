@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,7 @@
 #pragma once
 #include "pusch_uci_decoder_notifier.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_decoder_buffer.h"
-#include "srsran/phy/upper/channel_processors/uci_decoder.h"
+#include "srsran/phy/upper/channel_processors/uci/uci_decoder.h"
 #include "srsran/ran/uci/uci_constants.h"
 #include "srsran/srsvec/copy.h"
 

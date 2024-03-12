@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,7 +26,7 @@
 #include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/mac/mac_cell_result.h"
 #include "srsran/mac/mac_pdu_handler.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/mac_pcap.h"
 #include "srsran/scheduler/config/scheduler_expert_config.h"
 #include "srsran/scheduler/scheduler_metrics.h"
 
@@ -34,10 +34,16 @@ namespace srsran {
 
 /// \brief Implementation-specific parameters used to tune MAC operation.
 struct mac_expert_config {
-  /// \brief Maximum number of consecutive DL KOs before an RLF is reported.
-  unsigned max_consecutive_dl_kos = 10000;
-  /// \brief Maximum number of consecutive DL KOs before an RLF is reported.
-  unsigned max_consecutive_ul_kos = 10000;
+  /// \brief Implementation-specific parameters used to tune MAC operation per cell.
+  struct mac_expert_cell_config {
+    /// \brief Maximum number of consecutive DL KOs before an RLF is reported.
+    unsigned max_consecutive_dl_kos = 100;
+    /// \brief Maximum number of consecutive UL KOs before an RLF is reported.
+    unsigned max_consecutive_ul_kos = 100;
+    /// \brief Maximum number of consecutive non-decoded CSI before an RLF is reported.
+    unsigned max_consecutive_csi_dtx = 100;
+  };
+  std::vector<mac_expert_cell_config> configs;
 };
 
 /// \brief Configuration passed to MAC during its instantiation.

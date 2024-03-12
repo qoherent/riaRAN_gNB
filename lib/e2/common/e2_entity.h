@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "procedures/e2_setup_procedure.h"
 #include "procedures/e2_subscription_setup_procedure.h"
 #include "srsran/asn1/e2ap/e2ap.h"
+#include "srsran/du_manager/du_configurator.h"
 #include "srsran/e2/e2.h"
 #include "srsran/e2/e2_connection_client.h"
 #include "srsran/e2/e2ap_configuration.h"
@@ -33,7 +34,7 @@
 #include "srsran/e2/e2sm/e2sm_manager.h"
 #include "srsran/f1ap/du/f1ap_du.h"
 #include "srsran/ran/nr_cgi.h"
-#include "srsran/support/async/async_task_loop.h"
+#include "srsran/support/async/fifo_async_task_scheduler.h"
 #include <map>
 #include <memory>
 
@@ -49,7 +50,7 @@ public:
             e2_connection_client*          e2_client_,
             e2_du_metrics_interface&       e2_du_metrics_,
             srs_du::f1ap_ue_id_translator& f1ap_ue_id_translator_,
-            e2sm_param_configurator&       e2_param_config_,
+            du_configurator&               du_configurator_,
             timer_factory                  timers_,
             task_executor&                 task_exec_);
 
@@ -71,14 +72,13 @@ private:
   e2ap_configuration&   cfg;
 
   // Handler for E2AP tasks.
-  task_executor&       task_exec;
-  async_task_sequencer main_ctrl_loop;
+  task_executor&            task_exec;
+  fifo_async_task_scheduler main_ctrl_loop;
 
   std::unique_ptr<e2_message_notifier>       e2_pdu_notifier    = nullptr;
   std::unique_ptr<e2sm_manager>              e2sm_mngr          = nullptr;
   std::unique_ptr<e2_subscription_manager>   subscription_mngr  = nullptr;
   std::unique_ptr<e2_interface>              decorated_e2_iface = nullptr;
-  std::unique_ptr<e2sm_param_provider>       rc_provider        = nullptr;
   std::vector<std::unique_ptr<e2sm_handler>> e2sm_handlers;
 };
 

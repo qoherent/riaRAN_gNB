@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,15 +44,9 @@ message_transmitter_impl::message_transmitter_impl(srslog::basic_logger&        
   srsran_assert(pool_ptr, "Invalid frame pool");
 }
 
-void message_transmitter_impl::transmit_enqueued_messages(slot_symbol_point symbol_point,
-                                                          message_type      type,
-                                                          data_direction    direction)
+void message_transmitter_impl::transmit_enqueued_messages(const ether::frame_pool_interval& interval)
 {
-  slot_point slot         = symbol_point.get_slot();
-  unsigned   symbol_index = symbol_point.get_symbol_index();
-
-  const ether::frame_pool_context context{slot, symbol_index, type, direction};
-  auto                            frame_buffers = pool.read_frame_buffers(context);
+  auto frame_buffers = pool.read_frame_buffers(interval);
   if (frame_buffers.empty()) {
     return;
   }
@@ -63,57 +57,35 @@ void message_transmitter_impl::transmit_enqueued_messages(slot_symbol_point symb
   }
 
   gateway->send(frames);
-  logger.debug("Sending Ethernet frame burst through gateway of size={} frames, in slot={}, symbol={}, type={}",
-               frames.size(),
-               slot,
-               symbol_index,
-               (type == message_type::control_plane) ? "control" : "user");
+  logger.debug(
+      "Sending an Ethernet frame burst of size '{}' frames through gateway in interval '{}_{}':{}_{} and type '{}'",
+      frames.size(),
+      interval.start.get_slot(),
+      interval.start.get_symbol_index(),
+      interval.end.get_slot(),
+      interval.end.get_symbol_index(),
+      (interval.type.type == message_type::control_plane) ? "control" : "user");
 
-  pool.eth_frames_sent(context);
+  pool.clear_sent_frame_buffers(interval);
 }
 
-void message_transmitter_impl::handle_new_ota_symbol(slot_symbol_point symbol_point)
+void message_transmitter_impl::on_new_symbol(slot_symbol_point symbol_point)
 {
   // Transmit pending DL Control-Plane messages.
-  transmit_enqueued_messages(
-      symbol_point + timing_params.sym_cp_dl_start, message_type::control_plane, data_direction::downlink);
+  ether::frame_pool_interval interval{{message_type::control_plane, data_direction::downlink},
+                                      symbol_point + timing_params.sym_cp_dl_end,
+                                      symbol_point + timing_params.sym_cp_dl_start};
+  transmit_enqueued_messages(interval);
 
   // Transmit pending UL Control-Plane messages.
-  transmit_enqueued_messages(
-      symbol_point + timing_params.sym_cp_ul_start, message_type::control_plane, data_direction::uplink);
+  interval.type  = {message_type::control_plane, data_direction::uplink};
+  interval.start = symbol_point + timing_params.sym_cp_ul_end;
+  interval.end   = symbol_point + timing_params.sym_cp_ul_start;
+  transmit_enqueued_messages(interval);
 
   // Transmit pending User-Plane messages.
-  transmit_enqueued_messages(
-      symbol_point + timing_params.sym_up_dl_start, message_type::user_plane, data_direction::downlink);
-
-  // Log the late messages when the transmission window closes.
-  log_late_messages_on_tx_window_close(symbol_point);
-}
-
-void message_transmitter_impl::log_late_messages_on_tx_window_close(slot_symbol_point symbol_point)
-{
-  log_late_messages(symbol_point + timing_params.sym_cp_dl_end, message_type::control_plane, data_direction::downlink);
-  log_late_messages(symbol_point + timing_params.sym_cp_ul_end, message_type::control_plane, data_direction::uplink);
-  log_late_messages(symbol_point + timing_params.sym_up_dl_end, message_type::user_plane, data_direction::downlink);
-}
-
-void message_transmitter_impl::log_late_messages(slot_symbol_point late_point,
-                                                 message_type      type,
-                                                 data_direction    direction)
-{
-  slot_point slot         = late_point.get_slot();
-  unsigned   symbol_index = late_point.get_symbol_index();
-
-  const ether::frame_pool_context context{slot, symbol_index, type, direction};
-  auto                            frame_buffers = pool.read_frame_buffers(context);
-
-  if (!frame_buffers.empty()) {
-    logger.warning("Late Ethernet frames detected in the transmitter queue in slot={}, symbol={}, type={}, "
-                   "direction={}, nof_frames={}",
-                   slot,
-                   symbol_index,
-                   (type == message_type::control_plane) ? "control" : "user",
-                   (direction == data_direction::downlink) ? "downlink" : "uplink",
-                   frame_buffers.size());
-  }
+  interval.type  = {message_type::user_plane, data_direction::downlink};
+  interval.start = symbol_point + timing_params.sym_up_dl_end;
+  interval.end   = symbol_point + timing_params.sym_up_dl_start;
+  transmit_enqueued_messages(interval);
 }

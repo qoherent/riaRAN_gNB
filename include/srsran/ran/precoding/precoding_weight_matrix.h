@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "srsran/ran/precoding/precoding_constants.h"
 #include "srsran/srsvec/copy.h"
 #include "srsran/srsvec/sc_prod.h"
+#include "srsran/srsvec/zero.h"
 
 namespace srsran {
 
@@ -40,6 +41,9 @@ public:
   precoding_weight_matrix() = default;
 
   /// \brief Constructs a weight matrix with the desired number of layers and ports.
+  ///
+  /// The coefficients are set to zero.
+  ///
   /// \param[in] nof_layers Number of layers.
   /// \param[in] nof_ports  Number of ports.
   /// \remark An assertion is triggered if the number of layers exceeds \ref precoding_constants::MAX_NOF_LAYERS.
@@ -54,6 +58,24 @@ public:
                   "The number of ports (i.e., {}) exceeds the maximum (i.e., {}).",
                   nof_ports,
                   precoding_constants::MAX_NOF_PORTS);
+
+    // Zero all data.
+    srsvec::zero(data.get_data());
+  }
+
+  /// \brief Constructs a precoding weight matrix with the desired number of layers and ports.
+  ///
+  /// Creates a precoding weight matrix with the specified dimensions, and sets its contents to the provided weight
+  /// values.
+  ///
+  /// \param[in] weights Precoding weight list, arranged by i) layer and ii) antenna port.
+  /// \param[in] nof_layers Number of layers.
+  /// \param[in] nof_ports  Number of ports.
+  /// \remark An assertion is triggered if the number of layers exceeds \ref precoding_constants::MAX_NOF_LAYERS.
+  /// \remark An assertion is triggered if the number of ports exceeds \ref precoding_constants::MAX_NOF_PORTS.
+  precoding_weight_matrix(const std::initializer_list<cf_t>& weights, unsigned nof_layers, unsigned nof_ports) :
+    precoding_weight_matrix(span<const cf_t>(weights.begin(), weights.end()), nof_layers, nof_ports)
+  {
   }
 
   /// \brief Constructs a weight matrix with the desired number of layers and ports.

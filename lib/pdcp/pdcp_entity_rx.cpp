@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,8 @@
  */
 
 #include "pdcp_entity_rx.h"
+#include "../support/sdu_window_impl.h"
+#include "srsran/instrumentation/traces/up_traces.h"
 #include "srsran/security/ciphering.h"
 #include "srsran/security/integrity.h"
 #include "srsran/support/bit_encoding.h"
@@ -38,6 +40,7 @@ pdcp_entity_rx::pdcp_entity_rx(uint32_t                        ue_index,
   cfg(cfg_),
   direction(cfg.direction == pdcp_security_direction::uplink ? security::security_direction::uplink
                                                              : security::security_direction::downlink),
+  rx_window(create_rx_window(cfg.sn_size)),
   upper_dn(upper_dn_),
   upper_cn(upper_cn_),
   timers(timers_)
@@ -56,25 +59,28 @@ pdcp_entity_rx::pdcp_entity_rx(uint32_t                        ue_index,
   logger.log_info("PDCP configured. {}", cfg);
 }
 
-void pdcp_entity_rx::handle_pdu(byte_buffer_chain pdu)
+void pdcp_entity_rx::handle_pdu(byte_buffer_chain buf)
 {
-  metrics_add_pdus(1, pdu.length());
+  trace_point rx_tp = up_tracer.now();
+  metrics_add_pdus(1, buf.length());
 
   // Log PDU
-  logger.log_debug(pdu.begin(), pdu.end(), "RX PDU. pdu_len={}", pdu.length());
+  logger.log_debug(buf.begin(), buf.end(), "RX PDU. pdu_len={}", buf.length());
   // Sanity check
-  if (pdu.length() == 0) {
+  if (buf.length() == 0) {
     metrics_add_dropped_pdus(1);
     logger.log_error("Dropping empty PDU.");
     return;
   }
 
-  pdcp_dc_field dc = pdcp_pdu_get_dc(*(pdu.begin()));
+  byte_buffer   pdu = buf.deep_copy();
+  pdcp_dc_field dc  = pdcp_pdu_get_dc(*(pdu.begin()));
   if (is_srb() || dc == pdcp_dc_field::data) {
     handle_data_pdu(std::move(pdu));
   } else {
-    handle_control_pdu(std::move(pdu));
+    handle_control_pdu(std::move(buf));
   }
+  up_tracer << trace_event{"pdcp_rx_pdu", rx_tp};
 }
 
 void pdcp_entity_rx::reestablish(security::sec_128_as_config sec_cfg_)
@@ -123,7 +129,7 @@ void pdcp_entity_rx::reestablish(security::sec_128_as_config sec_cfg_)
   configure_security(sec_cfg_);
 }
 
-void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
+void pdcp_entity_rx::handle_data_pdu(byte_buffer pdu)
 {
   // Sanity check
   if (pdu.length() <= hdr_len_bytes) {
@@ -154,7 +160,8 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
    *   - RCVD_HFN = HFN(RX_DELIV);
    * - RCVD_COUNT = [RCVD_HFN, RCVD_SN].
    */
-  uint32_t rcvd_hfn, rcvd_count;
+  uint32_t rcvd_hfn;
+  uint32_t rcvd_count;
   if ((int64_t)hdr.sn < (int64_t)SN(st.rx_deliv) - (int64_t)window_size) {
     rcvd_hfn = HFN(st.rx_deliv) + 1;
   } else if (hdr.sn >= SN(st.rx_deliv) + window_size) {
@@ -171,14 +178,14 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
   // see TS 38.331, section 5.3.1.2. To avoid this, we notify the RRC once we exceed a "maximum"
   // notification COUNT. It is then the RRC's responsibility to refresh the keys. We continue receiving until
   // we reach a hard maximum RCVD_COUNT, after which we refuse to receive any further.
-  if (rcvd_count > cfg.max_count.notify) {
+  if (rcvd_count > cfg.custom.max_count.notify) {
     if (!max_count_notified) {
       logger.log_warning("Approaching max_count, notifying RRC. count={}", rcvd_count);
       upper_cn.on_max_count_reached();
       max_count_notified = true;
     }
   }
-  if (rcvd_count >= cfg.max_count.hard) {
+  if (rcvd_count >= cfg.custom.max_count.hard) {
     if (!max_count_overflow) {
       logger.log_error("Reached max_count, refusing further RX. count={}", rcvd_count);
       upper_cn.on_protocol_failure();
@@ -194,14 +201,10 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
    * data part of the PDCP Data PDU except the
    * SDAP header and the SDAP Control PDU if included in the PDCP SDU.
    */
-  byte_buffer sdu;
-  if (ciphering_enabled == security::ciphering_enabled::on) {
-    sdu = cipher_decrypt(pdu.begin() + hdr_len_bytes, pdu.end(), rcvd_count);
-    std::array<uint8_t, pdcp_data_pdu_header_size_max> header_buf;
-    std::copy(pdu.begin(), pdu.begin() + hdr_len_bytes, header_buf.begin());
-    sdu.prepend(span<uint8_t>{header_buf.data(), hdr_len_bytes});
-  } else {
-    sdu = pdu.deep_copy();
+  byte_buffer_view sdu_plus_mac = byte_buffer_view{pdu.begin() + hdr_len_bytes, pdu.end()};
+  if (ciphering_enabled == security::ciphering_enabled::on &&
+      sec_cfg.cipher_algo != security::ciphering_algorithm::nea0) {
+    cipher_decrypt(sdu_plus_mac, rcvd_count);
   }
 
   /*
@@ -210,7 +213,7 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
    */
   security::sec_mac mac = {};
   if (is_srb() || (is_drb() && (integrity_enabled == security::integrity_enabled::on))) {
-    extract_mac(sdu, mac);
+    extract_mac(pdu, mac);
   }
 
   /*
@@ -220,19 +223,19 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
    * and the data part of the PDU before ciphering.
    */
   if (integrity_enabled == security::integrity_enabled::on) {
-    bool is_valid = integrity_verify(sdu, rcvd_count, mac);
+    bool is_valid = integrity_verify(pdu, rcvd_count, mac);
     if (!is_valid) {
-      logger.log_warning(sdu.begin(), sdu.end(), "Integrity failed, dropping PDU.");
+      logger.log_warning(pdu.begin(), pdu.end(), "Integrity failed, dropping PDU.");
       metrics_add_integrity_failed_pdus(1);
       // TODO: Re-enable once the RRC supports notifications from the PDCP
       // upper_cn.on_integrity_failure();
       return; // Invalid packet, drop.
     }
     metrics_add_integrity_verified_pdus(1);
-    logger.log_debug(sdu.begin(), sdu.end(), "Integrity passed.");
+    logger.log_debug(pdu.begin(), pdu.end(), "Integrity passed.");
   }
   // After checking the integrity, we can discard the header.
-  discard_data_header(sdu);
+  discard_data_header(pdu);
 
   /*
    * Check valid rcvd_count:
@@ -247,13 +250,21 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
   }
 
   // Check if PDU has been received
-  if (reorder_queue.find(rcvd_count) != reorder_queue.end()) {
-    logger.log_debug("Duplicate PDU dropped. count={}", rcvd_count);
-    return; // PDU already present, drop.
+  if (rx_window->has_sn(rcvd_count)) {
+    const pdcp_rx_sdu_info& sdu_info = (*rx_window)[rcvd_count];
+    if (sdu_info.count == rcvd_count) {
+      logger.log_debug("Duplicate PDU dropped. count={}", rcvd_count);
+      return; // PDU already present, drop.
+    } else {
+      logger.log_error("Removing old PDU with count={} for new PDU with count={}", sdu_info.count, rcvd_count);
+      rx_window->remove_sn(rcvd_count);
+    }
   }
 
-  // Store PDU in reception buffer
-  reorder_queue[rcvd_count] = std::move(sdu);
+  // Store PDU in Rx window
+  pdcp_rx_sdu_info& sdu_info = rx_window->add_sn(rcvd_count);
+  sdu_info.sdu               = std::move(pdu);
+  sdu_info.count             = rcvd_count;
 
   // Update RX_NEXT
   if (rcvd_count >= st.rx_next) {
@@ -279,10 +290,11 @@ void pdcp_entity_rx::handle_data_pdu(byte_buffer_chain pdu)
   }
 
   if (cfg.t_reordering != pdcp_t_reordering::infinity) {
-    st.rx_reord = st.rx_next;
     if (cfg.t_reordering == pdcp_t_reordering::ms0) {
+      st.rx_reord = st.rx_next;
       handle_t_reordering_expire();
     } else if (not reordering_timer.is_running() and st.rx_deliv < st.rx_next) {
+      st.rx_reord = st.rx_next;
       reordering_timer.run();
       logger.log_debug("Started t-Reordering.");
     }
@@ -317,14 +329,14 @@ void pdcp_entity_rx::handle_control_pdu(byte_buffer_chain pdu)
 // Update RX_DELIV after submitting to higher layers
 void pdcp_entity_rx::deliver_all_consecutive_counts()
 {
-  for (std::map<uint32_t, byte_buffer>::iterator it = reorder_queue.begin();
-       it != reorder_queue.end() && it->first == st.rx_deliv;
-       reorder_queue.erase(it++)) {
-    logger.log_info("RX SDU. count={}", it->first);
+  while (st.rx_deliv != st.rx_next && rx_window->has_sn(st.rx_deliv)) {
+    pdcp_rx_sdu_info& sdu_info = (*rx_window)[st.rx_deliv];
+    logger.log_info("RX SDU. count={}", st.rx_deliv);
 
     // Pass PDCP SDU to the upper layers
-    metrics_add_sdus(1, it->second.length());
-    upper_dn.on_new_sdu(std::move(it->second));
+    metrics_add_sdus(1, sdu_info.sdu.length());
+    upper_dn.on_new_sdu(std::move(sdu_info.sdu));
+    rx_window->remove_sn(st.rx_deliv);
 
     // Update RX_DELIV
     st.rx_deliv = st.rx_deliv + 1;
@@ -336,22 +348,30 @@ void pdcp_entity_rx::deliver_all_consecutive_counts()
 // for updating the state.
 void pdcp_entity_rx::deliver_all_sdus()
 {
-  for (std::map<uint32_t, byte_buffer>::iterator it = reorder_queue.begin(); it != reorder_queue.end();
-       reorder_queue.erase(it++)) {
-    logger.log_info("RX SDU. count={}", it->first);
+  for (uint32_t count = st.rx_deliv; count < st.rx_next; count++) {
+    if (rx_window->has_sn(count)) {
+      pdcp_rx_sdu_info& sdu_info = (*rx_window)[count];
+      logger.log_info("RX SDU. count={}", count);
 
-    // Pass PDCP SDU to the upper layers
-    metrics_add_sdus(1, it->second.length());
-    upper_dn.on_new_sdu(std::move(it->second));
+      // Pass PDCP SDU to the upper layers
+      metrics_add_sdus(1, sdu_info.sdu.length());
+      upper_dn.on_new_sdu(std::move(sdu_info.sdu));
+      rx_window->remove_sn(count);
+    }
   }
 }
 
 // Discard all SDUs.
 void pdcp_entity_rx::discard_all_sdus()
 {
-  for (std::map<uint32_t, byte_buffer>::iterator it = reorder_queue.begin(); it != reorder_queue.end();
-       reorder_queue.erase(it++)) {
-    logger.log_debug("Discarded RX SDU. count={}", it->first);
+  while (st.rx_deliv != st.rx_next) {
+    if (rx_window->has_sn(st.rx_deliv)) {
+      rx_window->remove_sn(st.rx_deliv);
+      logger.log_debug("Discarded RX SDU. count={}", st.rx_next);
+    }
+
+    // Update RX_DELIV
+    st.rx_deliv = st.rx_deliv + 1;
   }
 }
 
@@ -380,11 +400,31 @@ byte_buffer pdcp_entity_rx::compile_status_report()
   for (uint32_t i = bitmap_begin; i < bitmap_end; i++) {
     // Bit == 0: PDCP SDU with COUNT = (FMC + bit position) modulo 2^32 is missing.
     // Bit == 1: PDCP SDU with COUNT = (FMC + bit position) modulo 2^32 is correctly received.
-    unsigned bit = reorder_queue.find(i) != reorder_queue.end() ? 0 : 1;
+    unsigned bit = rx_window->has_sn(i) ? 1 : 0;
     enc.pack(bit, 1);
   }
 
   return buf;
+}
+
+std::unique_ptr<sdu_window<pdcp_rx_sdu_info>> pdcp_entity_rx::create_rx_window(pdcp_sn_size sn_size_)
+{
+  std::unique_ptr<sdu_window<pdcp_rx_sdu_info>> rx_window_;
+  switch (sn_size_) {
+    case pdcp_sn_size::size12bits:
+      rx_window_ = std::make_unique<sdu_window_impl<pdcp_rx_sdu_info,
+                                                    pdcp_window_size(pdcp_sn_size_to_uint(pdcp_sn_size::size12bits)),
+                                                    pdcp_bearer_logger>>(logger);
+      break;
+    case pdcp_sn_size::size18bits:
+      rx_window_ = std::make_unique<sdu_window_impl<pdcp_rx_sdu_info,
+                                                    pdcp_window_size(pdcp_sn_size_to_uint(pdcp_sn_size::size18bits)),
+                                                    pdcp_bearer_logger>>(logger);
+      break;
+    default:
+      srsran_assertion_failure("Cannot create rx_window for unsupported sn_size={}.", pdcp_sn_size_to_uint(sn_size_));
+  }
+  return rx_window_;
 }
 
 /*
@@ -400,13 +440,13 @@ bool pdcp_entity_rx::integrity_verify(byte_buffer_view buf, uint32_t count, cons
     case security::integrity_algorithm::nia0:
       break;
     case security::integrity_algorithm::nia1:
-      security_nia1(mac_exp, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf.begin(), buf.end());
+      security_nia1(mac_exp, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf);
       break;
     case security::integrity_algorithm::nia2:
-      security_nia2(mac_exp, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf.begin(), buf.end());
+      security_nia2(mac_exp, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf);
       break;
     case security::integrity_algorithm::nia3:
-      security_nia3(mac_exp, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf.begin(), buf.end());
+      security_nia3(mac_exp, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf);
       break;
     default:
       break;
@@ -438,33 +478,28 @@ bool pdcp_entity_rx::integrity_verify(byte_buffer_view buf, uint32_t count, cons
   return is_valid;
 }
 
-byte_buffer pdcp_entity_rx::cipher_decrypt(byte_buffer_chain::const_iterator msg_begin,
-                                           byte_buffer_chain::const_iterator msg_end,
-                                           uint32_t                          count)
+byte_buffer pdcp_entity_rx::cipher_decrypt(byte_buffer_view& msg, uint32_t count)
 {
   logger.log_debug("Cipher decrypt. count={} bearer_id={} dir={}", count, bearer_id, direction);
   logger.log_debug((uint8_t*)sec_cfg.k_128_enc.data(), sec_cfg.k_128_enc.size(), "Cipher decrypt key.");
-  logger.log_debug(msg_begin, msg_end, "Cipher decrypt input msg.");
+  logger.log_debug(msg.begin(), msg.end(), "Cipher decrypt input msg.");
 
   byte_buffer ct;
 
   switch (sec_cfg.cipher_algo) {
-    case security::ciphering_algorithm::nea0:
-      ct.append(msg_begin, msg_end);
-      break;
     case security::ciphering_algorithm::nea1:
-      ct = security_nea1(sec_cfg.k_128_enc, count, bearer_id, direction, msg_begin, msg_end);
+      security_nea1(sec_cfg.k_128_enc, count, bearer_id, direction, msg);
       break;
     case security::ciphering_algorithm::nea2:
-      ct = security_nea2(sec_cfg.k_128_enc, count, bearer_id, direction, msg_begin, msg_end);
+      security_nea2(sec_cfg.k_128_enc, count, bearer_id, direction, msg);
       break;
     case security::ciphering_algorithm::nea3:
-      ct = security_nea3(sec_cfg.k_128_enc, count, bearer_id, direction, msg_begin, msg_end);
+      security_nea3(sec_cfg.k_128_enc, count, bearer_id, direction, msg);
       break;
     default:
       break;
   }
-  logger.log_debug(ct.begin(), ct.end(), "Cipher decrypt output msg.");
+  logger.log_debug(msg.begin(), msg.end(), "Cipher decrypt output msg.");
   return ct;
 }
 
@@ -475,15 +510,20 @@ void pdcp_entity_rx::handle_t_reordering_expire()
 {
   metrics_add_t_reordering_timeouts(1);
   // Deliver all PDCP SDU(s) with associated COUNT value(s) < RX_REORD
-  for (std::map<uint32_t, byte_buffer>::iterator it = reorder_queue.begin();
-       it != reorder_queue.end() && it->first < st.rx_reord;
-       reorder_queue.erase(it++)) {
-    // Deliver PDCP SDU to the upper layers
-    upper_dn.on_new_sdu(std::move(it->second));
-  }
+  while (st.rx_deliv != st.rx_reord) {
+    if (rx_window->has_sn(st.rx_deliv)) {
+      pdcp_rx_sdu_info& sdu_info = (*rx_window)[st.rx_deliv];
+      logger.log_info("RX SDU. count={}", st.rx_deliv);
 
-  // Update RX_DELIV to the first PDCP SDU not delivered to the upper layers
-  st.rx_deliv = st.rx_reord;
+      // Pass PDCP SDU to the upper layers
+      metrics_add_sdus(1, sdu_info.sdu.length());
+      upper_dn.on_new_sdu(std::move(sdu_info.sdu));
+      rx_window->remove_sn(st.rx_deliv);
+    }
+
+    // Update RX_DELIV
+    st.rx_deliv = st.rx_deliv + 1;
+  }
 
   // Deliver all PDCP SDU(s) consecutively associated COUNT value(s) starting from RX_REORD
   deliver_all_consecutive_counts();
@@ -505,15 +545,14 @@ void pdcp_entity_rx::handle_t_reordering_expire()
 // Reordering Timer Callback (t-reordering)
 void pdcp_entity_rx::reordering_callback::operator()(timer_id_t /*timer_id*/)
 {
-  parent->logger.log_info(
-      "Reordering timer expired. rx_reord={} queued_sdus={}", parent->st.rx_reord, parent->reorder_queue.size());
+  parent->logger.log_info("Reordering timer expired. {}", parent->st);
   parent->handle_t_reordering_expire();
 }
 
 /*
  * Header helpers
  */
-bool pdcp_entity_rx::read_data_pdu_header(pdcp_data_pdu_header& hdr, const byte_buffer_chain& buf) const
+bool pdcp_entity_rx::read_data_pdu_header(pdcp_data_pdu_header& hdr, const byte_buffer& buf) const
 {
   // Check PDU is long enough to extract header
   if (buf.length() <= hdr_len_bytes) {
@@ -521,7 +560,7 @@ bool pdcp_entity_rx::read_data_pdu_header(pdcp_data_pdu_header& hdr, const byte_
     return false;
   }
 
-  byte_buffer_chain::const_iterator buf_it = buf.begin();
+  byte_buffer::const_iterator buf_it = buf.begin();
 
   // Extract RCVD_SN
   switch (cfg.sn_size) {

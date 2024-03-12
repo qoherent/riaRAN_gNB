@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,11 +25,10 @@
 #include "du_high_worker_manager.h"
 #include "tests/test_doubles/f1u/dummy_f1u_du_gateway.h"
 #include "tests/test_doubles/mac/dummy_mac_result_notifier.h"
-#include "tests/test_doubles/mac/mac_pcap_dummy.h"
 #include "tests/test_doubles/mac/mac_test_messages.h"
 #include "srsran/du_high/du_high.h"
 #include "srsran/du_high/du_high_configuration.h"
-#include "srsran/f1ap/common/f1ap_types.h"
+#include "srsran/f1ap/common/f1ap_ue_id.h"
 
 namespace srsran {
 namespace srs_du {
@@ -69,7 +68,8 @@ public:
   dummy_f1c_test_client   cu_notifier;
   srs_du::cu_up_simulator cu_up_sim;
   phy_test_dummy          phy;
-  mac_pcap_dummy          pcap;
+  null_mac_pcap           mac_pcap;
+  null_rlc_pcap           rlc_pcap;
   timer_manager           timers;
 
   du_high_configuration    du_high_cfg;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,31 +21,68 @@
  */
 
 #include "ofh_downlink_handler_broadcast_impl.h"
+#include "helpers.h"
+#include "srsran/ofh/ofh_error_notifier.h"
 #include "srsran/phy/support/resource_grid_context.h"
 #include "srsran/phy/support/resource_grid_reader.h"
 
 using namespace srsran;
 using namespace ofh;
 
+namespace {
+
+/// Open Fronthaul error notifier dummy implementation.
+class error_notifier_dummy : public error_notifier
+{
+public:
+  void on_late_downlink_message(const error_context& context) override {}
+};
+
+} // namespace
+
+/// Dummy error notifier for the downlink handler construction.
+static error_notifier_dummy dummy_err_notifier;
+
 downlink_handler_broadcast_impl::downlink_handler_broadcast_impl(
-    cyclic_prefix                                         cp_,
-    const optional<tdd_ul_dl_config_common>&              tdd_config_,
-    span<const unsigned>                                  eaxc_data_,
-    std::unique_ptr<data_flow_cplane_scheduling_commands> data_flow_cplane_,
-    std::unique_ptr<data_flow_uplane_downlink_data>       data_flow_uplane_) :
-  cp(cp_),
-  tdd_config(tdd_config_),
-  dl_eaxc(eaxc_data_.begin(), eaxc_data_.end()),
-  data_flow_cplane(std::move(data_flow_cplane_)),
-  data_flow_uplane(std::move(data_flow_uplane_))
+    const downlink_handler_broadcast_impl_config&  config,
+    downlink_handler_broadcast_impl_dependencies&& dependencies) :
+  sector_id(config.sector),
+  logger(*dependencies.logger),
+  cp(config.cp),
+  tdd_config(config.tdd_config),
+  dl_eaxc(config.dl_eaxc.begin(), config.dl_eaxc.end()),
+  data_flow_cplane(std::move(dependencies.data_flow_cplane)),
+  data_flow_uplane(std::move(dependencies.data_flow_uplane)),
+  window_checker(
+      *dependencies.logger,
+      calculate_nof_symbols_before_ota(config.cp, config.scs, config.dl_processing_time, config.tx_timing_params),
+      get_nsymb_per_slot(config.cp),
+      to_numerology_value(config.scs)),
+  frame_pool_ptr(dependencies.frame_pool_ptr),
+  frame_pool(*frame_pool_ptr),
+  err_notifier(dummy_err_notifier)
 {
   srsran_assert(data_flow_cplane, "Invalid Control-Plane data flow");
-  srsran_assert(data_flow_uplane, "Invalid Use-Plane data flow");
+  srsran_assert(data_flow_uplane, "Invalid User-Plane data flow");
+  srsran_assert(frame_pool_ptr, "Invalid frame pool");
 }
 
 void downlink_handler_broadcast_impl::handle_dl_data(const resource_grid_context& context,
                                                      const resource_grid_reader&  grid)
 {
+  // Clear any stale buffers associated with the context slot.
+  frame_pool.clear_downlink_slot(context.slot, logger);
+
+  if (window_checker.is_late(context.slot)) {
+    err_notifier.get().on_late_downlink_message({context.slot, sector_id});
+    logger.warning(
+        "Dropped late downlink resource grid in slot '{}' and sector#{}. No OFH data will be transmitted for this slot",
+        context.slot,
+        context.sector);
+
+    return;
+  }
+
   data_flow_cplane_type_1_context cplane_context;
   cplane_context.slot         = context.slot;
   cplane_context.filter_type  = filter_index_type::standard_channel_filter;

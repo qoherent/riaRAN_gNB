@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/ran/pucch/pucch_mapping.h"
 #include "srsran/support/error_handling.h"
 #include <cstdint>
 
@@ -150,7 +151,8 @@ struct scheduling_request_resource_config {
   sr_periodicity period;
   unsigned       offset;
   /// \c resource, which identifies the PUCCH resource to be used for this SR.
-  unsigned pucch_res_id;
+  /// Refer to \ref pucch_res_id_t.
+  pucch_res_id_t pucch_res_id = {0, 0};
 };
 
 } // namespace srsran

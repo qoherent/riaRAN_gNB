@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,7 +37,7 @@ public:
   virtual ue_context* add_ue(const ue_context_cfg& ue_cfg) = 0;
   virtual void        remove_ue(ue_index_t ue_index)       = 0;
   virtual ue_context* find_ue(ue_index_t ue_index)         = 0;
-  virtual size_t      get_nof_ues()                        = 0;
+  virtual size_t      get_nof_ues() const                  = 0;
 };
 
 } // namespace srs_cu_up

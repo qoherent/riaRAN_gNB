@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,27 +22,32 @@
 
 #pragma once
 
+#include "dpdk_ethernet_port_context.h"
 #include "srsran/ofh/ethernet/ethernet_gateway.h"
 #include "srsran/srslog/logger.h"
 
-struct rte_mempool;
-
 namespace srsran {
 namespace ether {
+
+struct gw_config;
 
 /// DPDK Ethernet transmitter implementation.
 class dpdk_transmitter_impl : public gateway
 {
 public:
-  explicit dpdk_transmitter_impl(srslog::basic_logger& logger_);
+  dpdk_transmitter_impl(std::shared_ptr<dpdk_port_context> port_ctx_ptr_, srslog::basic_logger& logger_) :
+    logger(logger_), port_ctx_ptr(std::move(port_ctx_ptr_)), port_ctx(*port_ctx_ptr)
+  {
+    srsran_assert(port_ctx_ptr, "Invalid port context");
+  }
 
   // See interface for documentation.
   void send(span<span<const uint8_t>> frames) override;
 
 private:
-  srslog::basic_logger& logger;
-  const unsigned        port_id   = 0;
-  ::rte_mempool*        mbuf_pool = nullptr;
+  srslog::basic_logger&              logger;
+  std::shared_ptr<dpdk_port_context> port_ctx_ptr;
+  dpdk_port_context&                 port_ctx;
 };
 
 } // namespace ether

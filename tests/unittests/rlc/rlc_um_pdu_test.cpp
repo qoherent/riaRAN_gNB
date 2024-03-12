@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -30,9 +30,16 @@ template <std::size_t N>
 byte_buffer make_pdu_and_log(const std::array<uint8_t, N>& tv)
 {
   byte_buffer pdu;
-  pdu.append(tv);
+  report_error_if_not(pdu.append(tv), "Failed to append to byte_buffer");
   // write_pdu_to_pcap(4, tv.data(), tv.size()); TODO
   return pdu;
+}
+
+size_t copy_pdu_and_log(span<uint8_t> out_pdu, const span<uint8_t> in_pdu)
+{
+  TESTASSERT(in_pdu.size() <= out_pdu.size());
+  std::copy(in_pdu.begin(), in_pdu.end(), out_pdu.begin());
+  return in_pdu.size();
 }
 
 // Test RLC UM PDU with 6 Bit SN carrying the full SDU
@@ -53,8 +60,9 @@ void test_rlc_um_6bit_complete_sdu()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -82,8 +90,9 @@ void test_rlc_um_6bit_first_segment()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -111,8 +120,9 @@ void test_rlc_um_6bit_middle_segment()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -140,8 +150,9 @@ void test_rlc_um_6bit_last_segment()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -173,8 +184,9 @@ void test_rlc_um_12bit_complete_sdu()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -211,8 +223,9 @@ void test_rlc_um_12bit_first_segment()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -249,8 +262,9 @@ void test_rlc_um_12bit_middle_segment()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }
@@ -281,8 +295,9 @@ void test_rlc_um_12bit_last_segment()
   }
   {
     // Pack
-    byte_buffer buf = make_pdu_and_log(tv_sdu);
-    rlc_um_write_data_pdu_header(hdr, buf);
+    std::array<uint8_t, header_len + payload_len> buf;
+    TESTASSERT(rlc_um_write_data_pdu_header(buf, hdr) == header_len);
+    TESTASSERT_EQ(copy_pdu_and_log(span<uint8_t>(buf).subspan(header_len, payload_len), tv_sdu), payload_len);
     TESTASSERT(buf == tv_pdu);
   }
 }

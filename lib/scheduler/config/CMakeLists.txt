@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -27,3 +27,6 @@ set(SOURCES serving_cell_config_factory.cpp
         csi_helper.cpp)
 add_library(sched_config STATIC ${SOURCES})
 target_link_libraries(sched_config srsran_ran du_resource_manager)
+
+add_library(sched_config_manager OBJECT cell_configuration.cpp ue_configuration.cpp sched_config_manager.cpp)
+target_link_libraries(sched_config_manager srsran_ran)

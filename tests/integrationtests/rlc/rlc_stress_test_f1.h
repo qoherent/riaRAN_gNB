@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,7 +41,7 @@ class f1ap_dummy : public pdcp_tx_lower_notifier,
   pdcp_rx_lower_interface*           pdcp_rx_lower = nullptr;
 
 public:
-  f1ap_dummy(uint32_t id) : logger("F1AP", {id, drb_id_t::drb1, "DL"}) {}
+  f1ap_dummy(uint32_t id) : logger("F1AP", {0, id, drb_id_t::drb1, "DL"}) {}
 
   // PDCP -> F1 -> RLC
   void on_new_pdu(pdcp_tx_pdu pdu) final
@@ -81,7 +81,7 @@ public:
     // TODO for now we copy to a new byte buffer
     byte_buffer buf;
     for (uint8_t byte : pdu) {
-      buf.append(byte);
+      report_error_if_not(buf.append(byte), "Failed to allocate byte buffer");
     }
     pdcp_rx_lower->handle_pdu(byte_buffer_chain{std::move(buf)});
   }

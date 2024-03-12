@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
+#include "../config/ue_configuration.h"
 #include "../ue_scheduling/harq_process.h"
-#include "../ue_scheduling/ue_configuration.h"
 #include "srsran/ran/pdcch/search_space.h"
 #include "srsran/ran/resource_allocation/resource_allocation_frequency.h"
 #include "srsran/scheduler/config/bwp_configuration.h"

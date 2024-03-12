@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,8 +21,6 @@
  */
 
 #include "srsran/asn1/rrc_nr/nr_ue_variables.h"
-#include <sstream>
-
 using namespace asn1;
 using namespace asn1::rrc_nr;
 

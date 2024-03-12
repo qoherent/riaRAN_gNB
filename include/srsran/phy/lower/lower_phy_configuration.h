@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -64,7 +64,7 @@ enum class lower_phy_baseband_buffer_size_policy : unsigned {
   /// \ref baseband_gateway::get_receiver_optimal_buffer_size for the receiver.
   single_packet,
   /// The buffer size is is equal to the greatest multiple of \ref baseband_gateway::get_transmitter_optimal_buffer_size
-  /// for the transmitter and \ref baseband_gateway::get_receiver_optimal_buffer_size for the receiver lesser than the
+  /// for the transmitter and \ref baseband_gateway::get_receiver_optimal_buffer_size for the receiver less than the
   /// number of samples per slot.
   optimal_slot,
 };

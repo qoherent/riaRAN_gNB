@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,7 @@
 #include "pusch_codeword_buffer_test_doubles.h"
 #include "pusch_demodulator_notifier_test_doubles.h"
 #include "pusch_demodulator_test_data.h"
-#include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
+#include "srsran/phy/upper/channel_processors/pusch/factories.h"
 #include "srsran/phy/upper/equalization/equalization_factories.h"
 #include "srsran/srsvec/compare.h"
 #include "fmt/ostream.h"
@@ -44,7 +44,7 @@ std::ostream& operator<<(std::ostream& os, const test_case_t& test_case)
              test_case.context.config.modulation,
              test_case.context.config.start_symbol_index,
              test_case.context.config.nof_symbols,
-             span<const bool>(test_case.context.config.dmrs_symb_pos),
+             test_case.context.config.dmrs_symb_pos,
              test_case.context.config.dmrs_config_type == dmrs_type::TYPE1 ? 1 : 2,
              test_case.context.config.nof_cdm_groups_without_data,
              test_case.context.config.n_id,

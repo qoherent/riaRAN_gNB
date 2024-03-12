@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "ngap_test_helpers.h"
+#include "srsran/ngap/ngap_setup.h"
 #include "srsran/support/async/async_test_utils.h"
 #include <gtest/gtest.h>
 
@@ -31,14 +32,14 @@ using namespace srs_cu_cp;
 TEST_F(ngap_test, when_ng_setup_response_received_then_amf_connected)
 {
   // Action 1: Launch NG setup procedure
-  ng_setup_request request_msg = generate_ng_setup_request();
+  ngap_ng_setup_request request_msg = generate_ng_setup_request();
   test_logger.info("Launch ng setup request procedure...");
-  async_task<ng_setup_response>         t = ngap->handle_ng_setup_request(request_msg);
-  lazy_task_launcher<ng_setup_response> t_launcher(t);
+  async_task<ngap_ng_setup_result>         t = ngap->handle_ng_setup_request(request_msg);
+  lazy_task_launcher<ngap_ng_setup_result> t_launcher(t);
 
   // Status: AMF received NG Setup Request.
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ng_setup_request);
 
   // Status: Procedure not yet ready.
@@ -50,22 +51,22 @@ TEST_F(ngap_test, when_ng_setup_response_received_then_amf_connected)
   ngap->handle_message(ng_setup_response);
 
   ASSERT_TRUE(t.ready());
-  ASSERT_TRUE(t.get().success);
-  ASSERT_EQ(t.get().msg->amf_name.to_string(), "open5gs-amf0");
+  ASSERT_TRUE(variant_holds_alternative<ngap_ng_setup_response>(t.get()));
+  ASSERT_EQ(variant_get<ngap_ng_setup_response>(t.get()).amf_name, "open5gs-amf0");
 }
 
 /// Test unsuccessful ng setup procedure with time to wait and successful retry
 TEST_F(ngap_test, when_ng_setup_failure_with_time_to_wait_received_then_retry_with_success)
 {
   // Action 1: Launch NG setup procedure
-  ng_setup_request request_msg = generate_ng_setup_request();
+  ngap_ng_setup_request request_msg = generate_ng_setup_request();
   test_logger.info("Launch ng setup request procedure...");
-  async_task<ng_setup_response>         t = ngap->handle_ng_setup_request(request_msg);
-  lazy_task_launcher<ng_setup_response> t_launcher(t);
+  async_task<ngap_ng_setup_result>         t = ngap->handle_ng_setup_request(request_msg);
+  lazy_task_launcher<ngap_ng_setup_result> t_launcher(t);
 
   // Status: AMF received NG Setup Request.
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ng_setup_request);
 
   // Status: Procedure not yet ready.
@@ -83,8 +84,8 @@ TEST_F(ngap_test, when_ng_setup_failure_with_time_to_wait_received_then_retry_wi
   }
 
   // Status: AMF received NG Setup Request again.
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ng_setup_request);
 
   // Successful outcome after reinitiated NG Setup
@@ -93,22 +94,22 @@ TEST_F(ngap_test, when_ng_setup_failure_with_time_to_wait_received_then_retry_wi
   ngap->handle_message(ng_setup_response);
 
   ASSERT_TRUE(t.ready());
-  ASSERT_TRUE(t.get().success);
-  ASSERT_EQ(t.get().msg->amf_name.to_string(), "open5gs-amf0");
+  ASSERT_TRUE(variant_holds_alternative<ngap_ng_setup_response>(t.get()));
+  ASSERT_EQ(variant_get<ngap_ng_setup_response>(t.get()).amf_name, "open5gs-amf0");
 }
 
 /// Test unsuccessful ng setup procedure with time to wait and unsuccessful retry
 TEST_F(ngap_test, when_ng_setup_failure_with_time_to_wait_received_then_retry_without_success)
 {
   // Action 1: Launch NG setup procedure
-  ng_setup_request request_msg = generate_ng_setup_request();
+  ngap_ng_setup_request request_msg = generate_ng_setup_request();
   test_logger.info("Launch ng setup request procedure...");
-  async_task<ng_setup_response>         t = ngap->handle_ng_setup_request(request_msg);
-  lazy_task_launcher<ng_setup_response> t_launcher(t);
+  async_task<ngap_ng_setup_result>         t = ngap->handle_ng_setup_request(request_msg);
+  lazy_task_launcher<ngap_ng_setup_result> t_launcher(t);
 
   // Status: AMF received NG Setup Request.
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ng_setup_request);
 
   // Status: Procedure not yet ready.
@@ -120,8 +121,8 @@ TEST_F(ngap_test, when_ng_setup_failure_with_time_to_wait_received_then_retry_wi
   ngap->handle_message(ng_setup_failure);
 
   // Status: AMF received NG Setup Request again.
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ng_setup_request);
 
   // Status: AMF does not receive new NG Setup Request until time-to-wait has ended.
@@ -136,21 +137,21 @@ TEST_F(ngap_test, when_ng_setup_failure_with_time_to_wait_received_then_retry_wi
   ngap->handle_message(ng_setup_failure);
 
   ASSERT_TRUE(t.ready());
-  ASSERT_FALSE(t.get().success);
+  ASSERT_TRUE(variant_holds_alternative<ngap_ng_setup_failure>(t.get()));
 }
 
 /// Test the ng setup procedure
 TEST_F(ngap_test, when_retry_limit_reached_then_amf_not_connected)
 {
   // Action 1: Launch NG setup procedure
-  ng_setup_request request_msg = generate_ng_setup_request();
+  ngap_ng_setup_request request_msg = generate_ng_setup_request();
   test_logger.info("Launch f1 setup request procedure...");
-  async_task<ng_setup_response>         t = ngap->handle_ng_setup_request(request_msg);
-  lazy_task_launcher<ng_setup_response> t_launcher(t);
+  async_task<ngap_ng_setup_result>         t = ngap->handle_ng_setup_request(request_msg);
+  lazy_task_launcher<ngap_ng_setup_result> t_launcher(t);
 
   // Status: AMF received NG Setup Request.
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
-  ASSERT_EQ(msg_notifier.last_ngap_msg.pdu.init_msg().value.type().value,
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.type().value, asn1::ngap::ngap_pdu_c::types_opts::init_msg);
+  ASSERT_EQ(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.type().value,
             asn1::ngap::ngap_elem_procs_o::init_msg_c::types_opts::ng_setup_request);
 
   // Action 2: NG setup failure received.
@@ -166,5 +167,5 @@ TEST_F(ngap_test, when_retry_limit_reached_then_amf_not_connected)
   }
 
   ASSERT_TRUE(t.ready());
-  ASSERT_FALSE(t.get().success);
+  ASSERT_TRUE(variant_holds_alternative<ngap_ng_setup_failure>(t.get()));
 }

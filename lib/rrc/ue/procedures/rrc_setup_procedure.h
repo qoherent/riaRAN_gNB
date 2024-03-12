@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,8 +23,8 @@
 #pragma once
 
 #include "../rrc_ue_context.h"
+#include "../rrc_ue_logger.h"
 #include "rrc_ue_event_manager.h"
-#include "srsran/asn1/rrc_nr/rrc_nr.h"
 #include "srsran/rrc/rrc_du.h"
 #include "srsran/rrc/rrc_ue.h"
 #include "srsran/support/async/async_task.h"
@@ -75,7 +75,7 @@ public:
                       rrc_ue_srb_handler&                        srb_notifier_,
                       rrc_ue_nas_notifier&                       nas_notifier_,
                       rrc_ue_event_manager&                      ev_mng_,
-                      srslog::basic_logger&                      logger_);
+                      rrc_ue_logger&                             logger_);
 
   void operator()(coro_context<async_task<void>>& ctx);
 
@@ -94,13 +94,12 @@ private:
   rrc_ue_context_t&                         context;
   const asn1::rrc_nr::establishment_cause_e cause;
   const byte_buffer&                        du_to_cu_container;
-  const asn1::rrc_nr::pdcp_cfg_s            srb1_pdcp_cfg;
 
   rrc_ue_setup_proc_notifier& rrc_ue;       // handler to the parent RRC UE object
   rrc_ue_srb_handler&         srb_notifier; // for creation of SRBs
   rrc_ue_nas_notifier&        nas_notifier; // notifier to the NGAP
   rrc_ue_event_manager&       event_mng;    // event manager for the RRC UE entity
-  srslog::basic_logger&       logger;
+  rrc_ue_logger&              logger;
 
   rrc_transaction               transaction;
   eager_async_task<rrc_outcome> task;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,7 @@
 
 #include "srsran/gtpu/gtpu_echo.h"
 #include "srsran/gtpu/gtpu_tunnel_tx.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include <memory>
 
 /// This factory header file depends on the GTP-U tunnel interfaces (see above include list). It is kept separate as

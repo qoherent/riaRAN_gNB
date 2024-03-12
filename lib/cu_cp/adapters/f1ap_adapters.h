@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,54 +23,75 @@
 #pragma once
 
 #include "../../f1ap/common/asn1_helpers.h"
+#include "../cu_cp_impl_interface.h"
+#include "../du_processor/du_processor_impl_interface.h"
+#include "../du_processor/du_setup_handler.h"
 #include "srsran/cu_cp/cu_cp.h"
-#include "srsran/cu_cp/du_processor.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu.h"
 #include "srsran/pdcp/pdcp_rx.h"
 
 namespace srsran {
 namespace srs_cu_cp {
 
-/// Adapter between F1AP and CU-CP, to handle DU specific procedure outcomes (e.g. F1 Remove)
-class f1ap_cu_cp_adapter : public f1ap_du_management_notifier
+/// Adapter between F1AP and CU-CP
+class f1ap_cu_cp_adapter : public f1ap_ue_removal_notifier
 {
 public:
-  void connect_cu_cp(du_repository& cu_cp_mng_) { du_handler = &cu_cp_mng_; }
+  void connect_cu_cp(cu_cp_ue_removal_handler& ue_removal_handler_) { ue_removal_handler = &ue_removal_handler_; }
 
-  void on_du_remove_request_received(const du_index_t du_index) override
+  void on_ue_removal_required(ue_index_t ue_index) override
+  {
+    srsran_assert(ue_removal_handler != nullptr, "CU-CP UE removal handler must not be nullptr");
+    return ue_removal_handler->handle_ue_removal_request(ue_index);
+  }
+
+private:
+  cu_cp_ue_removal_handler* ue_removal_handler = nullptr;
+};
+
+/// Adapter between F1AP and DU repository, to handle DU specific procedure outcomes (e.g. F1 Remove)
+class f1ap_du_repository_adapter : public f1ap_du_management_notifier
+{
+public:
+  void connect_du_repository(cu_cp_f1c_handler& du_handler_) { du_handler = &du_handler_; }
+
+  void on_du_remove_request_received(du_index_t du_index) override
   {
     srsran_assert(du_handler != nullptr, "DU handler must not be nullptr");
     du_handler->handle_du_remove_request(du_index);
   }
 
 private:
-  du_repository* du_handler = nullptr;
+  cu_cp_f1c_handler* du_handler = nullptr;
 };
 
 /// Adapter between F1AP and DU processor
 class f1ap_du_processor_adapter : public f1ap_du_processor_notifier
 {
 public:
+  f1ap_du_processor_adapter(du_setup_handler& du_setup_hdlr_) : du_setup_hdlr(&du_setup_hdlr_) {}
+
   void connect_du_processor(du_processor_f1ap_interface& du_processor_f1ap_) { du_f1ap_handler = &du_processor_f1ap_; }
+
+  du_setup_result on_new_du_setup_request(const du_setup_request& msg) override
+  {
+    srsran_assert(du_setup_hdlr != nullptr, "F1AP handler must not be nullptr");
+    return du_setup_hdlr->handle_du_setup_request(msg);
+  }
 
   du_index_t get_du_index() override { return du_f1ap_handler->get_du_index(); }
 
-  void on_f1_setup_request_received(const f1ap_f1_setup_request& msg) override
+  ue_index_t on_new_cu_cp_ue_required() override
   {
     srsran_assert(du_f1ap_handler != nullptr, "F1AP handler must not be nullptr");
-    du_f1ap_handler->handle_f1_setup_request(msg);
+    return du_f1ap_handler->allocate_new_ue_index();
   }
 
-  ue_index_t on_new_ue_index_required() override
+  ue_rrc_context_creation_response
+  on_ue_rrc_context_creation_request(const ue_rrc_context_creation_request& req) override
   {
     srsran_assert(du_f1ap_handler != nullptr, "F1AP handler must not be nullptr");
-    return du_f1ap_handler->get_new_ue_index();
-  }
-
-  ue_creation_complete_message on_create_ue(const cu_cp_ue_creation_message& msg) override
-  {
-    srsran_assert(du_f1ap_handler != nullptr, "F1AP handler must not be nullptr");
-    return du_f1ap_handler->handle_ue_creation_request(msg);
+    return du_f1ap_handler->handle_ue_rrc_context_creation_request(req);
   }
 
   void on_du_initiated_ue_context_release_request(const f1ap_ue_context_release_request& req) override
@@ -80,6 +101,7 @@ public:
   }
 
 private:
+  du_setup_handler*            du_setup_hdlr   = nullptr;
   du_processor_f1ap_interface* du_f1ap_handler = nullptr;
 };
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,9 +24,11 @@
 
 #include "ofh_data_flow_uplane_uplink_data.h"
 #include "ofh_data_flow_uplane_uplink_prach.h"
+#include "ofh_sequence_id_checker_impl.h"
 #include "srsran/adt/static_vector.h"
 #include "srsran/ofh/ecpri/ecpri_packet_decoder.h"
 #include "srsran/ofh/ethernet/ethernet_frame_notifier.h"
+#include "srsran/ofh/ethernet/ethernet_receiver.h"
 #include "srsran/ofh/ethernet/vlan_ethernet_frame_decoder.h"
 #include "srsran/ofh/ofh_constants.h"
 #include "srsran/ofh/serdes/ofh_message_properties.h"
@@ -43,7 +45,7 @@ struct message_receiver_config {
   /// VLAN ethernet frame parameters.
   ether::vlan_frame_params vlan_params;
   /// Uplink PRACH eAxC.
-  static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_prach_eaxc;
+  static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> prach_eaxc;
   /// Uplink eAxC.
   static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc;
 };
@@ -52,6 +54,8 @@ struct message_receiver_config {
 struct message_receiver_dependencies {
   /// Logger.
   srslog::basic_logger* logger;
+  /// Ethernet receiver.
+  std::unique_ptr<ether::receiver> eth_receiver;
   /// Reception window checker.
   rx_window_checker* window_checker;
   /// eCPRI packet decoder.
@@ -64,6 +68,8 @@ struct message_receiver_dependencies {
   std::unique_ptr<data_flow_uplane_uplink_data> data_flow_uplink;
   /// User-Plane uplink PRACH data flow.
   std::unique_ptr<data_flow_uplane_uplink_prach> data_flow_prach;
+  /// Sequence id checker.
+  std::unique_ptr<sequence_id_checker> seq_id_checker;
 };
 
 /// Open Fronthaul message receiver.
@@ -78,6 +84,9 @@ public:
   // See interface for documentation.
   void on_new_frame(span<const uint8_t> payload) override;
 
+  /// Returns the Ethernet receiver of this Open Fronthaul message receiver.
+  ether::receiver& get_ethernet_receiver() { return *eth_receiver; }
+
 private:
   /// Returns true if the ethernet frame represented by the given eth parameters should be filtered, otherwise false.
   bool should_ethernet_frame_be_filtered(const ether::vlan_frame_params& eth_params) const;
@@ -91,11 +100,13 @@ private:
   const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_prach_eaxc;
   const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc;
   rx_window_checker&                                    window_checker;
+  std::unique_ptr<sequence_id_checker>                  seq_id_checker;
   std::unique_ptr<ether::vlan_frame_decoder>            vlan_decoder;
   std::unique_ptr<ecpri::packet_decoder>                ecpri_decoder;
   std::unique_ptr<uplane_message_decoder>               uplane_decoder;
   std::unique_ptr<data_flow_uplane_uplink_data>         data_flow_uplink;
   std::unique_ptr<data_flow_uplane_uplink_prach>        data_flow_prach;
+  std::unique_ptr<ether::receiver>                      eth_receiver;
 };
 
 } // namespace ofh

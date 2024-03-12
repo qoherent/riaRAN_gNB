@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -27,4 +27,4 @@ set(SOURCES
         ssb.cpp)
 
 add_library(srsran_mac_fapi_adaptors STATIC ${SOURCES})
-target_link_libraries(srsran_mac_fapi_adaptors srsran_fapi_precoding_matrix_tools srslog)
+target_link_libraries(srsran_mac_fapi_adaptors srsran_fapi_precoding_matrix_tools srsran_fapi_uci_part2_tools srslog)

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "rrc_setup_procedure.h"
 #include "../rrc_asn1_helpers.h"
+#include "srsran/asn1/rrc_nr/dl_ccch_msg.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
@@ -34,7 +35,7 @@ rrc_setup_procedure::rrc_setup_procedure(rrc_ue_context_t&                      
                                          rrc_ue_srb_handler&                        srb_notifier_,
                                          rrc_ue_nas_notifier&                       nas_notifier_,
                                          rrc_ue_event_manager&                      event_mng_,
-                                         srslog::basic_logger&                      logger_) :
+                                         rrc_ue_logger&                             logger_) :
   context(context_),
   cause(cause_),
   du_to_cu_container(du_to_cu_container_),
@@ -64,12 +65,12 @@ void rrc_setup_procedure::operator()(coro_context<async_task<void>>& ctx)
   CORO_AWAIT(transaction);
 
   if (transaction.has_response()) {
-    logger.debug("ue={} \"{}\" finished successfully", context.ue_index, name());
+    logger.log_debug("\"{}\" finished successfully", name());
     context.state = rrc_state::connected;
     send_initial_ue_msg(transaction.response().msg.c1().rrc_setup_complete());
   } else {
-    logger.debug("ue={} \"{}\" timed out after {}ms", context.ue_index, name(), context.cfg.rrc_procedure_timeout_ms);
-    rrc_ue.on_ue_delete_request(cause_protocol_t::unspecified);
+    logger.log_warning("\"{}\" timed out after {}ms", name(), context.cfg.rrc_procedure_timeout_ms);
+    rrc_ue.on_ue_release_required(cause_protocol_t::unspecified);
   }
 
   CORO_RETURN();
@@ -81,7 +82,7 @@ void rrc_setup_procedure::create_srb1()
   srb_creation_message srb1_msg{};
   srb1_msg.ue_index = context.ue_index;
   srb1_msg.srb_id   = srb_id_t::srb1;
-  srb1_msg.pdcp_cfg = srb1_pdcp_cfg;
+  srb1_msg.pdcp_cfg = {};
   srb_notifier.create_srb(srb1_msg);
 }
 
@@ -96,11 +97,13 @@ void rrc_setup_procedure::send_rrc_setup()
 
 void rrc_setup_procedure::send_initial_ue_msg(const asn1::rrc_nr::rrc_setup_complete_s& rrc_setup_complete_msg)
 {
-  initial_ue_message init_ue_msg  = {};
-  init_ue_msg.ue_index            = context.ue_index;
-  init_ue_msg.nas_pdu             = rrc_setup_complete_msg.crit_exts.rrc_setup_complete().ded_nas_msg.copy();
-  init_ue_msg.establishment_cause = cause;
-  init_ue_msg.cell                = context.cell;
+  cu_cp_initial_ue_message init_ue_msg       = {};
+  init_ue_msg.ue_index                       = context.ue_index;
+  init_ue_msg.nas_pdu                        = rrc_setup_complete_msg.crit_exts.rrc_setup_complete().ded_nas_msg.copy();
+  init_ue_msg.establishment_cause            = static_cast<establishment_cause_t>(cause.value);
+  init_ue_msg.user_location_info.nr_cgi      = context.cell.cgi;
+  init_ue_msg.user_location_info.tai.plmn_id = context.cell.cgi.plmn_hex;
+  init_ue_msg.user_location_info.tai.tac     = context.cell.tac;
 
   cu_cp_five_g_s_tmsi five_g_s_tmsi;
   if (context.five_g_tmsi.has_value()) {

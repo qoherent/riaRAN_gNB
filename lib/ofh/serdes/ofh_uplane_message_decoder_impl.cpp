@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -59,31 +59,32 @@ static bool is_header_valid(const uplane_message_params& params,
                             unsigned                     version)
 {
   if (params.direction != data_direction::uplink) {
-    logger.debug("Dropping incoming Open Fronthaul message as it is not an uplink message");
+    logger.info("Dropped received Open Fronthaul message as it is not an uplink message");
 
     return false;
   }
 
   if (version != OFH_PAYLOAD_VERSION) {
-    logger.debug("Dropping incoming Open Fronthaul message as its payload version is {} but only {} is supported",
-                 version,
-                 OFH_PAYLOAD_VERSION);
+    logger.info(
+        "Dropped received Open Fronthaul message as its payload version is '{}' but only version '{}' is supported",
+        version,
+        OFH_PAYLOAD_VERSION);
 
     return false;
   }
 
   if (params.filter_index == filter_index_type::reserved) {
-    logger.debug("Dropping incoming Open Fronthaul message as its filter index is a reserved value {}",
-                 params.filter_index);
+    logger.info("Dropped received Open Fronthaul message as its filter index value is reserved '{}'",
+                params.filter_index);
 
     return false;
   }
 
   if (params.symbol_id >= nof_symbols) {
-    logger.debug("Dropping incoming Open Fronthaul message as its symbol index is {} and this decoder supports up to "
-                 "{} symbols",
-                 params.symbol_id,
-                 nof_symbols);
+    logger.info("Dropped received Open Fronthaul message as its symbol index is '{}' and this decoder supports a "
+                "maximum of '{}' symbols",
+                params.symbol_id,
+                nof_symbols);
 
     return false;
   }
@@ -95,9 +96,9 @@ bool uplane_message_decoder_impl::decode_header(uplane_message_params&          
                                                 network_order_binary_deserializer& deserializer)
 {
   if (deserializer.remaining_bytes() < NOF_BYTES_UP_HEADER) {
-    logger.debug(
-        "Dropping incoming Open Fronthaul message as its size is {} and it is smaller than the message header size",
-        deserializer.remaining_bytes());
+    logger.info("Dropped received Open Fronthaul message as its size is '{}' bytes and it is smaller than the message "
+                "header size",
+                deserializer.remaining_bytes());
 
     return false;
   }
@@ -131,12 +132,22 @@ bool uplane_message_decoder_impl::decode_all_sections(uplane_message_decoder_res
     if (!decode_section(results, deserializer)) {
       break;
     }
+
+    if (results.sections.full()) {
+      logger.info("Dropped received Open Fronthaul message as this deserializer only supports '{}' section for slot "
+                  "'{}' and symbol '{}'",
+                  MAX_NOF_SUPPORTED_SECTIONS,
+                  results.params.slot,
+                  results.params.symbol_id);
+
+      return false;
+    }
   }
 
   bool is_result_valid = !results.sections.empty();
   if (!is_result_valid) {
-    logger.debug(
-        "Dropping incoming Open Fronthaul message as no section was decoded correctly. Message slot={}, symbol={}",
+    logger.info(
+        "Dropped received Open Fronthaul message as no section was decoded correctly for slot '{}' and symbol '{}'",
         results.params.slot,
         results.params.symbol_id);
   }
@@ -175,8 +186,8 @@ bool uplane_message_decoder_impl::decode_section_header(uplane_section_params&  
                                                         network_order_binary_deserializer& deserializer)
 {
   if (deserializer.remaining_bytes() < SECTION_ID_HEADER_NO_COMPRESSION_SIZE) {
-    logger.debug("Incoming Open Fronthaul message size is {} and it is smaller than the section header size",
-                 deserializer.remaining_bytes());
+    logger.info("Received Open Fronthaul message size is '{}' bytes and is smaller than the section header size",
+                deserializer.remaining_bytes());
 
     return false;
   }
@@ -215,9 +226,10 @@ static bool decode_prbs_no_ud_comp_param_field(span<compressed_prb>             
                                                srslog::basic_logger&              logger)
 {
   if (deserializer.remaining_bytes() < prb_iq_data_size.round_up_to_bytes().value() * comp_prb.size()) {
-    logger.debug("Incoming Open Fronthaul message size is {} and it is smaller than the expected IQ samples size {}",
-                 deserializer.remaining_bytes(),
-                 prb_iq_data_size.round_up_to_bytes().value() * comp_prb.size());
+    logger.info("Received Open Fronthaul message size is '{}' bytes and it is smaller than the expected IQ samples "
+                "size of '{}'",
+                deserializer.remaining_bytes(),
+                prb_iq_data_size.round_up_to_bytes().value() * comp_prb.size());
 
     return false;
   }
@@ -253,9 +265,10 @@ static bool decode_prbs_with_ud_comp_param_field(span<compressed_prb>           
   // Add 1 byte to the PRB size as the udComParam must be decoded.
   units::bytes prb_bytes = prb_iq_data_size.round_up_to_bytes() + units::bytes(1);
   if (deserializer.remaining_bytes() < prb_bytes.value() * comp_prb.size()) {
-    logger.debug("Incoming Open Fronthaul message size is {} and it is smaller than the expected IQ samples size {}",
-                 deserializer.remaining_bytes(),
-                 prb_bytes.value() * comp_prb.size());
+    logger.info(
+        "Received Open Fronthaul message size is '{}' bytes and is smaller than the expected IQ samples size of '{}'",
+        deserializer.remaining_bytes(),
+        prb_bytes.value() * comp_prb.size());
 
     return false;
   }
@@ -289,8 +302,9 @@ bool uplane_message_decoder_impl::decode_compression_length(uplane_section_param
   }
 
   if (deserializer.remaining_bytes() < sizeof(uint16_t)) {
-    logger.debug("Incoming Open Fronthaul message size is {} and it is smaller than the user data compression length",
-                 deserializer.remaining_bytes());
+    logger.info(
+        "Received Open Fronthaul message size is '{}' bytes and is smaller than the user data compression length",
+        deserializer.remaining_bytes());
 
     return false;
   }
@@ -321,7 +335,7 @@ bool uplane_message_decoder_impl::decode_iq_data(uplane_section_params&         
 
   // Decompress the samples.
   results.iq_samples.resize(results.nof_prbs * NOF_SUBCARRIERS_PER_RB);
-  decompressor.decompress(results.iq_samples, comp_prbs, compression_params);
+  decompressor->decompress(results.iq_samples, comp_prbs, compression_params);
 
   return true;
 }
@@ -333,7 +347,7 @@ filter_index_type uplane_message_decoder_impl::peek_filter_index(span<const uint
   }
 
   // Filter index is codified in the first byte, the 4 LSB.
-  return to_filter_index_type((message[0] & 0xf));
+  return to_filter_index_type(message[0] & 0xf);
 }
 
 slot_symbol_point uplane_message_decoder_impl::peek_slot_symbol_point(span<const uint8_t> message) const

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #include "lib/rlc/rlc_um_entity.h"
+#include "tests/unittests/rlc/rlc_test_helpers.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include <fmt/ostream.h>
 #include <gtest/gtest.h>
@@ -92,9 +93,11 @@ protected:
 
     // Set Tx config
     config.tx.sn_field_length = sn_size;
+    config.tx.queue_size      = 4096;
 
     // Create RLC entities
-    rlc1 = std::make_unique<rlc_um_entity>(du_ue_index_t::MIN_DU_UE_INDEX,
+    rlc1 = std::make_unique<rlc_um_entity>(0,
+                                           du_ue_index_t::MIN_DU_UE_INDEX,
                                            srb_id_t::srb0,
                                            config,
                                            std::chrono::milliseconds(1000),
@@ -105,8 +108,10 @@ protected:
                                            tester1,
                                            timers,
                                            pcell_worker,
-                                           ue_worker);
-    rlc2 = std::make_unique<rlc_um_entity>(du_ue_index_t::MIN_DU_UE_INDEX,
+                                           ue_worker,
+                                           pcap1);
+    rlc2 = std::make_unique<rlc_um_entity>(0,
+                                           du_ue_index_t::MIN_DU_UE_INDEX,
                                            srb_id_t::srb0,
                                            config,
                                            std::chrono::milliseconds(1000),
@@ -117,7 +122,8 @@ protected:
                                            tester2,
                                            timers,
                                            pcell_worker,
-                                           ue_worker);
+                                           ue_worker,
+                                           pcap2);
 
     // Bind interfaces
     rlc1_rx_lower = rlc1->get_rx_lower_layer_interface();
@@ -145,7 +151,7 @@ protected:
   {
     byte_buffer sdu = {};
     for (uint32_t k = 0; k < length; ++k) {
-      sdu.append(first_byte + k);
+      report_error_if_not(sdu.append(first_byte + k), "Failed to allocate byte buffer");
     }
     return sdu;
   }
@@ -163,11 +169,11 @@ protected:
       sdu_bufs[i] = byte_buffer();
       // Write the index into the buffer
       for (uint32_t k = 0; k < sdu_size; ++k) {
-        sdu_bufs[i].append(i + k);
+        ASSERT_TRUE(sdu_bufs[i].append(i + k));
       }
 
       // write SDU into upper end
-      rlc_sdu sdu = {sdu_bufs[i].deep_copy(), 0}; // no std::move - keep local copy for later comparison
+      rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
       rlc1_tx_upper->handle_sdu(std::move(sdu));
     }
     buffer_state = rlc1_tx_lower->get_buffer_state();
@@ -180,8 +186,10 @@ protected:
     byte_buffer_chain pdu_bufs[max_num_pdus];
 
     buffer_state = rlc1_tx_lower->get_buffer_state();
+    std::vector<uint8_t> tx_pdu(payload_len);
     while (buffer_state > 0 && num_pdus < max_num_pdus) {
-      pdu_bufs[num_pdus] = rlc1_tx_lower->pull_pdu(payload_len);
+      unsigned n         = rlc1_tx_lower->pull_pdu(tx_pdu);
+      pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>{tx_pdu.data(), n}};
 
       if (pdu_bufs[num_pdus].empty()) {
         break;
@@ -247,6 +255,7 @@ protected:
   manual_task_worker                 ue_worker{128};
   manual_task_worker                 pcell_worker{128};
   rlc_test_frame                     tester1, tester2;
+  null_rlc_pcap                      pcap1, pcap2;
   std::unique_ptr<rlc_um_entity>     rlc1, rlc2;
   rlc_rx_lower_layer_interface*      rlc1_rx_lower = nullptr;
   rlc_tx_upper_layer_data_interface* rlc1_tx_upper = nullptr;
@@ -290,7 +299,7 @@ TEST_P(rlc_um_test, rx_pdu_with_short_header)
 {
   // Create a short header of a PDU segment
   byte_buffer pdu_buf = {};
-  pdu_buf.append(0b11000000); // SI = 0b11
+  ASSERT_TRUE(pdu_buf.append(0b11000000)); // SI = 0b11
 
   // Push into RLC
   byte_buffer_slice pdu = {std::move(pdu_buf)};
@@ -304,10 +313,10 @@ TEST_P(rlc_um_test, rx_pdu_without_payload)
 {
   // Create a complete header of a PDU segment
   byte_buffer pdu_buf = {};
-  pdu_buf.append(0b11000000); // SI = 0b11
-  pdu_buf.append({0x11, 0x22});
+  ASSERT_TRUE(pdu_buf.append(0b11000000)); // SI = 0b11
+  ASSERT_TRUE(pdu_buf.append({0x11, 0x22}));
   if (sn_size == rlc_um_sn_size::size12bits) {
-    pdu_buf.append(0x33);
+    ASSERT_TRUE(pdu_buf.append(0x33));
   }
 
   // Push into RLC
@@ -329,7 +338,7 @@ TEST_P(rlc_um_test, tx_without_segmentation)
   for (uint32_t i = 0; i < num_sdus; i++) {
     sdu_bufs[i] = byte_buffer();
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
@@ -342,10 +351,12 @@ TEST_P(rlc_um_test, tx_without_segmentation)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1
-  byte_buffer_chain pdu_bufs[num_pdus];
-  const int         payload_len = 1 + sdu_size; // 1 bytes for header + payload
+  byte_buffer_chain    pdu_bufs[num_pdus];
+  const int            payload_len = 1 + sdu_size; // 1 bytes for header + payload
+  std::vector<uint8_t> tx_pdu(payload_len);
   for (uint32_t i = 0; i < num_pdus; i++) {
-    pdu_bufs[i] = rlc1_tx_lower->pull_pdu(payload_len);
+    unsigned nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[i]       = byte_buffer_slice{span<uint8_t>{tx_pdu.data(), nwritten}};
     EXPECT_EQ(payload_len, pdu_bufs[i].length());
     EXPECT_EQ(i, pdu_bufs[i][payload_len - 1]); // check if last payload item corresponds with index
 
@@ -396,7 +407,7 @@ TEST_P(rlc_um_test, tx_with_segmentation)
     sdu_bufs[i] = byte_buffer();
     // Write the index into the buffer
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
@@ -414,8 +425,10 @@ TEST_P(rlc_um_test, tx_with_segmentation)
   uint32_t          num_pdus     = 0;
   byte_buffer_chain pdu_bufs[max_num_pdus];
 
+  std::vector<uint8_t> tx_pdu(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    pdu_bufs[num_pdus] = rlc1_tx_lower->pull_pdu(payload_len);
+    unsigned nwritten  = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
 
     if (num_pdus % ((sdu_size / payload_len) + 1) == 0) {
       // Verify transmit notification
@@ -473,7 +486,7 @@ TEST_P(rlc_um_test, sdu_discard)
   for (uint32_t i = 0; i < num_sdus; i++) {
     sdu_bufs[i] = byte_buffer();
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
@@ -517,8 +530,9 @@ TEST_P(rlc_um_test, sdu_discard)
   EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 2);
 
   // Transmit full PDU
-  byte_buffer_chain pdu;
-  pdu = rlc1_tx_lower->pull_pdu(data_pdu_size);
+  std::vector<uint8_t> tx_pdu(data_pdu_size);
+  unsigned             nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+  byte_buffer_chain    pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[1].begin()));
   expect_buffer_state = (num_sdus - 4) * data_pdu_size;
@@ -538,7 +552,9 @@ TEST_P(rlc_um_test, sdu_discard)
   EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
 
   // Transmit full PDU
-  pdu = rlc1_tx_lower->pull_pdu(data_pdu_size);
+  tx_pdu.resize(data_pdu_size);
+  nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[2].begin()));
   expect_buffer_state = (num_sdus - 5) * data_pdu_size;
@@ -574,7 +590,7 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   for (uint32_t i = 0; i < num_sdus; i++) {
     sdu_bufs[i] = byte_buffer();
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
@@ -619,8 +635,9 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 2);
 
   // Transmit full PDU
-  byte_buffer_chain pdu;
-  pdu = rlc1_tx_lower->pull_pdu(data_pdu_size);
+  std::vector<uint8_t> tx_pdu(data_pdu_size);
+  unsigned             nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+  byte_buffer_chain    pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[1].begin()));
   expect_buffer_state = (num_sdus - 4) * data_pdu_size;
@@ -640,7 +657,8 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
 
   // Transmit full PDU
-  pdu = rlc1_tx_lower->pull_pdu(data_pdu_size);
+  nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[2].begin()));
   expect_buffer_state = (num_sdus - 5) * data_pdu_size;
@@ -673,7 +691,7 @@ TEST_P(rlc_um_test, tx_with_segmentation_reverse_rx)
     sdu_bufs[i] = byte_buffer();
     // Write the index into the buffer
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
@@ -691,8 +709,10 @@ TEST_P(rlc_um_test, tx_with_segmentation_reverse_rx)
   uint32_t          num_pdus     = 0;
   byte_buffer_chain pdu_bufs[max_num_pdus];
 
+  std::vector<uint8_t> tx_pdu(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    pdu_bufs[num_pdus] = rlc1_tx_lower->pull_pdu(payload_len);
+    unsigned nwritten  = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
 
     if (num_pdus % ((sdu_size / payload_len) + 1) == 0) {
       // Verify transmit notification
@@ -751,11 +771,11 @@ TEST_P(rlc_um_test, tx_multiple_SDUs_with_segmentation)
     sdu_bufs[i] = byte_buffer();
     // Write the index into the buffer
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), 0}; // no std::move - keep local copy for later comparison
+    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
     rlc1_tx_upper->handle_sdu(std::move(sdu));
   }
   pcell_worker.run_pending_tasks();
@@ -769,8 +789,10 @@ TEST_P(rlc_um_test, tx_multiple_SDUs_with_segmentation)
   uint32_t          num_pdus     = 0;
   byte_buffer_chain pdu_bufs[max_num_pdus];
 
+  std::vector<uint8_t> tx_pdu(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    pdu_bufs[num_pdus] = rlc1_tx_lower->pull_pdu(payload_len);
+    unsigned nwritten  = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
 
     if (pdu_bufs[num_pdus].empty()) {
       break;
@@ -876,8 +898,10 @@ TEST_P(rlc_um_test, reassembly_window_wrap_around)
     EXPECT_EQ(tester1.bsr_count, i + 1);
 
     // read PDUs from lower end of RLC1 and write into lower end of RLC2
+    std::vector<uint8_t> pdu_tmp(payload_len);
     while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-      byte_buffer_chain tx_pdu = rlc1_tx_lower->pull_pdu(payload_len);
+      unsigned          nwritten = rlc1_tx_lower->pull_pdu(pdu_tmp);
+      byte_buffer_chain tx_pdu   = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
       if (tx_pdu.empty()) {
         break;
       }
@@ -937,8 +961,10 @@ TEST_P(rlc_um_test, lost_PDU_outside_reassembly_window)
     EXPECT_EQ(tester1.bsr_count, i + 1);
 
     // read PDUs from lower end of RLC1 and write into lower end of RLC2 (except 11th and 22th)
+    std::vector<uint8_t> pdu_tmp(payload_len);
     while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-      byte_buffer_chain tx_pdu = rlc1_tx_lower->pull_pdu(payload_len);
+      unsigned          nwritten = rlc1_tx_lower->pull_pdu(pdu_tmp);
+      byte_buffer_chain tx_pdu   = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
       if (tx_pdu.empty()) {
         break;
       }
@@ -997,11 +1023,11 @@ TEST_P(rlc_um_test, lost_segment_outside_reassembly_window)
     sdu_bufs[i] = byte_buffer();
     // Write the index into the buffer
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), 0}; // no std::move - keep local copy for later comparison
+    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
     rlc1_tx_upper->handle_sdu(std::move(sdu));
   }
   pcell_worker.run_pending_tasks();
@@ -1015,8 +1041,10 @@ TEST_P(rlc_um_test, lost_segment_outside_reassembly_window)
   uint32_t          num_pdus     = 0;
   byte_buffer_chain pdu_bufs[max_num_pdus];
 
+  std::vector<uint8_t> pdu_tmp(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    pdu_bufs[num_pdus] = rlc1_tx_lower->pull_pdu(payload_len);
+    unsigned nwritten  = rlc1_tx_lower->pull_pdu(pdu_tmp);
+    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
 
     if (pdu_bufs[num_pdus].empty()) {
       break;
@@ -1074,11 +1102,11 @@ TEST_P(rlc_um_test, out_of_order_segments_across_SDUs)
     sdu_bufs[i] = byte_buffer();
     // Write the index into the buffer
     for (uint32_t k = 0; k < sdu_size; ++k) {
-      sdu_bufs[i].append(i + k);
+      ASSERT_TRUE(sdu_bufs[i].append(i + k));
     }
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), 0}; // no std::move - keep local copy for later comparison
+    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
     rlc1_tx_upper->handle_sdu(std::move(sdu));
   }
   pcell_worker.run_pending_tasks();
@@ -1092,8 +1120,10 @@ TEST_P(rlc_um_test, out_of_order_segments_across_SDUs)
   uint32_t          num_pdus     = 0;
   byte_buffer_chain pdu_bufs[max_num_pdus];
 
+  std::vector<uint8_t> pdu_tmp(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    pdu_bufs[num_pdus] = rlc1_tx_lower->pull_pdu(payload_len);
+    unsigned nwritten  = rlc1_tx_lower->pull_pdu(pdu_tmp);
+    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
 
     if (pdu_bufs[num_pdus].empty()) {
       break;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/instrumentation/traces/du_traces.h"
 #include "srsran/phy/lower/lower_phy_error_notifier.h"
 #include "srsran/phy/support/resource_grid_context.h"
 
@@ -43,37 +44,47 @@ public:
   // See interface for documentation.
   void on_late_resource_grid(const resource_grid_context& context) override
   {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.warning(
-        "Real-time failure in low-phy: Downlink data late for sector {} and slot {}.", context.sector, context.slot);
+    logger.warning(context.slot.sfn(),
+                   context.slot.slot_index(),
+                   "Real-time failure in low-phy: Downlink data late for sector {} and slot {}.",
+                   context.sector,
+                   context.slot);
+    l1_tracer << instant_trace_event{"on_late_resource_grid", instant_trace_event::cpu_scope::global};
   }
 
   // See interface for documentation.
   void on_prach_request_late(const prach_buffer_context& context) override
   {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.warning("Real-time failure in low-phy: PRACH request late for sector {}, slot {} and start symbol {}.",
+    logger.warning(context.slot.sfn(),
+                   context.slot.slot_index(),
+                   "Real-time failure in low-phy: PRACH request late for sector {}, slot {} and start symbol {}.",
                    context.sector,
                    context.slot,
                    context.start_symbol);
+    l1_tracer << instant_trace_event{"on_prach_request_late", instant_trace_event::cpu_scope::global};
   }
 
   // See interface for documentation.
   void on_prach_request_overflow(const prach_buffer_context& context) override
   {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.warning("Real-time failure in low-phy: PRACH request overflow for sector {}, slot {} and start symbol {}.",
+    logger.warning(context.slot.sfn(),
+                   context.slot.slot_index(),
+                   "Real-time failure in low-phy: PRACH request overflow for sector {}, slot {} and start symbol {}.",
                    context.sector,
                    context.slot,
                    context.start_symbol);
+    l1_tracer << instant_trace_event{"on_prach_request_overflow", instant_trace_event::cpu_scope::global};
   }
 
   // See interface for documentation.
   void on_puxch_request_late(const resource_grid_context& context) override
   {
-    logger.set_context(context.slot.sfn(), context.slot.slot_index());
-    logger.warning(
-        "Real-time failure in low-phy: PUxCH request late for sector {}, slot {}.", context.sector, context.slot);
+    logger.warning(context.slot.sfn(),
+                   context.slot.slot_index(),
+                   "Real-time failure in low-phy: PUxCH request late for sector {}, slot {}.",
+                   context.sector,
+                   context.slot);
+    l1_tracer << instant_trace_event{"on_puxch_request_late", instant_trace_event::cpu_scope::global};
   }
 };
 

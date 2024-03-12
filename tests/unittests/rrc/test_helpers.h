@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,10 @@
 
 #pragma once
 
-#include "srsran/cu_cp/cell_meas_manager.h"
 #include "srsran/cu_cp/cu_cp_types.h"
-#include "srsran/support/async/async_task_loop.h"
+#include "srsran/rrc/rrc_du.h"
+#include "srsran/rrc/rrc_ue.h"
+#include "srsran/support/async/fifo_async_task_scheduler.h"
 
 namespace srsran {
 namespace srs_cu_cp {
@@ -34,28 +35,25 @@ class dummy_rrc_f1ap_pdu_notifier : public rrc_pdu_f1ap_notifier
 public:
   dummy_rrc_f1ap_pdu_notifier() = default;
 
-  void on_new_rrc_pdu(const srb_id_t srb_id, const byte_buffer& pdu, ue_index_t old_ue_index) override
+  void on_new_rrc_pdu(const srb_id_t srb_id, const byte_buffer& pdu) override
   {
-    last_rrc_pdu  = pdu.copy();
-    last_srb_id   = srb_id;
-    last_ue_index = old_ue_index;
+    last_rrc_pdu = pdu.copy();
+    last_srb_id  = srb_id;
   }
 
   byte_buffer last_rrc_pdu;
   srb_id_t    last_srb_id;
-  ue_index_t  last_ue_index;
 };
 
 class dummy_rrc_ue_du_processor_adapter : public rrc_ue_du_processor_notifier
 {
 public:
   async_task<cu_cp_ue_context_release_complete>
-  on_ue_context_release_command(const rrc_ue_context_release_command& msg) override
+  on_ue_context_release_command(const cu_cp_ue_context_release_command& msg) override
   {
     logger.info("Received UE Context Release Command");
-    last_rrc_ue_context_release_command.ue_index        = msg.ue_index;
-    last_rrc_ue_context_release_command.cause           = msg.cause;
-    last_rrc_ue_context_release_command.rrc_release_pdu = msg.rrc_release_pdu.copy();
+    last_cu_cp_ue_context_release_command.ue_index = msg.ue_index;
+    last_cu_cp_ue_context_release_command.cause    = msg.cause;
 
     return launch_async([](coro_context<async_task<cu_cp_ue_context_release_complete>>& ctx) mutable {
       CORO_BEGIN(ctx);
@@ -73,8 +71,8 @@ public:
     });
   }
 
-  srb_creation_message           last_srb_creation_message;
-  rrc_ue_context_release_command last_rrc_ue_context_release_command;
+  srb_creation_message             last_srb_creation_message;
+  cu_cp_ue_context_release_command last_cu_cp_ue_context_release_command;
 
 private:
   srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
@@ -83,95 +81,107 @@ private:
 class dummy_rrc_ue_ngap_adapter : public rrc_ue_nas_notifier, public rrc_ue_control_notifier
 {
 public:
-  void on_initial_ue_message(const initial_ue_message& msg) override
+  void set_ue_context_release_outcome(bool outcome) { ue_context_release_outcome = outcome; }
+
+  void on_initial_ue_message(const cu_cp_initial_ue_message& msg) override
   {
     logger.info("Received Initial UE Message");
     initial_ue_msg_received = true;
   }
 
-  void on_ul_nas_transport_message(const ul_nas_transport_message& msg) override
+  void on_ul_nas_transport_message(const cu_cp_ul_nas_transport& msg) override
   {
     logger.info("Received UL NAS Transport message");
   }
 
-  void on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override
+  virtual async_task<bool> on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override
   {
-    logger.info("Received UE Context Release Request");
+    logger.info("Received a UE Context Release Request");
+    return launch_async([this](coro_context<async_task<bool>>& ctx) {
+      CORO_BEGIN(ctx);
+      CORO_RETURN(ue_context_release_outcome);
+    });
   }
 
   void on_inter_cu_ho_rrc_recfg_complete_received(const ue_index_t           ue_index,
                                                   const nr_cell_global_id_t& cgi,
                                                   const unsigned             tac) override
   {
-    logger.info("Received inter CU handover related RRC Reconfiguration Complete.");
+    logger.info("ue={}: Received inter CU handover related RRC Reconfiguration Complete", ue_index);
   }
 
   bool initial_ue_msg_received = false;
 
 private:
-  srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST");
+  bool                  ue_context_release_outcome = false;
+  srslog::basic_logger& logger                     = srslog::fetch_basic_logger("TEST");
 };
 
-class dummy_rrc_ue_cu_cp_adapter : public rrc_ue_reestablishment_notifier
+class dummy_rrc_ue_cu_cp_adapter : public rrc_ue_context_update_notifier, public rrc_ue_measurement_notifier
 {
 public:
   void add_ue_context(rrc_reestablishment_ue_context_t context) { reest_context = context; }
 
+  bool next_ue_setup_response = true;
+
+  bool on_ue_setup_request() override { return next_ue_setup_response; }
+
   rrc_reestablishment_ue_context_t
   on_rrc_reestablishment_request(pci_t old_pci, rnti_t old_c_rnti, ue_index_t ue_index) override
   {
-    logger.info("Received RRC Reestablishment Request from ue={} with old_pci={} and old_c_rnti={}",
-                ue_index,
-                old_pci,
-                old_c_rnti);
+    logger.info("ue={} old_pci={} old_c-rnti={}: Received RRC Reestablishment Request", ue_index, old_pci, old_c_rnti);
 
     return reest_context;
   }
 
-  void on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) override
+  async_task<bool> on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) override
   {
     logger.info("Requested a UE context transfer from ue={} with old_ue={}.", ue_index, old_ue_index);
+    return launch_async([](coro_context<async_task<bool>>& ctx) mutable {
+      CORO_BEGIN(ctx);
+      CORO_RETURN(true);
+    });
   }
+
+  void on_ue_removal_required(ue_index_t ue_index) override { logger.info("ue={}: Requested a UE removal", ue_index); }
+
+  optional<rrc_meas_cfg> on_measurement_config_request(nr_cell_id_t           nci,
+                                                       optional<rrc_meas_cfg> current_meas_config = {}) override
+  {
+    optional<rrc_meas_cfg> meas_cfg;
+    return meas_cfg;
+  }
+
+  void on_measurement_report(const ue_index_t ue_index, const rrc_meas_results& meas_results) override {}
 
 private:
   rrc_reestablishment_ue_context_t reest_context = {};
   srslog::basic_logger&            logger        = srslog::fetch_basic_logger("TEST");
 };
 
-class dummy_cell_meas_manager : public cell_meas_manager
+class dummy_rrc_du_cu_cp_adapter : public rrc_du_measurement_config_notifier
 {
 public:
-  optional<rrc_meas_cfg> get_measurement_config(nr_cell_id_t nci) override
-  {
-    optional<rrc_meas_cfg> meas_cfg;
-    return meas_cfg;
-  }
-  optional<cell_meas_config> get_cell_config(nr_cell_id_t nci) override
-  {
-    optional<cell_meas_config> meas_cfg;
-    return meas_cfg;
-  }
-  void update_cell_config(nr_cell_id_t                           nci,
-                          const serving_cell_meas_config&        serv_cell_cfg_,
-                          std::vector<neighbor_cell_meas_config> ncells_ = {}) override
+  void on_cell_config_update_request(nr_cell_id_t                           nci,
+                                     const serving_cell_meas_config&        serv_cell_cfg,
+                                     std::vector<neighbor_cell_meas_config> ncells = {}) override
   {
   }
-  void report_measurement(const ue_index_t ue_index, const rrc_meas_results& meas_results) override {}
 };
 
 struct dummy_ue_task_scheduler : public rrc_ue_task_scheduler {
 public:
   dummy_ue_task_scheduler(timer_manager& timers_, task_executor& exec_) : timer_db(timers_), exec(exec_) {}
-  void          schedule_async_task(async_task<void>&& task) override { ctrl_loop.schedule(std::move(task)); }
+  void          schedule_async_task(async_task<void> task) override { ctrl_loop.schedule(std::move(task)); }
   unique_timer  make_unique_timer() override { return timer_db.create_unique_timer(exec); }
   timer_factory get_timer_factory() override { return timer_factory{timer_db, exec}; }
 
   void tick_timer() { timer_db.tick(); }
 
 private:
-  async_task_sequencer ctrl_loop{16};
-  timer_manager&       timer_db;
-  task_executor&       exec;
+  fifo_async_task_scheduler ctrl_loop{16};
+  timer_manager&            timer_db;
+  task_executor&            exec;
 };
 
 } // namespace srs_cu_cp

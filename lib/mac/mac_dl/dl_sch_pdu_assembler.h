@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,7 +37,33 @@ class byte_buffer_chain;
 class dl_sch_pdu
 {
 public:
+  /// Encoder of a MAC SDU.
+  class mac_sdu_encoder
+  {
+  public:
+    mac_sdu_encoder() = default;
+    mac_sdu_encoder(dl_sch_pdu& pdu_, lcid_t lcid_, unsigned subhdr_len_, unsigned max_sdu_size_);
+
+    bool valid() const { return pdu != nullptr; }
+
+    /// \brief Returns the space that is reserved for this MAC SDU payload.
+    span<uint8_t> sdu_space() const;
+
+    /// \brief Updates the DL-SCH PDU with the encoded MAC SDU subheader and payload.
+    /// \return Number of bytes written to the DL-SCH PDU (MAC SDU subheader + payload).
+    unsigned encode_sdu(unsigned sdu_bytes_written);
+
+  private:
+    dl_sch_pdu* pdu = nullptr;
+    lcid_t      lcid;
+    unsigned    subhr_len;
+    unsigned    max_sdu_size;
+  };
+
   explicit dl_sch_pdu(span<uint8_t> pdu_buffer_) : pdu(pdu_buffer_) {}
+
+  /// \brief Gets a MAC SDU encoder for a given LCID and scheduler grant size.
+  mac_sdu_encoder get_sdu_encoder(lcid_t lcid, unsigned sdu_payload_len_estimate);
 
   /// Adds a MAC SDU as a subPDU.
   unsigned add_sdu(lcid_t lcid_, byte_buffer_chain&& sdu);
@@ -96,16 +122,19 @@ public:
   span<const uint8_t> assemble_retx_pdu(rnti_t rnti, harq_id_t harq_id, unsigned tb_idx, unsigned tbs_bytes);
 
 private:
-  class dl_sch_pdu_logger;
+  class pdu_log_builder;
 
   /// Assemble MAC SDUs for a given LCID.
-  void assemble_sdus(dl_sch_pdu& ue_pdu, rnti_t rnti, const dl_msg_lc_info& subpdu, dl_sch_pdu_logger& pdu_logger);
+  void assemble_sdus(dl_sch_pdu& ue_pdu, rnti_t rnti, const dl_msg_lc_info& subpdu, pdu_log_builder& pdu_logger);
 
   /// Assemble MAC subPDU with a CE.
-  void assemble_ce(dl_sch_pdu& ue_pdu, rnti_t rnti, const dl_msg_lc_info& subpdu, dl_sch_pdu_logger& pdu_logger);
+  void assemble_ce(dl_sch_pdu& ue_pdu, rnti_t rnti, const dl_msg_lc_info& subpdu, pdu_log_builder& pdu_logger);
 
-  mac_dl_ue_manager&    ue_mng;
+  mac_dl_ue_manager& ue_mng;
+
   srslog::basic_logger& logger;
+  // memory buffer to avoid allocations during formatting of pdus
+  fmt::memory_buffer fmtbuf;
 };
 
 } // namespace srsran

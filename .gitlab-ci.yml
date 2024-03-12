@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -25,20 +25,17 @@
 
 include:
   - project: softwareradiosystems/ci/tools
-    ref: "12"
+    ref: "17"
     file: .gitlab/ci-shared/setup/all.yml
   - project: softwareradiosystems/ci/tools
-    ref: "12"
+    ref: "17"
     file: .gitlab/ci-shared/features/all.yml
   - project: softwareradiosystems/ci/tools
-    ref: "12"
+    ref: "17"
     file: .gitlab/ci-shared/tools/python.yml
   - project: softwareradiosystems/ci/tools
-    ref: "12"
+    ref: "17"
     file: .gitlab/ci-shared/tools/test_reporter.yml
-  - project: softwareradiosystems/ci/tools
-    ref: "12"
-    file: .gitlab/ci-shared/tools/tagger.yml
   - local: .gitlab/ci/builders/version.yml
   - local: .gitlab/ci/build.yml
   - local: .gitlab/ci/trx.yml
@@ -49,7 +46,8 @@ stages:
   - ci
   - static
   - build and unit tests
-  - e2e
+  - zmq
+  - rf
   - manual
   - documentation
   - private
@@ -65,22 +63,66 @@ variables:
 ################################################################################
 ## CI
 ################################################################################
+job cleaner:
+  extends: .job cleaner
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+
+pr reminder:
+  extends: .pr reminder
+  rules:
+    - if: $NOTIFY_SLACK != "true"
+      when: never
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+
 trigger builder:
   stage: ci
   rules:
     - if: $ON_MR
       changes:
         paths:
-          # - .gitlab/ci/src_cache.yml
-          # - .gitlab/ci/builders.yml
+          - .gitlab/ci/src_cache.yml
+          - .gitlab/ci/builders.yml
           - .gitlab/ci/builders/**/*
   trigger:
     include: .gitlab/ci/builders.yml
     strategy: depend
 
+trigger docker:
+  stage: ci
+  rules:
+    - if: $ON_MR
+      changes:
+        paths:
+          - .gitlab/ci/docker.yml
+          - docker/**/*.{yml,env,json,toml,py,sh,csv,py,toml}
+          - docker/**/Dockerfile
+          - scripts/srsran_performance
+          - .gdbinit
+  trigger:
+    include: .gitlab/ci/docker.yml
+    strategy: depend
+  variables:
+    PY_DIR: docker/metrics_server
+
 ################################################################################
 ## Static
 ################################################################################
+headers:
+  image: ubuntu
+  stage: static
+  rules:
+    - if: $ON_MR
+      exists:
+        - "**/CMakeLists.txt"
+        - "**/Dockerfile"
+        - "**/*.cmake"
+        - "**/*.yml"
+        - "**/*.sh"
+  script:
+    - .gitlab/ci/release/update_headers.sh
+  needs: []
+
 include-guards:
   extends: .include-guards
   parallel:
@@ -96,7 +138,7 @@ full-code-format:
     - if: $ON_MR
       changes:
         - .clang-format
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
 
 .codechecker:
   image: ${CR_REGISTRY_URI}/srsgnb/codechecker:${DOCKER_BUILDER_VERSION}
@@ -114,8 +156,10 @@ full-code-format:
     ANALYZER: ""
     ANALYZER_ARGS: ""
     ARTIFACT_EXTRA_PATH: ""
-    KUBERNETES_MEMORY_REQUEST: 6Gi
-    KUBERNETES_CPU_REQUEST: "3.5"
+    KUBERNETES_CPU_REQUEST: 6
+    KUBERNETES_CPU_LIMIT: 6
+    KUBERNETES_MEMORY_REQUEST: 12Gi
+    KUBERNETES_MEMORY_LIMIT: 12Gi
   before_script:
     - |
       echo "
@@ -137,10 +181,10 @@ full-code-format:
       cmake -DASSERT_LEVEL=PARANOID -DAUTO_DETECT_ISA=False -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTS=False ..
       make srsran_build_info # needed to generate hashes.h
   script:
-    - static-analyzer.sh -i /tmp/codechecker_skip --analyzers ${ANALYZER} ${ANALYZER_ARGS} $CI_PROJECT_DIR
+    - static-analyzer.sh -i /tmp/codechecker_skip --jobs ${KUBERNETES_CPU_REQUEST} --analyzers ${ANALYZER} ${ANALYZER_ARGS} $CI_PROJECT_DIR
   after_script:
     - mv codechecker_html codechecker-${ANALYZER}-html
-  artifacts:
+  artifacts: &codechecker_artifacts
     reports:
       codequality: code-quality-report.json
     paths:
@@ -159,22 +203,25 @@ clang-tidy:
       allow_failure: false
   variables:
     ANALYZER: clang-tidy
-    ANALYZER_ARGS: --tidy-config .clang-tidy
+    ANALYZER_ARGS: --analyzer-config clang-tidy:take-config-from-directory=true --tidy-config .clang-tidy
     ARTIFACT_EXTRA_PATH: "/index.html"
 
 cppcheck:
   extends: .codechecker
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
   interruptible: false
   variables:
     ANALYZER: cppcheck
-    ANALYZER_ARGS: --cppcheck-max-template-recursion 10
+    ANALYZER_ARGS: --cppcheck-max-template-recursion 5
+  artifacts:
+    <<: *codechecker_artifacts
+    expire_in: 1 day
 
 clangsa:
   extends: .codechecker
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
       when: manual
       allow_failure: true
     - if: $CI_DESCRIPTION =~ /Weekly/
@@ -191,7 +238,9 @@ clangsa:
   needs: []
   variables:
     KUBERNETES_CPU_REQUEST: 7
+    KUBERNETES_CPU_LIMIT: 7
     KUBERNETES_MEMORY_REQUEST: 13Gi
+    KUBERNETES_MEMORY_LIMIT: 13Gi
   tags:
     - ${AMD64_TAG}
   interruptible: false
@@ -203,12 +252,12 @@ clangsa:
       cov-build --dir cov-int make -j${KUBERNETES_CPU_REQUEST}
       tar czvf srsgnb.tgz cov-int
       ver=$(git rev-parse HEAD)
-
+    - |
       curl --form token=$COV_TOKEN \
-        --form email=nils@srs.io \
+        --form email=${COVERITY_EMAIL} \
         --form file=@srsgnb.tgz \
         --form version=$ver \
-        --form description="srsRAN Project dev build" \
+        --form description="${DESCRIPTION}" \
         https://scan.coverity.com/builds?project=${PROJECT_NAME}
 
 coverity-dev:
@@ -238,53 +287,19 @@ e2e tests tox:
 
 # In build.yml
 
-srsran docker compose:
-  stage: build and unit tests
-  image: docker:24.0.1
-  tags:
-    - docker
-  rules:
-    - if: $ON_MR
-      changes:
-        paths:
-          - docker/**/*
-          - .gitlab/ci/builders/install_dependencies.sh
-          - .gitlab/ci/builders/builder.sh
-    - if: $CI_DESCRIPTION =~ /Weekly/
-  timeout: 2h
-  variables:
-    DOCKER_HOST: tcp://docker:2375/
-    DOCKER_DRIVER: overlay2
-    DOCKER_TLS_CERTDIR: ""
-  services:
-    - name: docker:24.0.1-dind
-      alias: docker
-      entrypoint: ["env", "-u", "DOCKER_HOST"]
-      command: ["dockerd-entrypoint.sh"]
-  script:
-    - docker compose -f docker/docker-compose.yml run --no-deps gnb gnb --version
-    - docker compose -f docker/docker-compose.yml run 5gc 5gc -v
-  needs: []
-
 ################################################################################
 # Doc generation
 ################################################################################
 unit coverage:
   stage: documentation
   image:
-    name: ${GITLAB_REGISTRY_URI}/${CI_TOOLS_REPO}/report-generator:5.1.10
+    name: ${GITLAB_REGISTRY_URI}/${CI_TOOLS_REPO}/report-generator:5.1.26
     entrypoint: ["/bin/sh", "-c"]
   rules:
     - if: $ON_MR
       variables:
         coverage_report: summary
       when: always # Even if previous stages/required jobs fail
-      allow_failure: true
-    - if: $CI_DESCRIPTION =~ /Nightly/
-      variables:
-        coverage_report: full
-      when: always # Even if previous stages/required jobs fail
-      allow_failure: true
   before_script:
     - PACKAGE_URL=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/coverage/${CI_COMMIT_BRANCH}${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}/coverage_history.tar.gz
     # Download coverage history from the registry
@@ -320,53 +335,66 @@ unit coverage:
         -title:${CI_PROJECT_NAME} -tag:${CI_COMMIT_SHA} \
         -reporttypes:"${HTML_TYPE};TextSummary"
     - cat coverage_html/Summary.txt
+    - coverage_value=$(cat coverage_html/Summary.txt | sed -n 's/^\s*Line coverage:\s*\(.*\)\%/\1/p')
     - |
       if [[ $coverage_report = "full" ]]; then
         publish_to_registry
       fi
-    - export PIP_EXTRA_INDEX_URL=""
-    - apk update; apk add python3 py3-pip
-    - pip3 install --verbose retina-reporter --index-url https://__token__:$CODEBOT_TOKEN@gitlab.com/api/v4/projects/44296988/packages/pypi/simple
-    - retina-reporter --input build_time_metrics.json --bucket ci --db-config token=$INFLUXDB_TOKEN org=$INFLUXDB_ORG url=$INFLUXDB_URL
+    - |
+      export metric_prefix=""
+      if [[ $ON_MR == "true" ]]; then metric_prefix="_pr"; fi
+      echo "coverage${metric_prefix},pipeline=${CI_PIPELINE_ID},os=${OS} value=${coverage_value}" >> build_time_metrics.txt
+    - |
+      influx write --host $INFLUXDB_URL --token $INFLUXDB_TOKEN --org $INFLUXDB_ORG \
+        --bucket ci --file build_time_metrics.txt
   coverage: /^\s*Line coverage:\s*\d+.\d+\%/
-  artifacts:
+  artifacts: &unit_coverage_artifacts
     paths:
       - coverage_html
     expire_in: 10 minutes
+  retry: 2
   needs:
-    - job: smoke release cached
-      optional: true
-      artifacts: true
-    - job: smoke release clean
+    - job: intermediate commits
       optional: true
       artifacts: true
     - job: smoke release update cache
       optional: true
       artifacts: true
 
+unit coverage dev:
+  extends: unit coverage
+  rules:
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
+      variables:
+        coverage_report: full
+      when: always # Even if previous stages/required jobs fail
+  artifacts:
+    <<: *unit_coverage_artifacts
+    expire_in: 1 day
+
 pages:
   stage: documentation
   rules:
-    - if: $CI_DESCRIPTION == "Nightly"
+    - if: $CI_DESCRIPTION =~ /ightly Build + Unit Tests/
       when: always # Even if previous stages/required jobs fail
       allow_failure: true
-  image: ${GITLAB_REGISTRY_URI}/${CI_TOOLS_REPO}/doxygen:2.0.0
+  image: ${GITLAB_REGISTRY_URI}/${CI_TOOLS_REPO}/doxygen:1.9.8-1.2023.7
   script:
     - mkdir public
     - mv coverage_html public/
     - mv codechecker*html public/
     - mv docs/index.html public/index.html
     - .gitlab/ci/builders/install_dependencies.sh
+    - apt-get update && apt-get install -y --no-install-recommends rsync
     - |
       rm -Rf build
       mkdir build
       cd build || exit
-      cmake -G Ninja ..
-      ninja doxygen
-      mv ./docs/html ./public
+      cmake ..
+      make -j $(nproc) doxygen
       cd ..
-    - mv build/public/index.html build/public/index_doxygen.html
-    - find build/public/ -name '*.*' -exec mv {} public/ \;
+    - mkdir public/doxygen
+    - rsync -a build/docs/html/ public/doxygen/
   after_script:
     - |
       if [ $CI_JOB_STATUS = "failed" ]; then
@@ -375,31 +403,10 @@ pages:
       fi
     - mv docs/*.png public/
     - sed -i 's/commit_hash/'$CI_COMMIT_SHA'/' public/index.html
-    - sed -i 's/zmq_job_id/'$( cat ./zmq/job.env  )'/' public/index.html
-    - sed -i 's/zmq_asan_job_id/'$( cat ./zmq-asan/job.env  )'/' public/index.html
-    - sed -i 's/zmq_valgrind_job_id/'$( cat ./zmq-valgrind/job.env  )'/' public/index.html
-    - sed -i 's/rf_job_id/'$( cat ./rf/job.env  )'/' public/index.html
-    - sed -i 's/rf_tsan_job_id/'$( cat ./rf-tsan/job.env  )'/' public/index.html
-    - sed -i 's/rf_asan_job_id/'$( cat ./rf-asan/job.env  )'/' public/index.html
-    - sed -i 's/rf_b200_config_job_id/'$( cat ./rf-b200-config/job.env  )'/' public/index.html
   needs:
-    - job: unit coverage
+    - job: unit coverage dev
       artifacts: true
     - job: cppcheck
-      artifacts: true
-    - job: zmq
-      artifacts: true
-    - job: zmq-asan
-      artifacts: true
-    - job: zmq-valgrind
-      artifacts: true
-    - job: rf
-      artifacts: true
-    - job: rf-tsan
-      artifacts: true
-    - job: rf-asan
-      artifacts: true
-    - job: rf-b200-config
       artifacts: true
   artifacts:
     paths:
@@ -407,54 +414,17 @@ pages:
     expire_in: 10 minutes
 
 ################################################################################
-# Git workflow graduation
+# Release dryrun
 ################################################################################
-promote code:
-  stage: .post
-  rules:
-    - if: $GRADUATION_BRANCH
-  interruptible: false
-  variables:
-    GIT_STRATEGY: none
-  image: alpine:3.16.0 # sh entrypoint
-  before_script:
-    - apk add git git-lfs
-    - git lfs install
-  script:
-    - git clone https://${CODEBOT_USERNAME}:${CODEBOT_TOKEN}@gitlab.com/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}.git /${CI_PROJECT_NAME}
-    - cd /${CI_PROJECT_NAME}
-    - git checkout -t origin/$GRADUATION_BRANCH
-    - git rebase ${CI_COMMIT_SHA}
-    - git push
-  dependencies: []
-
 update agpl main dryrun:
   extends: .update agpl main
   stage: .post
   rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
       when: always
-      allow_failure: true
       variables:
         MODE: "dryrun"
   needs: []
-
-tag successful schedule:
-  extends: .create-tag
-  stage: .post
-  rules:
-    - if: $CI_DESCRIPTION =~ /Nightly/
-      when: manual
-      allow_failure: true
-    - if: $CI_DESCRIPTION =~ /Weekly/
-      when: manual
-      allow_failure: true
-  variables:
-    GIT_STRATEGY: none
-  interruptible: false
-  script:
-    - create_tag $(date +"%Y.%m.%d")
-  dependencies: []
 
 ################################################################################
 # Enable / Disable pipelines
@@ -475,25 +445,17 @@ disable current schedule:
   stage: .post
   extends: .enable-schedule-by-description
   rules:
-    - if: $GRADUATION_BRANCH
+    - if: $CI_DESCRIPTION =~ /Nightly Build Unit Tests/
       when: always
+    - if: $CI_DESCRIPTION =~ /Nightly E2E Tests/
+      when: always
+    - if: $CI_DESCRIPTION =~ /Alternative OSs/
+      when: always
+    - if: $CI_DESCRIPTION =~ /Weekly/
+      when: always                  
   interruptible: false
   variables:
     ENABLE: "false"
     BRANCH: $CI_COMMIT_REF_NAME
     DESCRIPTION: $CI_DESCRIPTION
-  dependencies: []
-
-enable schedule on graduation branch:
-  stage: .post
-  extends: .enable-schedule-by-branch
-  rules:
-    - if: $GRADUATION_BRANCH
-  interruptible: false
-  variables:
-    ENABLE: "true"
-    BRANCH: $GRADUATION_BRANCH
-  needs:
-    - job: promote code
-      artifacts: false
   dependencies: []

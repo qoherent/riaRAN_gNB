@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -43,12 +43,12 @@ byte_buffer make_asn1_rrc_cell_mib_buffer(const du_cell_config& du_cfg);
 /// \return byte buffer with packed cell SIB1.
 byte_buffer make_asn1_rrc_cell_sib1_buffer(const du_cell_config& du_cfg, std::string* js_str = nullptr);
 
-byte_buffer make_asn1_rrc_cell_sib19_buffer(const ntn_config& ntn_cfg, std::string* js_str = nullptr);
+byte_buffer make_asn1_rrc_cell_sib19_buffer(const sib19_info& sib19_params, std::string* js_str = nullptr);
 
-/// \brief Derive packed cell BCCH-DL-SCH message from DU cell configuration.
+/// \brief Generate packed cell BCCH-DL-SCH messages (SIB1 + SI messages) from DU cell configuration.
 /// \param[in] du_cfg DU Cell Configuration.
 /// \return byte buffer with packed cell BCCH-DL-SCH message.
-byte_buffer make_asn1_rrc_cell_bcch_dl_sch_msg(const du_cell_config& du_cfg);
+std::vector<byte_buffer> make_asn1_rrc_cell_bcch_dl_sch_msgs(const du_cell_config& du_cfg);
 
 /// \brief Derive packed cell measurementTimingConfiguration from DU cell configuration.
 /// \param[in] du_cfg DU Cell Configuration.

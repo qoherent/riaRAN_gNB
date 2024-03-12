@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,9 +25,6 @@
 #include "CLI/CLI11.hpp"
 
 namespace srsran {
-
-/// Creates an instance of a JSON configuration parser.
-std::unique_ptr<CLI::Config> create_json_config_parser();
 
 /// Creates an instance of a YAML configuration parser.
 std::unique_ptr<CLI::Config> create_yaml_config_parser();

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -45,7 +45,6 @@ protected:
 /// Test the RRC Reestablishment
 TEST_F(rrc_ue_reest, when_invalid_reestablishment_request_received_then_rrc_setup_sent)
 {
-  connect_amf();
   receive_invalid_reestablishment_request(0, to_rnti(0x4601));
 
   // check if the RRC Setup Request was generated
@@ -62,7 +61,6 @@ TEST_F(rrc_ue_reest, when_invalid_reestablishment_request_received_then_rrc_setu
 /// Test the RRC Reestablishment
 TEST_F(rrc_ue_reest, when_valid_reestablishment_request_received_but_security_context_not_found_then_rrc_setup_sent)
 {
-  connect_amf();
   receive_valid_reestablishment_request(1, to_rnti(0x4601));
 
   // check if the RRC Setup Request was generated
@@ -77,30 +75,27 @@ TEST_F(rrc_ue_reest, when_valid_reestablishment_request_received_but_security_co
 }
 
 /// Test the RRC Reestablishment
-TEST_F(rrc_ue_reest,
-       when_valid_reestablishment_request_for_different_du_received_then_rrc_reestablishment_without_old_ue_index_sent)
+TEST_F(rrc_ue_reest, when_reestablishment_request_with_cause_recfg_fail_received_then_rrc_setup_sent)
 {
-  connect_amf();
-  ue_index_t old_ue_index = generate_ue_index(uint_to_du_index(1), 2);
+  ue_index_t old_ue_index = uint_to_ue_index(0);
   add_ue_reestablishment_context(old_ue_index);
-  receive_valid_reestablishment_request(1, to_rnti(0x4601));
+  receive_valid_reestablishment_request_with_cause_recfg_fail(1, to_rnti(0x4601));
+
+  // check if the RRC Setup Request was generated
+  ASSERT_EQ(get_srb0_pdu_type(), asn1::rrc_nr::dl_ccch_msg_type_c::c1_c_::types::rrc_setup);
 
   // check if SRB1 was created
   check_srb1_exists();
 
-  // check if the RRC Reestablishment was generated
-  ASSERT_EQ(get_last_srb(), srb_id_t::srb1);
-  // check if the old ue index was send to the f1ap
-  ASSERT_EQ(get_old_ue_index(), ue_index_t::invalid);
+  receive_setup_complete();
 
-  receive_reestablishment_complete();
+  check_initial_ue_message_sent();
 }
 
 /// Test the RRC Reestablishment
 TEST_F(rrc_ue_reest,
        when_valid_reestablishment_request_for_same_du_received_then_rrc_reestablishment_with_old_ue_index_sent)
 {
-  connect_amf();
   ue_index_t old_ue_index = uint_to_ue_index(0);
   add_ue_reestablishment_context(old_ue_index);
   receive_valid_reestablishment_request(1, to_rnti(0x4601));
@@ -110,8 +105,6 @@ TEST_F(rrc_ue_reest,
 
   // check if the RRC message was sent over SRB1
   ASSERT_EQ(get_last_srb(), srb_id_t::srb1);
-  // check if the old ue index was send to the f1ap
-  ASSERT_EQ(get_old_ue_index(), old_ue_index);
 
   receive_reestablishment_complete();
 }

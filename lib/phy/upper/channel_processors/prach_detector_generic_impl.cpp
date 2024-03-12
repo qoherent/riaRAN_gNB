@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -39,46 +39,20 @@
 
 using namespace srsran;
 
+static const detail::threshold_and_margin_finder threshold_and_margin_table(detail::all_threshold_and_margins);
+
 bool prach_detector_validator_impl::is_valid(const prach_detector::configuration& config) const
 {
-  // Only unrestricted sets are supported.
-  if (config.restricted_set != restricted_set_config::UNRESTRICTED) {
-    return false;
-  }
+  detail::threshold_params th_params;
+  th_params.nof_rx_ports          = config.nof_rx_ports;
+  th_params.scs                   = config.ra_scs;
+  th_params.format                = config.format;
+  th_params.zero_correlation_zone = config.zero_correlation_zone;
+  th_params.combine_symbols       = true;
 
-  // No special requirements for long formats.
-  if (is_long_preamble(config.format)) {
-    if (config.format != prach_format_type::zero) {
-      // Currently, only Format 0 is supported.
-      return false;
-    }
-    if ((config.zero_correlation_zone != 0) && (config.zero_correlation_zone != 1)) {
-      return false;
-    }
-    return true;
-  }
+  auto flag = threshold_and_margin_table.check_flag(th_params);
 
-  // Check short preambles configurations.
-  if ((config.format != prach_format_type::A1) && (config.format != prach_format_type::B4)) {
-    // Currently, only Formats A1 and B4 are supported.
-    return false;
-  }
-
-  if (config.ra_scs != prach_subcarrier_spacing::kHz30) {
-    // Currently, only PRACH subcarrier spacing of 30 kHz is supported.
-    return false;
-  }
-
-  // The zero correlation zone supported are the values indicated in TS38.104 Table A.6-1.
-  if ((config.ra_scs == prach_subcarrier_spacing::kHz15) && (config.zero_correlation_zone != 0) &&
-      (config.zero_correlation_zone != 11)) {
-    return false;
-  }
-  if ((config.ra_scs == prach_subcarrier_spacing::kHz30) && (config.zero_correlation_zone != 0) &&
-      (config.zero_correlation_zone != 14)) {
-    return false;
-  }
-  return true;
+  return (flag != detail::threshold_and_margin_finder::threshold_flag::red);
 }
 
 prach_detector_generic_impl::prach_detector_generic_impl(std::unique_ptr<dft_processor>   idft_long_,
@@ -114,14 +88,14 @@ prach_detector_generic_impl::prach_detector_generic_impl(std::unique_ptr<dft_pro
 
 prach_detection_result prach_detector_generic_impl::detect(const prach_buffer& input, const configuration& config)
 {
-  srsran_assert(
-      config.start_preamble_index + config.nof_preamble_indices <= prach_constants::MAX_NUM_PREAMBLES,
-      "The start preamble index (i.e., {}) and the number of preambles to detect (i.e., {}), exceed the maximum of 64.",
-      config.start_preamble_index,
-      config.nof_preamble_indices);
+  srsran_assert(config.start_preamble_index + config.nof_preamble_indices <= prach_constants::MAX_NUM_PREAMBLES,
+                "The start preamble index (i.e., {}) and the number of preambles to detect (i.e., {}), exceed the "
+                "maximum of 64.",
+                config.start_preamble_index,
+                config.nof_preamble_indices);
 
   // Get preamble information.
-  prach_preamble_information preamble_info = {};
+  prach_preamble_information preamble_info;
   if (is_long_preamble(config.format)) {
     preamble_info = get_prach_preamble_long_info(config.format);
   } else {
@@ -170,16 +144,16 @@ prach_detection_result prach_detector_generic_impl::detect(const prach_buffer& i
   win_width = (win_width * dft_size) / L_ra;
 
   // Select window margin and threshold.
-  detail::threshold_params th_params = {};
-  th_params.nof_rx_ports             = config.nof_rx_ports;
-  th_params.zero_correlation_zone    = config.zero_correlation_zone;
-  th_params.format                   = config.format;
-  th_params.combine_symbols          = combine_symbols;
+  detail::threshold_params th_params;
+  th_params.nof_rx_ports          = config.nof_rx_ports;
+  th_params.scs                   = config.ra_scs;
+  th_params.format                = config.format;
+  th_params.zero_correlation_zone = config.zero_correlation_zone;
+  th_params.combine_symbols       = combine_symbols;
 
-  static const detail::threshold_and_margin_finder threshold_and_margin_table(detail::all_threshold_and_margins);
-  auto                                             th_and_margin = threshold_and_margin_table.get(th_params);
-  float                                            threshold     = std::get<0>(th_and_margin);
-  unsigned                                         win_margin    = std::get<1>(th_and_margin);
+  auto     th_and_margin = threshold_and_margin_table.get(th_params);
+  float    threshold     = std::get<0>(th_and_margin);
+  unsigned win_margin    = std::get<1>(th_and_margin);
   srsran_assert((win_margin > 0) && (threshold > 0.0),
                 "Window margin and threshold are not selected for the number of ports (i.e., {}) and the preamble "
                 "format (i.e., {}).",
@@ -225,12 +199,12 @@ prach_detection_result prach_detector_generic_impl::detect(const prach_buffer& i
 
   for (unsigned i_sequence = 0; i_sequence != nof_sequences; ++i_sequence) {
     // Prepare root sequence configuration.
-    prach_generator::configuration generator_config = {};
-    generator_config.format                         = config.format;
-    generator_config.root_sequence_index            = config.root_sequence_index;
-    generator_config.preamble_index                 = i_sequence * nof_shifts;
-    generator_config.restricted_set                 = config.restricted_set;
-    generator_config.zero_correlation_zone          = config.zero_correlation_zone;
+    prach_generator::configuration generator_config;
+    generator_config.format                = config.format;
+    generator_config.root_sequence_index   = config.root_sequence_index;
+    generator_config.preamble_index        = i_sequence * nof_shifts;
+    generator_config.restricted_set        = config.restricted_set;
+    generator_config.zero_correlation_zone = config.zero_correlation_zone;
 
     // Generate root sequence.
     span<const cf_t> root = generator->generate(generator_config);
@@ -356,10 +330,8 @@ prach_detection_result prach_detector_generic_impl::detect(const prach_buffer& i
         info.preamble_index                               = i_sequence * nof_shifts + i_window;
         info.time_advance =
             phy_time_unit::from_seconds(static_cast<double>(delay) / static_cast<double>(sample_rate_Hz));
-        // The peak value of the detection metric is somehow related to the SINR, although it can't be considered a
-        // reliable estimate.
-        info.power_dB = convert_power_to_dB(peak);
-        info.snr_dB   = convert_power_to_dB(peak);
+        // Normalize the detection metric with respect to the threshold.
+        info.detection_metric = peak / threshold;
       }
     }
   }

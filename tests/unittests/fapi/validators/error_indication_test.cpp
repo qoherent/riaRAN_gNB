@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -179,6 +179,42 @@ TEST(validate_error_indication, invalid_message_fails)
 TEST(validate_out_of_sync_error_indication, valid_message_passes)
 {
   const auto& msg = build_valid_out_of_sync_error_indication();
+
+  const auto& result = validate_error_indication(msg);
+
+  ASSERT_TRUE(result);
+}
+
+TEST(validate_invalid_sfn_error_indication, valid_message_passes)
+{
+  const auto& msg = build_valid_invalid_sfn_error_indication();
+
+  const auto& result = validate_error_indication(msg);
+
+  ASSERT_TRUE(result);
+}
+
+TEST(validate_msg_slot_error_indication, valid_message_passes)
+{
+  const auto& msg = build_valid_msg_slot_error_indication();
+
+  const auto& result = validate_error_indication(msg);
+
+  ASSERT_TRUE(result);
+}
+
+TEST(validate_tx_err_error_indication, valid_message_passes)
+{
+  const auto& msg = build_valid_tx_err_error_indication();
+
+  const auto& result = validate_error_indication(msg);
+
+  ASSERT_TRUE(result);
+}
+
+TEST(validate_ul_dci_err_error_indication, valid_message_passes)
+{
+  const auto& msg = build_valid_ul_dci_err_error_indication();
 
   const auto& result = validate_error_indication(msg);
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/asn1/rrc_nr/msg_common.h"
+#include "srsran/asn1/rrc_nr/ul_ccch_msg_ies.h"
 #include "srsran/e1ap/cu_cp/e1ap_cu_cp.h"
 #include "srsran/rrc/rrc_types.h"
 
@@ -45,8 +45,11 @@ rrc_reconfiguration_procedure_request generate_rrc_reconfiguration_procedure_req
 byte_buffer generate_invalid_rrc_reestablishment_request_pdu(pci_t pci, rnti_t c_rnti);
 
 /// \brief Generate RRC Container with valid RRC Reestablishment Request.
-byte_buffer
-generate_valid_rrc_reestablishment_request_pdu(pci_t pci, rnti_t c_rnti, std::string short_mac_i = "0111011100001000");
+byte_buffer generate_valid_rrc_reestablishment_request_pdu(
+    pci_t                       pci,
+    rnti_t                      c_rnti,
+    std::string                 short_mac_i = "0111011100001000",
+    asn1::rrc_nr::reest_cause_e cause       = asn1::rrc_nr::reest_cause_opts::options::other_fail);
 
 /// \brief Generate RRC Container with RRC Reestablishment Complete.
 byte_buffer generate_rrc_reestablishment_complete_pdu();

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,7 +20,7 @@
  *
  */
 
-#include "lib/cu_cp/ue_manager_impl.h"
+#include "lib/cu_cp/ue_manager/ue_manager_impl.h"
 #include "lib/ngap/ngap_asn1_helpers.h"
 #include "lib/ngap/ngap_asn1_packer.h"
 #include "tests/unittests/ngap/test_helpers.h"
@@ -51,10 +51,14 @@ public:
     nw_config(nw_config_),
     epoll_broker(create_io_broker(io_broker_type::epoll)),
     gw(create_sctp_network_gateway({nw_config, *this, *this})),
-    packer(*gw, *this, pcap)
+    packer(*gw, *this, *this, pcap)
   {
     gw->create_and_connect();
-    epoll_broker->register_fd(gw->get_socket_fd(), [this](int fd) { gw->receive(); });
+    bool success = epoll_broker->register_fd(gw->get_socket_fd(), [this](int fd) { gw->receive(); });
+    if (!success) {
+      report_fatal_error("Failed to register N2 (SCTP) network gateway at IO broker. socket_fd={}",
+                         gw->get_socket_fd());
+    }
   }
 
   ~ngap_network_adapter() {}
@@ -81,7 +85,7 @@ private:
   std::unique_ptr<sctp_network_gateway> gw;
   ngap_asn1_packer                      packer;
   ngap_interface*                       ngap = nullptr;
-  dummy_ngap_pcap                       pcap;
+  null_dlt_pcap                         pcap;
 
   srslog::basic_logger& test_logger = srslog::fetch_basic_logger("TEST");
 };
@@ -113,7 +117,8 @@ protected:
 
     ngap_ue_task_scheduler = std::make_unique<dummy_ngap_ue_task_scheduler>(timers, ctrl_worker);
 
-    ngap = create_ngap(cfg, cu_cp_paging_notifier, *ngap_ue_task_scheduler, ue_mng, *adapter, ctrl_worker);
+    ngap = create_ngap(
+        cfg, ngap_ue_creation_notifier, cu_cp_paging_notifier, *ngap_ue_task_scheduler, ue_mng, *adapter, ctrl_worker);
     adapter->connect_ngap(ngap.get());
   }
 
@@ -121,20 +126,52 @@ protected:
   ue_configuration                              ue_config;
   up_resource_manager_cfg                       up_config;
   timer_manager                                 timers;
-  ue_manager                                    ue_mng{ue_config, up_config};
+  manual_task_worker                            ctrl_worker{128};
+  ue_manager                                    ue_mng{ue_config, up_config, timers, ctrl_worker};
+  dummy_ngap_cu_cp_ue_creation_notifier         ngap_ue_creation_notifier{ue_mng};
   dummy_ngap_cu_cp_paging_notifier              cu_cp_paging_notifier;
   std::unique_ptr<dummy_ngap_ue_task_scheduler> ngap_ue_task_scheduler;
   std::unique_ptr<ngap_network_adapter>         adapter;
-  manual_task_worker                            ctrl_worker{128};
   std::unique_ptr<ngap_interface>               ngap;
 
   srslog::basic_logger& test_logger = srslog::fetch_basic_logger("TEST");
 };
 
-ng_setup_request generate_ng_setup_request(ngap_configuration ngap_cfg)
+ngap_ng_setup_request generate_ng_setup_request(ngap_configuration ngap_cfg)
 {
-  ng_setup_request request_msg = {};
-  fill_asn1_ng_setup_request(request_msg.msg, ngap_cfg);
+  ngap_ng_setup_request request_msg = {};
+
+  ngap_ng_setup_request request;
+
+  // fill global ran node id
+  request.global_ran_node_id.gnb_id  = ngap_cfg.gnb_id;
+  request.global_ran_node_id.plmn_id = ngap_cfg.plmn;
+  // fill ran node name
+  request.ran_node_name = ngap_cfg.ran_node_name;
+  // fill supported ta list
+  // TODO: add support for more items
+  ngap_supported_ta_item supported_ta_item;
+
+  ngap_broadcast_plmn_item broadcast_plmn_item;
+  broadcast_plmn_item.plmn_id = ngap_cfg.plmn;
+
+  for (const auto& slice_config : ngap_cfg.slice_configurations) {
+    slice_support_item_t slice_support_item;
+    slice_support_item.s_nssai.sst = slice_config.sst;
+    if (slice_config.sd.has_value()) {
+      slice_support_item.s_nssai.sd = slice_config.sd.value();
+    }
+    broadcast_plmn_item.tai_slice_support_list.push_back(slice_support_item);
+  }
+
+  supported_ta_item.broadcast_plmn_list.push_back(broadcast_plmn_item);
+  supported_ta_item.tac = ngap_cfg.tac;
+
+  request.supported_ta_list.push_back(supported_ta_item);
+
+  // fill paging drx
+  request.default_paging_drx = 256;
+
   return request_msg;
 }
 
@@ -142,12 +179,12 @@ ng_setup_request generate_ng_setup_request(ngap_configuration ngap_cfg)
 TEST_F(ngap_integration_test, when_ng_setup_response_received_then_amf_connected)
 {
   // Action 1: Launch NG setup procedure
-  ngap_configuration ngap_cfg = srsran::config_helpers::make_default_ngap_config();
+  ngap_configuration    ngap_cfg    = srsran::config_helpers::make_default_ngap_config();
+  ngap_ng_setup_request request_msg = generate_ng_setup_request(ngap_cfg);
 
-  ng_setup_request request_msg = generate_ng_setup_request(ngap_cfg);
   test_logger.info("Launching NG setup procedure...");
-  async_task<ng_setup_response>         t = ngap->handle_ng_setup_request(request_msg);
-  lazy_task_launcher<ng_setup_response> t_launcher(t);
+  async_task<ngap_ng_setup_result>         t = ngap->handle_ng_setup_request(request_msg);
+  lazy_task_launcher<ngap_ng_setup_result> t_launcher(t);
 
   // Status: Procedure not yet ready.
   ASSERT_FALSE(t.ready());

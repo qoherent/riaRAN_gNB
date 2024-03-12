@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,20 +22,16 @@
 
 #pragma once
 
-#include "srsran/adt/optional.h"
-#include "srsran/asn1/ngap/ngap.h"
 #include "srsran/cu_cp/cu_cp_types.h"
 #include "srsran/ngap/ngap_handover.h"
+#include "srsran/ngap/ngap_setup.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/timers.h"
 
 namespace srsran {
-
 namespace srs_cu_cp {
 
-struct ngap_message {
-  asn1::ngap::ngap_pdu_c pdu;
-};
+struct ngap_message;
 
 /// This interface is used to push NGAP messages to the NGAP interface.
 class ngap_message_handler
@@ -65,16 +61,6 @@ public:
   virtual void on_new_message(const ngap_message& msg) = 0;
 };
 
-struct ng_setup_request {
-  asn1::ngap::ng_setup_request_s msg;
-  unsigned                       max_setup_retries = 5;
-};
-
-struct ng_setup_response {
-  asn1::ngap::ng_setup_resp_s msg;
-  bool                        success = false;
-};
-
 /// Handle NGAP interface management procedures as defined in TS 38.413 section 8.7
 class ngap_connection_manager
 {
@@ -83,24 +69,33 @@ public:
 
   /// \brief Initiates the NG Setup procedure.
   /// \param[in] request The NGSetupRequest message to transmit.
-  /// \return Returns a ng_setup_response struct with the success member set to 'true' in case of a
-  /// successful outcome, 'false' otherwise.
+  /// \return Returns a ngap_ng_setup_result struct.
   /// \remark The CU transmits the NGSetupRequest as per TS 38.413 section 8.7.1
   /// and awaits the response. If a NGSetupFailure is received the NGAP will handle the failure.
-  virtual async_task<ng_setup_response> handle_ng_setup_request(const ng_setup_request& request) = 0;
+  virtual async_task<ngap_ng_setup_result> handle_ng_setup_request(const ngap_ng_setup_request& request) = 0;
 };
 
-/// Interface to notify about NGAP connections to the CU-CP
-class ngap_cu_cp_connection_notifier
+/// Handle ue context removal
+class ngap_ue_context_removal_handler
 {
 public:
-  virtual ~ngap_cu_cp_connection_notifier() = default;
+  virtual ~ngap_ue_context_removal_handler() = default;
 
-  /// \brief Notifies the CU-CP about a successful AMF connection.
-  virtual void on_amf_connection() = 0;
+  /// \brief Remove the context of an UE.
+  /// \param[in] ue_index The index of the UE to remove.
+  virtual void remove_ue_context(ue_index_t ue_index) = 0;
+};
 
-  /// \brief Notifies the CU-CP about a dropped AMF connection.
-  virtual void on_amf_connection_drop() = 0;
+/// Interface to notify the CU-CP about an NGAP UE creation.
+class ngap_cu_cp_ue_creation_notifier
+{
+public:
+  virtual ~ngap_cu_cp_ue_creation_notifier() = default;
+
+  /// \brief Notifies the CU-CP about a new NGAP UE.
+  /// \param[in] ue_index The index of the new NGAP UE.
+  /// \returns True if the UE was successfully created, false otherwise.
+  virtual bool on_new_ngap_ue(ue_index_t ue_index) = 0;
 };
 
 /// Interface to communication with the DU repository
@@ -121,34 +116,6 @@ public:
   on_ngap_handover_request(const ngap_handover_request& request) = 0;
 };
 
-struct ngap_initial_context_failure_message {
-  asn1::ngap::cause_c                                                          cause;
-  slotted_id_vector<pdu_session_id_t, cu_cp_pdu_session_res_setup_failed_item> pdu_session_res_failed_to_setup_items;
-  optional<asn1::ngap::crit_diagnostics_s>                                     crit_diagnostics;
-};
-
-struct ngap_initial_context_response_message {
-  slotted_id_vector<pdu_session_id_t, cu_cp_pdu_session_res_setup_response_item> pdu_session_res_setup_response_items;
-  slotted_id_vector<pdu_session_id_t, cu_cp_pdu_session_res_setup_failed_item>   pdu_session_res_failed_to_setup_items;
-  optional<asn1::ngap::crit_diagnostics_s>                                       crit_diagnostics;
-};
-
-struct ngap_initial_ue_message {
-  ue_index_t                               ue_index = ue_index_t::invalid;
-  byte_buffer                              nas_pdu;
-  asn1::ngap::rrc_establishment_cause_opts establishment_cause;
-  asn1::ngap::nr_cgi_s                     nr_cgi;
-  uint32_t                                 tac;
-  optional<cu_cp_five_g_s_tmsi>            five_g_s_tmsi;
-};
-
-struct ngap_ul_nas_transport_message {
-  ue_index_t           ue_index = ue_index_t::invalid;
-  byte_buffer          nas_pdu;
-  asn1::ngap::nr_cgi_s nr_cgi;
-  uint32_t             tac;
-};
-
 /// Handle NGAP NAS Message procedures as defined in TS 38.413 section 8.6.
 class ngap_nas_message_handler
 {
@@ -157,11 +124,11 @@ public:
 
   /// \brief Initiates Initial UE message procedure as per TS 38.413 section 8.6.1.
   /// \param[in] msg The initial UE message to transmit.
-  virtual void handle_initial_ue_message(const ngap_initial_ue_message& msg) = 0;
+  virtual void handle_initial_ue_message(const cu_cp_initial_ue_message& msg) = 0;
 
   /// \brief Initiates Uplink NAS transport procedure as per TS 38.413 section 8.6.3.
   /// \param[in] msg The ul nas transfer message to transmit.
-  virtual void handle_ul_nas_transport_message(const ngap_ul_nas_transport_message& msg) = 0;
+  virtual void handle_ul_nas_transport_message(const cu_cp_ul_nas_transport& msg) = 0;
 };
 
 class ngap_control_message_handler
@@ -171,7 +138,9 @@ public:
 
   /// \brief Initiates a UE Context Release Request procedure TS 38.413 section 8.3.2.
   /// \param[in] msg The ue context release request to transmit.
-  virtual void handle_ue_context_release_request(const cu_cp_ue_context_release_request& msg) = 0;
+  /// \returns True if if a UeContextReleaseRequest was sent to the AMF, false if the UeContextReleaseRequest could not
+  /// be sent e.g. because the UE didn't exist in the NGAP.
+  virtual async_task<bool> handle_ue_context_release_request(const cu_cp_ue_context_release_request& msg) = 0;
 
   /// \brief Initiates a Handover Preparation procedure TS 38.413 section 8.4.1.
   virtual async_task<ngap_handover_preparation_response>
@@ -200,12 +169,11 @@ class ngap_rrc_ue_control_notifier
 public:
   virtual ~ngap_rrc_ue_control_notifier() = default;
 
-  /// \brief Notify about the reception of new security capabilities and key.
-  virtual async_task<bool> on_new_security_context(const asn1::ngap::ue_security_cap_s&           caps,
-                                                   const asn1::fixed_bitstring<256, false, true>& key) = 0;
+  /// \brief Notify about the reception of new security context.
+  virtual async_task<bool> on_new_security_context(const security::security_context& sec_context) = 0;
 
-  /// \brief Get required context for inter-gNB handover.
-  virtual ngap_ue_source_handover_context on_ue_source_handover_context_required() = 0;
+  /// \brief Get packed handover preparation message for inter-gNB handover.
+  virtual byte_buffer on_handover_preparation_message_required() = 0;
 
   /// \brief Get the status of the security context.
   virtual bool on_security_enabled() = 0;
@@ -221,9 +189,6 @@ class ngap_du_processor_control_notifier
 {
 public:
   virtual ~ngap_du_processor_control_notifier() = default;
-
-  /// \brief Request allocation of a new UE index.
-  virtual ue_index_t on_new_ue_index_required() = 0;
 
   /// \brief Notify about the reception of a new PDU Session Resource Setup Request.
   virtual async_task<cu_cp_pdu_session_resource_setup_response>
@@ -241,7 +206,7 @@ public:
   /// \param[in] command the UE Context Release Command.
   /// \returns The UE Context Release Complete.
   virtual async_task<cu_cp_ue_context_release_complete>
-  on_new_ue_context_release_command(const cu_cp_ngap_ue_context_release_command& command) = 0;
+  on_new_ue_context_release_command(const cu_cp_ue_context_release_command& command) = 0;
 };
 
 /// Interface to control the NGAP.
@@ -250,15 +215,11 @@ class ngap_ue_control_manager
 public:
   virtual ~ngap_ue_control_manager() = default;
 
-  /// \brief Creates a NGAP UE.
-  /// \param[in] ue_index The index of the UE.
-  /// \param[in] rrc_ue_pdu_notifier The pdu notifier to the RRC UE.
-  /// \param[in] rrc_ue_ctrl_notifier The control notifier to the RRC UE.
-  /// \param[in] du_processor_ctrl_notifier The pdu notifier to the DU processor.
-  virtual void create_ngap_ue(ue_index_t                          ue_index,
-                              ngap_rrc_ue_pdu_notifier&           rrc_ue_pdu_notifier,
-                              ngap_rrc_ue_control_notifier&       rrc_ue_ctrl_notifier,
-                              ngap_du_processor_control_notifier& du_processor_ctrl_notifier) = 0;
+  /// \brief Updates the NGAP UE context with a new UE index.
+  /// \param[in] new_ue_index The new index of the UE.
+  /// \param[in] old_ue_index The old index of the UE.
+  /// \returns True if the update was successful, false otherwise.
+  virtual bool update_ue_index(ue_index_t new_ue_index, ue_index_t old_ue_index) = 0;
 };
 
 /// \brief Schedules asynchronous tasks associated with an UE.
@@ -272,10 +233,10 @@ public:
 };
 
 /// \brief Interface to query statistics from the NGAP interface.
-class ngap_statistic_interface
+class ngap_statistics_handler
 {
 public:
-  virtual ~ngap_statistic_interface() = default;
+  virtual ~ngap_statistics_handler() = default;
 
   /// \brief Get the number of UEs registered at the NGAP.
   /// \return The number of UEs.
@@ -289,18 +250,20 @@ class ngap_interface : public ngap_message_handler,
                        public ngap_nas_message_handler,
                        public ngap_control_message_handler,
                        public ngap_ue_control_manager,
-                       public ngap_statistic_interface
+                       public ngap_statistics_handler,
+                       public ngap_ue_context_removal_handler
 {
 public:
   virtual ~ngap_interface() = default;
 
-  virtual ngap_message_handler&         get_ngap_message_handler()         = 0;
-  virtual ngap_event_handler&           get_ngap_event_handler()           = 0;
-  virtual ngap_connection_manager&      get_ngap_connection_manager()      = 0;
-  virtual ngap_nas_message_handler&     get_ngap_nas_message_handler()     = 0;
-  virtual ngap_control_message_handler& get_ngap_control_message_handler() = 0;
-  virtual ngap_ue_control_manager&      get_ngap_ue_control_manager()      = 0;
-  virtual ngap_statistic_interface&     get_ngap_statistic_interface()     = 0;
+  virtual ngap_message_handler&            get_ngap_message_handler()            = 0;
+  virtual ngap_event_handler&              get_ngap_event_handler()              = 0;
+  virtual ngap_connection_manager&         get_ngap_connection_manager()         = 0;
+  virtual ngap_nas_message_handler&        get_ngap_nas_message_handler()        = 0;
+  virtual ngap_control_message_handler&    get_ngap_control_message_handler()    = 0;
+  virtual ngap_ue_control_manager&         get_ngap_ue_control_manager()         = 0;
+  virtual ngap_statistics_handler&         get_ngap_statistics_handler()         = 0;
+  virtual ngap_ue_context_removal_handler& get_ngap_ue_context_removal_handler() = 0;
 };
 
 } // namespace srs_cu_cp

@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,6 +19,6 @@
 #
 
 set(SRSRAN_VERSION_MAJOR 23)
-set(SRSRAN_VERSION_MINOR 5)
-set(SRSRAN_VERSION_PATCH 0)
+set(SRSRAN_VERSION_MINOR 10)
+set(SRSRAN_VERSION_PATCH 1)
 set(SRSRAN_VERSION_STRING "${SRSRAN_VERSION_MAJOR}.${SRSRAN_VERSION_MINOR}.${SRSRAN_VERSION_PATCH}")

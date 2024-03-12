@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "lower_phy_baseband_processor.h"
 #include "srsran/adt/interval.h"
+#include "srsran/instrumentation/traces/ru_traces.h"
 
 using namespace srsran;
 
@@ -79,10 +80,12 @@ void lower_phy_baseband_processor::start(baseband_gateway_timestamp init_time)
   last_rx_timestamp = init_time;
 
   rx_state.start();
-  rx_executor.execute([this]() { ul_process(); });
+  report_fatal_error_if_not(rx_executor.execute([this]() { ul_process(); }), "Failed to execute initial uplink task.");
 
   tx_state.start();
-  downlink_executor.execute([this, init_time]() { dl_process(init_time + rx_to_tx_max_delay); });
+  report_fatal_error_if_not(
+      downlink_executor.execute([this, init_time]() { dl_process(init_time + rx_to_tx_max_delay); }),
+      "Failed to execute initial downlink task.");
 }
 
 void lower_phy_baseband_processor::stop()
@@ -107,11 +110,19 @@ void lower_phy_baseband_processor::dl_process(baseband_gateway_timestamp timesta
   // Throttling mechanism to keep a maximum latency of one millisecond in the transmit buffer based on the latest
   // received timestamp.
   {
-    std::unique_lock<std::mutex> lock(last_rx_mutex);
-    std::chrono::microseconds    timeout = 2 * std::chrono::microseconds(tx_buffer_size * 1000 / srate.to_kHz());
-    last_rx_cvar.wait_for(lock, timeout, [this, timestamp]() {
-      return (timestamp < last_rx_timestamp + rx_to_tx_max_delay) || !tx_state.is_running();
-    });
+    // Calculate maximum waiting time to avoid deadlock.
+    std::chrono::microseconds timeout_duration = 2 * std::chrono::microseconds(tx_buffer_size * 1000 / srate.to_kHz());
+    // Maximum time point to wait for.
+    std::chrono::time_point<std::chrono::steady_clock> wait_until_tp =
+        std::chrono::steady_clock::now() + timeout_duration;
+    // Wait until one of these conditions is met:
+    // - The reception timestamp reaches the desired value;
+    // - The system time reaches the maximum waiting time; or
+    // - The lower PHY was stopped.
+    while ((timestamp > (last_rx_timestamp.load(std::memory_order_acquire) + rx_to_tx_max_delay)) &&
+           (std::chrono::steady_clock::now() < wait_until_tp) && tx_state.is_running()) {
+      std::this_thread::sleep_for(std::chrono::microseconds(10));
+    }
   }
 
   // Throttling mechanism to slow down the baseband processing.
@@ -126,23 +137,30 @@ void lower_phy_baseband_processor::dl_process(baseband_gateway_timestamp timesta
   last_tx_time.emplace(std::chrono::high_resolution_clock::now());
 
   // Process downlink buffer.
-  downlink_processor.process(dl_buffer->get_writer(), timestamp);
+  trace_point                           tp          = ru_tracer.now();
+  baseband_gateway_transmitter_metadata baseband_md = downlink_processor.process(dl_buffer->get_writer(), timestamp);
+  ru_tracer << trace_event("downlink_baseband", tp);
+
+  // Set transmission timestamp.
+  baseband_md.ts = timestamp + tx_time_offset;
 
   // Enqueue transmission.
-  tx_executor.execute([this, timestamp, tx_buffer = std::move(dl_buffer)]() mutable {
-    // Prepare transmit metadata.
-    baseband_gateway_transmitter::metadata tx_metadata;
-    tx_metadata.ts = timestamp + tx_time_offset;
+  report_fatal_error_if_not(tx_executor.execute([this, tx_buffer = std::move(dl_buffer), baseband_md]() mutable {
+    trace_point tx_tp = ru_tracer.now();
 
     // Transmit buffer.
-    transmitter.transmit(tx_buffer->get_reader(), tx_metadata);
+    transmitter.transmit(tx_buffer->get_reader(), baseband_md);
 
     // Return transmit buffer to the queue.
     tx_buffers.push_blocking(std::move(tx_buffer));
-  });
+
+    ru_tracer << trace_event("transmit_baseband", tx_tp);
+  }),
+                            "Failed to execute transmit task.");
 
   // Enqueue DL process task.
-  downlink_executor.defer([this, timestamp]() { dl_process(timestamp + tx_buffer_size); });
+  report_fatal_error_if_not(downlink_executor.defer([this, timestamp]() { dl_process(timestamp + tx_buffer_size); }),
+                            "Failed to execute downlink processing task");
 }
 
 void lower_phy_baseband_processor::ul_process()
@@ -157,24 +175,27 @@ void lower_phy_baseband_processor::ul_process()
   std::unique_ptr<baseband_gateway_buffer_dynamic> rx_buffer = rx_buffers.pop_blocking();
 
   // Receive baseband.
+  trace_point                         tp          = ru_tracer.now();
   baseband_gateway_receiver::metadata rx_metadata = receiver.receive(rx_buffer->get_writer());
+  ru_tracer << trace_event("receive_baseband", tp);
 
   // Update last timestamp.
-  {
-    std::unique_lock<std::mutex> lock(last_rx_mutex);
-    last_rx_timestamp = rx_metadata.ts + rx_buffer->get_nof_samples();
-    last_rx_cvar.notify_all();
-  }
+  last_rx_timestamp.store(rx_metadata.ts + rx_buffer->get_nof_samples(), std::memory_order_release);
 
   // Queue uplink buffer processing.
-  uplink_executor.execute([this, ul_buffer = std::move(rx_buffer), rx_metadata]() mutable {
+  report_fatal_error_if_not(uplink_executor.execute([this, ul_buffer = std::move(rx_buffer), rx_metadata]() mutable {
+    trace_point ul_tp = ru_tracer.now();
+
     // Process UL.
     uplink_processor.process(ul_buffer->get_reader(), rx_metadata.ts);
 
     // Return buffer to receive.
     rx_buffers.push_blocking(std::move(ul_buffer));
-  });
+
+    ru_tracer << trace_event("uplink_baseband", ul_tp);
+  }),
+                            "Failed to execute uplink processing task.");
 
   // Enqueue next iteration if it is running.
-  rx_executor.defer([this]() { ul_process(); });
+  report_fatal_error_if_not(rx_executor.defer([this]() { ul_process(); }), "Failed to execute receive task.");
 }

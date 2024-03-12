@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/cu_cp/du_processor.h"
+#include "../du_processor/du_processor_impl_interface.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {
@@ -54,7 +54,8 @@ private:
   bool generate_bearer_context_modification(e1ap_bearer_context_modification_request&        bearer_ctxt_mod_req,
                                             const e1ap_bearer_context_modification_response& bearer_ctxt_mod_resp,
                                             const f1ap_ue_context_modification_response& ue_context_modification_resp,
-                                            up_resource_manager&                         up_resource_manager);
+                                            up_resource_manager&                         up_resource_manager,
+                                            bool                                         reestablish_pdcp = false);
 
   ue_index_t                                    ue_index = ue_index_t::invalid;
   du_processor_e1ap_control_notifier&           e1ap_ctrl_notifier;         // to trigger bearer context setup at CU-UP

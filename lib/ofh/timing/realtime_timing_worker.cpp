@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,8 @@
  */
 
 #include "realtime_timing_worker.h"
-#include "srsran/ofh/ofh_ota_symbol_boundary_notifier.h"
+#include "srsran/ofh/timing/ofh_ota_symbol_boundary_notifier.h"
+#include <future>
 #include <thread>
 
 using namespace srsran;
@@ -68,12 +69,10 @@ static std::chrono::nanoseconds calculate_ns_fraction_from(gps_clock::time_point
   return tp - tp_sec;
 }
 
-realtime_timing_worker::realtime_timing_worker(srslog::basic_logger&         logger_,
-                                               ota_symbol_boundary_notifier& notifier_,
-                                               task_executor&                executor_,
-                                               const realtime_worker_cfg&    cfg) :
+realtime_timing_worker::realtime_timing_worker(srslog::basic_logger&      logger_,
+                                               task_executor&             executor_,
+                                               const realtime_worker_cfg& cfg) :
   logger(logger_),
-  notifier(notifier_),
   executor(executor_),
   scs(cfg.scs),
   nof_symbols_per_slot(get_nsymb_per_slot(cfg.cp)),
@@ -96,28 +95,56 @@ static unsigned get_symbol_index(std::chrono::nanoseconds                 fracti
 void realtime_timing_worker::start()
 {
   logger.info("Starting the realtime timing worker");
-  executor.defer([this]() {
-    auto ns_fraction    = calculate_ns_fraction_from(gps_clock::now());
-    previous_symb_index = get_symbol_index(ns_fraction, symbol_duration);
-    timing_loop();
-  });
+
+  std::promise<void> p;
+  std::future<void>  fut = p.get_future();
+
+  if (!executor.defer([this, &p]() {
+        status.store(worker_status::running, std::memory_order_relaxed);
+        // Signal start() caller thread that the operation is complete.
+        p.set_value();
+
+        auto ns_fraction    = calculate_ns_fraction_from(gps_clock::now());
+        previous_symb_index = get_symbol_index(ns_fraction, symbol_duration);
+        timing_loop();
+      })) {
+    report_fatal_error("Unable to start the realtime timing worker");
+  }
+
+  // Block waiting for timing executor to start.
+  fut.wait();
+
+  logger.info("Started the realtime timing worker");
 }
 
 void realtime_timing_worker::stop()
 {
   logger.info("Requesting stop of the realtime timing worker");
-  is_stop_requested.store(true, std::memory_order::memory_order_relaxed);
+  status.store(worker_status::stop_requested, std::memory_order_relaxed);
+
+  // Wait for the timing thread to stop.
+  while (status.load(std::memory_order_acquire) != worker_status::stopped) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  logger.info("Stopped the realtime timing worker");
 }
 
 void realtime_timing_worker::timing_loop()
 {
-  poll();
-
-  if (is_stop_requested.load(std::memory_order_relaxed)) {
+  if (status.load(std::memory_order_relaxed) == worker_status::stop_requested) {
+    // Clear the subscribed notifiers.
+    ota_notifiers.clear();
+    status.store(worker_status::stopped, std::memory_order_release);
     return;
   }
 
-  executor.defer([this]() { timing_loop(); });
+  poll();
+
+  // Retry the task deferring when it fails.
+  while (!executor.defer([this]() { timing_loop(); })) {
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+  }
 }
 
 /// Returns the difference between cur and prev taking into account wrap arounds of the values.
@@ -157,7 +184,12 @@ void realtime_timing_worker::poll()
 
   // Check if we have missed more than one symbol.
   if (delta > 1) {
-    logger.debug("Real-time timing worker late, skipped {} symbols", delta);
+    logger.info("Real-time timing worker woke up late, skipped '{}' symbols", delta);
+  }
+  if (delta >= nof_symbols_per_slot) {
+    logger.warning("Real-time timing worker woke up late, sleep time has been '{}us', or equivalently, '{}' symbols",
+                   std::chrono::duration_cast<std::chrono::microseconds>(delta * symbol_duration).count(),
+                   delta);
   }
 
   slot_symbol_point symbol_point(
@@ -170,6 +202,21 @@ void realtime_timing_worker::poll()
 
   for (unsigned i = 0; i != delta; ++i) {
     // Notify pending symbols from oldest to newest.
-    notifier.on_new_symbol(symbol_point - (delta - 1 - i));
+    notify_slot_symbol_point(symbol_point - (delta - 1 - i));
+  }
+}
+
+void realtime_timing_worker::notify_slot_symbol_point(slot_symbol_point slot)
+{
+  for (auto* notifier : ota_notifiers) {
+    notifier->on_new_symbol(slot);
+  }
+}
+
+void realtime_timing_worker::subscribe(span<ota_symbol_boundary_notifier*> notifiers)
+{
+  std::vector<ota_symbol_boundary_notifier*> notifier_list(notifiers.begin(), notifiers.end());
+  if (!executor.defer([this, n = std::move(notifier_list)]() mutable { ota_notifiers = std::move(n); })) {
+    logger.error("Could not subscribe the given OTA symbol boundary notifiers");
   }
 }

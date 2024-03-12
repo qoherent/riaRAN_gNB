@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,8 +26,6 @@
 #include "srsran/ran/csi_rs/csi_rs_types.h"
 #include "srsran/ran/csi_rs/frequency_allocation_type.h"
 #include "srsran/ran/cyclic_prefix.h"
-#include "srsran/ran/ldpc_base_graph.h"
-#include "srsran/ran/modulation_scheme.h"
 #include "srsran/ran/pci.h"
 #include "srsran/ran/pdcch/coreset.h"
 #include "srsran/ran/pdcch/dci_packing.h"
@@ -40,6 +38,8 @@
 #include "srsran/ran/pusch/pusch_context.h"
 #include "srsran/ran/pusch/pusch_mcs.h"
 #include "srsran/ran/rnti.h"
+#include "srsran/ran/sch/ldpc_base_graph.h"
+#include "srsran/ran/sch/modulation_scheme.h"
 #include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/ssb_properties.h"
 #include "srsran/ran/subcarrier_spacing.h"
@@ -326,7 +326,7 @@ struct dl_pdsch_pdu {
   dl_pdsch_ptrs_maintenance_v3             ptrs_maintenance_v3;
   // :TODO: Rel16 PDSCH params v3
   dl_pdsch_parameters_v4 pdsch_parameters_v4;
-  // Vendor specific parameters.
+  /// Vendor specific parameters.
   optional<pdsch_context> context;
 };
 
@@ -408,6 +408,11 @@ struct dl_ssb_pdu {
 /// Downlink PDU type ID.
 enum class dl_pdu_type : uint16_t { PDCCH, PDSCH, CSI_RS, SSB };
 
+inline unsigned to_value(dl_pdu_type value)
+{
+  return static_cast<unsigned>(value);
+}
+
 /// Common downlink PDU information.
 struct dl_tti_request_pdu {
   dl_pdu_type pdu_type;
@@ -434,6 +439,8 @@ struct dl_tti_request_message : public base_message {
   static_vector<dl_tti_request_pdu, MAX_DL_PDUS_PER_SLOT> pdus;
   //: TODO: groups array
   //: TODO: top level rate match patterns
+  /// Vendor specific parameters.
+  bool is_last_message_in_slot;
 };
 
 /// Downlink TTI response pdu information.
@@ -809,6 +816,8 @@ struct ul_dci_request_message : public base_message {
   uint16_t                                    slot;
   std::array<uint16_t, MAX_NUM_DL_TYPES>      num_pdus_of_each_type;
   static_vector<ul_dci_pdu, MAX_NUM_UCI_PDUS> pdus;
+  // Vendor specific parameters.
+  bool is_last_message_in_slot;
 };
 
 /// Encodes the generic information of a TLV.

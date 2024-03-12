@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -69,13 +69,13 @@ private:
   // See interface for documentation.
   void handle_request(resource_grid& grid, const resource_grid_context& context) override;
 
-  unsigned                                   nof_symbols_per_slot;
-  unsigned                                   nof_rx_ports;
-  puxch_processor_notifier*                  notifier = nullptr;
-  std::unique_ptr<ofdm_symbol_demodulator>   demodulator;
-  slot_point                                 current_slot;
-  resource_grid*                             current_grid = nullptr;
-  resource_grid_request_pool<resource_grid*> requests;
+  unsigned                                  nof_symbols_per_slot;
+  unsigned                                  nof_rx_ports;
+  puxch_processor_notifier*                 notifier = nullptr;
+  std::unique_ptr<ofdm_symbol_demodulator>  demodulator;
+  slot_point                                current_slot;
+  resource_grid*                            current_grid = nullptr;
+  resource_grid_request_pool<resource_grid> requests;
 };
 
 } // namespace srsran

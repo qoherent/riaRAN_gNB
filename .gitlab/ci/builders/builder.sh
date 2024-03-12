@@ -1,4 +1,11 @@
 #!/bin/bash
+#
+# Copyright 2013-2024 Software Radio Systems Limited
+#
+# By using this file, you agree to the terms and conditions set
+# forth in the LICENSE file which can be found at the top level of
+# the distribution.
+#
 
 set -e # stop executing after error
 
@@ -15,6 +22,7 @@ print_help() {
     echo "  -c | --compiler             - Compiler tool (gcc or clang)"
     echo "  -m | --make                 - Args to send to make tool"
     echo "  -u | --uhd                  - UHD version"
+    echo "  -d | --dpdk                 - DPDK version"
     echo "  others                      - Extra args will be sent to 'cmake'"
     echo "folder:"
     echo "  Folder where source code is located. It should be the last parameter"
@@ -29,6 +37,7 @@ CLEAN_BUILD="True"
 MAKE_EXTRA="-j $(nproc)"
 COMPILER="gcc"
 UHD_VERSION=""
+DPDK_VERSION=""
 
 # Begin the parsing
 while (("$#")); do
@@ -103,6 +112,17 @@ while (("$#")); do
             exit 1
         fi
         ;;
+    -d | --dpdk)
+        if [ -n "$2" ]; then
+            DPDK_VERSION="$2"
+            shift 2
+        else
+            echo "Error: Argument for $1 is missing" >&2
+            echo "" >&2
+            print_help
+            exit 1
+        fi
+        ;;
     *)
         break
         ;;
@@ -139,6 +159,15 @@ else
     [ ! -d "/opt/uhd/$UHD_VERSION" ] && echo "UHD version not found" && exit 1
     export UHD_DIR="/opt/uhd/$UHD_VERSION"
     echo "UHD_DIR set to $UHD_DIR"
+fi
+
+# Setup DPDK
+if [[ -n "$DPDK_VERSION" ]]; then
+    [ ! -d "/opt/dpdk/$DPDK_VERSION" ] && echo "DPDK version not found" && exit 1
+    export DPDK_DIR="/opt/dpdk/$DPDK_VERSION"
+    echo "DPDK_DIR set to $DPDK_DIR"
+else
+    echo "DPDK not set"
 fi
 
 # Setup cache dir

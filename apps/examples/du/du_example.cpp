@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,10 +22,12 @@
 
 #include "../../../lib/du_high/du_high_executor_strategies.h"
 #include "fapi_factory.h"
-#include "lib/pcap/mac_pcap_impl.h"
 #include "phy_factory.h"
 #include "radio_notifier_sample.h"
-#include "srsran/asn1/rrc_nr/msg_common.h"
+#include "srsran/asn1/f1ap/common.h"
+#include "srsran/asn1/f1ap/f1ap_pdu_contents.h"
+#include "srsran/asn1/rrc_nr/dl_ccch_msg.h"
+#include "srsran/asn1/rrc_nr/dl_dcch_msg_ies.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/du_high/du_high_factory.h"
 #include "srsran/f1ap/common/f1ap_message.h"
@@ -33,11 +35,13 @@
 #include "srsran/fapi_adaptor/mac/mac_fapi_adaptor_factory.h"
 #include "srsran/fapi_adaptor/phy/phy_fapi_adaptor_factory.h"
 #include "srsran/fapi_adaptor/precoding_matrix_table_generator.h"
+#include "srsran/fapi_adaptor/uci_part2_correspondence_generator.h"
 #include "srsran/phy/upper/upper_phy_timing_notifier.h"
 #include "srsran/ru/ru_adapters.h"
 #include "srsran/ru/ru_controller.h"
 #include "srsran/ru/ru_generic_configuration.h"
 #include "srsran/ru/ru_generic_factory.h"
+#include "srsran/support/executors/task_worker.h"
 #include <atomic>
 #include <csignal>
 #include <getopt.h>
@@ -374,6 +378,7 @@ static lower_phy_configuration create_lower_phy_configuration()
 {
   lower_phy_configuration phy_config;
 
+  phy_config.logger                     = &du_logger;
   phy_config.scs                        = scs;
   phy_config.cp                         = cp;
   phy_config.dft_window_offset          = 0.5F;
@@ -556,6 +561,8 @@ static radio_configuration::radio generate_radio_config()
   out_cfg.args             = "tx_port=" + tx_address + ",rx_port=" + rx_address;
   out_cfg.log_level        = log_level;
   out_cfg.sampling_rate_hz = srate.to_Hz();
+  out_cfg.discontinuous_tx = false;
+  out_cfg.power_ramping_us = 0.0F;
   out_cfg.otw_format       = otw_format;
   out_cfg.clock            = clock_src;
 
@@ -707,31 +714,35 @@ int main(int argc, char** argv)
   ru_timing_adapt.map_handler(0, upper->get_timing_handler());
 
   // Create FAPI adaptors.
-  const unsigned sector_id = 0;
-  auto           pm_tools  = fapi_adaptor::generate_precoding_matrix_tables(num_tx_ant);
-  auto           phy_adaptor =
-      build_phy_fapi_adaptor(sector_id,
-                             scs,
-                             scs,
-                             upper->get_downlink_processor_pool(),
-                             upper->get_downlink_resource_grid_pool(),
-                             upper->get_uplink_request_processor(),
-                             upper->get_uplink_resource_grid_pool(),
-                             upper->get_uplink_slot_pdu_repository(),
-                             upper->get_downlink_pdu_validator(),
-                             upper->get_uplink_pdu_validator(),
-                             generate_prach_config_tlv(),
-                             generate_carrier_config_tlv(),
-                             std::move(std::get<std::unique_ptr<fapi_adaptor::precoding_matrix_repository>>(pm_tools)));
+  const unsigned sector_id       = 0;
+  auto           pm_tools        = fapi_adaptor::generate_precoding_matrix_tables(num_tx_ant);
+  auto           uci_part2_tools = fapi_adaptor::generate_uci_part2_correspondence(1);
+  auto           phy_adaptor     = build_phy_fapi_adaptor(
+      sector_id,
+      scs,
+      scs,
+      upper->get_downlink_processor_pool(),
+      upper->get_downlink_resource_grid_pool(),
+      upper->get_uplink_request_processor(),
+      upper->get_uplink_resource_grid_pool(),
+      upper->get_uplink_slot_pdu_repository(),
+      upper->get_downlink_pdu_validator(),
+      upper->get_uplink_pdu_validator(),
+      generate_prach_config_tlv(),
+      generate_carrier_config_tlv(),
+      std::move(std::get<std::unique_ptr<fapi_adaptor::precoding_matrix_repository>>(pm_tools)),
+      std::move(std::get<std::unique_ptr<fapi_adaptor::uci_part2_correspondence_repository>>(uci_part2_tools)),
+      {0});
   report_error_if_not(phy_adaptor, "Unable to create PHY adaptor.");
   upper->set_rx_results_notifier(phy_adaptor->get_rx_results_notifier());
   upper->set_timing_notifier(phy_adaptor->get_timing_notifier());
 
-  fapi_slot_last_message_dummy                      last_msg_notifier;
-  std::unique_ptr<fapi::slot_message_gateway>       logging_slot_gateway;
-  std::unique_ptr<fapi::slot_data_message_notifier> logging_slot_data_notifier;
-  std::unique_ptr<fapi::slot_time_message_notifier> logging_slot_time_notifier;
-  std::unique_ptr<fapi_adaptor::mac_fapi_adaptor>   mac_adaptor;
+  fapi_slot_last_message_dummy                       last_msg_notifier;
+  std::unique_ptr<fapi::slot_message_gateway>        logging_slot_gateway;
+  std::unique_ptr<fapi::slot_time_message_notifier>  logging_slot_time_notifier;
+  std::unique_ptr<fapi::slot_error_message_notifier> logging_slot_error_notifier;
+  std::unique_ptr<fapi::slot_data_message_notifier>  logging_slot_data_notifier;
+  std::unique_ptr<fapi_adaptor::mac_fapi_adaptor>    mac_adaptor;
   if (enable_fapi_logs) {
     // Create gateway loggers and intercept MAC adaptor calls.
     logging_slot_gateway = fapi::create_logging_slot_gateway(phy_adaptor->get_slot_message_gateway());
@@ -742,16 +753,20 @@ int main(int argc, char** argv)
         *logging_slot_gateway,
         last_msg_notifier,
         std::move(std::get<std::unique_ptr<fapi_adaptor::precoding_matrix_mapper>>(pm_tools)),
+        std::move(std::get<std::unique_ptr<fapi_adaptor::uci_part2_correspondence_mapper>>(uci_part2_tools)),
         get_max_Nprb(bs_channel_bandwidth_to_MHz(channel_bw_mhz), scs, srsran::frequency_range::FR1));
 
     // Create notification loggers.
-    logging_slot_data_notifier = fapi::create_logging_slot_data_notifier(mac_adaptor->get_slot_data_notifier());
-    report_error_if_not(logging_slot_data_notifier, "Unable to create logger for slot data notifications.");
     logging_slot_time_notifier = fapi::create_logging_slot_time_notifier(mac_adaptor->get_slot_time_notifier());
     report_error_if_not(logging_slot_time_notifier, "Unable to create logger for slot time notifications.");
+    logging_slot_error_notifier = fapi::create_logging_slot_error_notifier(mac_adaptor->get_slot_error_notifier());
+    report_error_if_not(logging_slot_error_notifier, "Unable to create logger for slot error notifications.");
+    logging_slot_data_notifier = fapi::create_logging_slot_data_notifier(mac_adaptor->get_slot_data_notifier());
+    report_error_if_not(logging_slot_data_notifier, "Unable to create logger for slot data notifications.");
 
     // Connect the PHY adaptor with the loggers to intercept PHY notifications.
     phy_adaptor->set_slot_time_message_notifier(*logging_slot_time_notifier);
+    phy_adaptor->set_slot_error_message_notifier(*logging_slot_error_notifier);
     phy_adaptor->set_slot_data_message_notifier(*logging_slot_data_notifier);
   } else {
     mac_adaptor = build_mac_fapi_adaptor(
@@ -760,9 +775,11 @@ int main(int argc, char** argv)
         phy_adaptor->get_slot_message_gateway(),
         last_msg_notifier,
         std::move(std::get<std::unique_ptr<fapi_adaptor::precoding_matrix_mapper>>(pm_tools)),
+        std::move(std::get<std::unique_ptr<fapi_adaptor::uci_part2_correspondence_mapper>>(uci_part2_tools)),
         get_max_Nprb(bs_channel_bandwidth_to_MHz(channel_bw_mhz), scs, srsran::frequency_range::FR1));
     report_error_if_not(mac_adaptor, "Unable to create MAC adaptor.");
     phy_adaptor->set_slot_time_message_notifier(mac_adaptor->get_slot_time_notifier());
+    phy_adaptor->set_slot_error_message_notifier(mac_adaptor->get_slot_error_notifier());
     phy_adaptor->set_slot_data_message_notifier(mac_adaptor->get_slot_data_notifier());
   }
 
@@ -782,16 +799,18 @@ int main(int argc, char** argv)
   dummy_cu_cp_handler f1c_client;
   phy_dummy           phy(mac_adaptor->get_cell_result_notifier());
 
-  timer_manager             app_timers{256};
-  std::unique_ptr<mac_pcap> mac_p     = std::make_unique<mac_pcap_impl>();
-  du_high_configuration     du_hi_cfg = {};
-  du_hi_cfg.exec_mapper               = &workers.du_high_exec_mapper;
-  du_hi_cfg.f1c_client                = &f1c_client;
-  du_hi_cfg.phy_adapter               = &phy;
-  du_hi_cfg.timers                    = &app_timers;
-  du_hi_cfg.cells                     = {config_helpers::make_default_du_cell_config(cell_config)};
-  du_hi_cfg.sched_cfg                 = config_helpers::make_default_scheduler_expert_config();
-  du_hi_cfg.pcap                      = mac_p.get();
+  timer_manager         app_timers{256};
+  null_mac_pcap         mac_p;
+  null_rlc_pcap         rlc_p;
+  du_high_configuration du_hi_cfg = {};
+  du_hi_cfg.exec_mapper           = &workers.du_high_exec_mapper;
+  du_hi_cfg.f1c_client            = &f1c_client;
+  du_hi_cfg.phy_adapter           = &phy;
+  du_hi_cfg.timers                = &app_timers;
+  du_hi_cfg.cells                 = {config_helpers::make_default_du_cell_config(cell_config)};
+  du_hi_cfg.sched_cfg             = config_helpers::make_default_scheduler_expert_config();
+  du_hi_cfg.mac_p                 = &mac_p;
+  du_hi_cfg.rlc_p                 = &rlc_p;
 
   du_cell_config& cell_cfg = du_hi_cfg.cells.front();
   cell_cfg.ssb_cfg.k_ssb   = K_ssb;

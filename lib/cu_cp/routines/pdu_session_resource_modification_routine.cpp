@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,31 @@ using namespace srsran;
 using namespace srsran::srs_cu_cp;
 using namespace asn1::rrc_nr;
 
+// Free functions to amend to the final procedure response message. This will take the results from the various
+// sub-procedures and update the succeeded/failed fields.
+
+/// \brief Handle first Bearer Context Modification response and prepare subsequent UE context modification request.
+bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&      response_msg,
+                               f1ap_ue_context_modification_request&            ue_context_mod_request,
+                               const cu_cp_pdu_session_resource_modify_request  modify_request,
+                               const e1ap_bearer_context_modification_response& bearer_context_modification_response,
+                               up_config_update&                                next_config,
+                               srslog::basic_logger&                            logger);
+
+/// \brief Handle UE context modification response and prepare second Bearer Context Modification.
+bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&     response_msg,
+                               e1ap_bearer_context_modification_request&       bearer_ctxt_mod_request,
+                               const cu_cp_pdu_session_resource_modify_request modify_request,
+                               const f1ap_ue_context_modification_response&    ue_context_modification_response,
+                               const up_config_update&                         next_config,
+                               const srslog::basic_logger&                     logger);
+
+/// \brief Handle RRC reconfiguration result
+bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&      response_msg,
+                               const cu_cp_pdu_session_resource_modify_request& modify_request,
+                               bool                                             rrc_reconfig_result,
+                               const srslog::basic_logger&                      logger);
+
 pdu_session_resource_modification_routine::pdu_session_resource_modification_routine(
     const cu_cp_pdu_session_resource_modify_request& modify_request_,
     du_processor_e1ap_control_notifier&              e1ap_ctrl_notif_,
@@ -43,6 +68,124 @@ pdu_session_resource_modification_routine::pdu_session_resource_modification_rou
 {
 }
 
+void pdu_session_resource_modification_routine::operator()(
+    coro_context<async_task<cu_cp_pdu_session_resource_modify_response>>& ctx)
+{
+  CORO_BEGIN(ctx);
+
+  logger.debug("ue={}: \"{}\" initialized", modify_request.ue_index, name());
+
+  // Perform initial sanity checks on incoming message.
+  if (!rrc_ue_up_resource_manager.validate_request(modify_request)) {
+    logger.warning("ue={}: \"{}\" Invalid PduSessionResourceModification", modify_request.ue_index, name());
+    CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
+  }
+
+  {
+    // Calculate next user-plane configuration based on incoming modify message.
+    next_config = rrc_ue_up_resource_manager.calculate_update(modify_request);
+  }
+
+  {
+    // prepare first BearerContextModificationRequest
+    bearer_context_modification_request.ng_ran_bearer_context_mod_request.emplace(); // initialize fresh message
+    fill_initial_e1ap_bearer_context_modification_request(bearer_context_modification_request);
+
+    // call E1AP procedure and wait for BearerContextModificationResponse
+    CORO_AWAIT_VALUE(bearer_context_modification_response,
+                     e1ap_ctrl_notifier.on_bearer_context_modification_request(bearer_context_modification_request));
+
+    // Handle BearerContextModificationResponse and fill subsequent UE context modification
+    if (handle_procedure_response(response_msg,
+                                  ue_context_mod_request,
+                                  modify_request,
+                                  bearer_context_modification_response,
+                                  next_config,
+                                  logger) == false) {
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", modify_request.ue_index, name());
+      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
+    }
+  }
+
+  {
+    // prepare UE Context Modification Request and call F1 notifier
+    ue_context_mod_request.ue_index = modify_request.ue_index;
+
+    CORO_AWAIT_VALUE(ue_context_modification_response,
+                     f1ap_ue_ctxt_notifier.on_ue_context_modification_request(ue_context_mod_request));
+
+    // Handle UE Context Modification Response
+    if (handle_procedure_response(response_msg,
+                                  bearer_context_modification_request,
+                                  modify_request,
+                                  ue_context_modification_response,
+                                  next_config,
+                                  logger) == false) {
+      logger.warning("ue={}: \"{}\" failed to modify UE context at DU", modify_request.ue_index, name());
+      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
+    }
+  }
+
+  // If needed, inform CU-UP about the new TEID for UL F1u traffic
+  if (bearer_context_modification_request.ng_ran_bearer_context_mod_request.has_value()) {
+    // add remaining fields to BearerContextModificationRequest
+    bearer_context_modification_request.ue_index = modify_request.ue_index;
+
+    // call E1AP procedure and wait for BearerContextModificationResponse
+    CORO_AWAIT_VALUE(bearer_context_modification_response,
+                     e1ap_ctrl_notifier.on_bearer_context_modification_request(bearer_context_modification_request));
+
+    // Handle BearerContextModificationResponse
+    if (handle_procedure_response(response_msg,
+                                  ue_context_mod_request,
+                                  modify_request,
+                                  bearer_context_modification_response,
+                                  next_config,
+                                  logger) == false) {
+      logger.warning("ue={}: \"{}\" failed to modify bearer at CU-UP", modify_request.ue_index, name());
+      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
+    }
+  }
+
+  {
+    // prepare RRC Reconfiguration and call RRC UE notifier
+    {
+      // get NAS PDUs as received by AMF
+      std::map<pdu_session_id_t, byte_buffer> nas_pdus;
+      for (const auto& pdu_session : modify_request.pdu_session_res_modify_items) {
+        if (!pdu_session.nas_pdu.empty()) {
+          nas_pdus.emplace(pdu_session.pdu_session_id, pdu_session.nas_pdu);
+        }
+      }
+
+      if (!fill_rrc_reconfig_args(rrc_reconfig_args,
+                                  {},
+                                  next_config.pdu_sessions_to_modify_list,
+                                  ue_context_modification_response.du_to_cu_rrc_info,
+                                  nas_pdus,
+                                  rrc_ue_notifier.generate_meas_config(),
+                                  false,
+                                  false,
+                                  false,
+                                  logger)) {
+        logger.warning("ue={}: \"{}\" Failed to fill RrcReconfiguration", modify_request.ue_index, name());
+        CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
+      }
+    }
+
+    CORO_AWAIT_VALUE(rrc_reconfig_result, rrc_ue_notifier.on_rrc_reconfiguration_request(rrc_reconfig_args));
+
+    // Handle RRC Reconfiguration result.
+    if (handle_procedure_response(response_msg, modify_request, rrc_reconfig_result, logger) == false) {
+      logger.warning("ue={}: \"{}\" RRC reconfiguration failed", modify_request.ue_index, name());
+      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
+    }
+  }
+
+  // we are done
+  CORO_RETURN(generate_pdu_session_resource_modify_response(true));
+}
+
 void fill_e1ap_pdu_session_res_to_modify_list(
     slotted_id_vector<pdu_session_id_t, e1ap_pdu_session_res_to_modify_item>& pdu_session_res_to_modify_list,
     srslog::basic_logger&                                                     logger,
@@ -52,7 +195,7 @@ void fill_e1ap_pdu_session_res_to_modify_list(
   for (const auto& modify_item : next_config.pdu_sessions_to_modify_list) {
     const auto& session = modify_item.second;
     srsran_assert(modify_request.pdu_session_res_modify_items.contains(session.id),
-                  "Modify request doesn't contain config for PDU session id={}",
+                  "Modify request doesn't contain config for {}",
                   session.id);
 
     // Obtain PDU session config from original resource modify request.
@@ -94,7 +237,7 @@ void pdu_session_resource_modification_routine::fill_initial_e1ap_bearer_context
   }
 }
 
-// \brief Handle first Bearer Context Modifcation response and prepare subsequent UE context modification request.
+// \brief Handle first Bearer Context Modification response and prepare subsequent UE context modification request.
 bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&      response_msg,
                                f1ap_ue_context_modification_request&            ue_context_mod_request,
                                const cu_cp_pdu_session_resource_modify_request  modify_request,
@@ -119,7 +262,7 @@ bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&      
   return bearer_context_modification_response.success;
 }
 
-// Handle UE context modifcation response and prepare second Bearer Context Modification.
+// Handle UE context modification response and prepare second Bearer Context Modification.
 bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&     response_msg,
                                e1ap_bearer_context_modification_request&       bearer_ctxt_mod_request,
                                const cu_cp_pdu_session_resource_modify_request modify_request,
@@ -166,117 +309,6 @@ bool handle_procedure_response(cu_cp_pdu_session_resource_modify_response&      
   return rrc_reconfig_result;
 }
 
-void pdu_session_resource_modification_routine::operator()(
-    coro_context<async_task<cu_cp_pdu_session_resource_modify_response>>& ctx)
-{
-  CORO_BEGIN(ctx);
-
-  logger.debug("ue={}: \"{}\" initialized.", modify_request.ue_index, name());
-
-  // Perform initial sanity checks on incoming message.
-  if (!rrc_ue_up_resource_manager.validate_request(modify_request)) {
-    logger.error("ue={}: \"{}\" Invalid PDU Session Resource Modification", modify_request.ue_index, name());
-    CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
-  }
-
-  {
-    // Calculate next user-plane configuration based on incoming modify message.
-    next_config = rrc_ue_up_resource_manager.calculate_update(modify_request);
-  }
-
-  {
-    // prepare first BearerContextModificationRequest
-    bearer_context_modification_request.ng_ran_bearer_context_mod_request.emplace(); // initialize fresh message
-    fill_initial_e1ap_bearer_context_modification_request(bearer_context_modification_request);
-
-    // call E1AP procedure and wait for BearerContextModificationResponse
-    CORO_AWAIT_VALUE(bearer_context_modification_response,
-                     e1ap_ctrl_notifier.on_bearer_context_modification_request(bearer_context_modification_request));
-
-    // Handle BearerContextModificationResponse and fill subsequent UE context modification
-    if (handle_procedure_response(response_msg,
-                                  ue_context_mod_request,
-                                  modify_request,
-                                  bearer_context_modification_response,
-                                  next_config,
-                                  logger) == false) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", modify_request.ue_index, name());
-      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
-    }
-  }
-
-  {
-    // prepare UE Context Modification Request and call F1 notifier
-    ue_context_mod_request.ue_index = modify_request.ue_index;
-
-    CORO_AWAIT_VALUE(ue_context_modification_response,
-                     f1ap_ue_ctxt_notifier.on_ue_context_modification_request(ue_context_mod_request));
-
-    // Handle UE Context Modification Response
-    if (handle_procedure_response(response_msg,
-                                  bearer_context_modification_request,
-                                  modify_request,
-                                  ue_context_modification_response,
-                                  next_config,
-                                  logger) == false) {
-      logger.error("ue={}: \"{}\" failed to modify UE context at DU.", modify_request.ue_index, name());
-      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
-    }
-  }
-
-  // If needed, inform CU-UP about the new TEID for UL F1u traffic
-  if (bearer_context_modification_request.ng_ran_bearer_context_mod_request.has_value()) {
-    // add remaining fields to BearerContextModificationRequest
-    bearer_context_modification_request.ue_index = modify_request.ue_index;
-
-    // call E1AP procedure and wait for BearerContextModificationResponse
-    CORO_AWAIT_VALUE(bearer_context_modification_response,
-                     e1ap_ctrl_notifier.on_bearer_context_modification_request(bearer_context_modification_request));
-
-    // Handle BearerContextModificationResponse
-    if (handle_procedure_response(response_msg,
-                                  ue_context_mod_request,
-                                  modify_request,
-                                  bearer_context_modification_response,
-                                  next_config,
-                                  logger) == false) {
-      logger.error("ue={}: \"{}\" failed to modify bearer at CU-UP.", modify_request.ue_index, name());
-      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
-    }
-  }
-
-  {
-    // prepare RRC Reconfiguration and call RRC UE notifier
-    {
-      // get NAS PDUs as received by AMF
-      std::map<pdu_session_id_t, byte_buffer> nas_pdus;
-      for (const auto& pdu_session : modify_request.pdu_session_res_modify_items) {
-        if (!pdu_session.nas_pdu.empty()) {
-          nas_pdus.emplace(pdu_session.pdu_session_id, pdu_session.nas_pdu);
-        }
-      }
-
-      fill_rrc_reconfig_args(rrc_reconfig_args,
-                             {},
-                             next_config.pdu_sessions_to_modify_list,
-                             ue_context_modification_response.du_to_cu_rrc_info,
-                             nas_pdus,
-                             rrc_ue_notifier.get_rrc_ue_meas_config());
-    }
-
-    CORO_AWAIT_VALUE(rrc_reconfig_result, rrc_ue_notifier.on_rrc_reconfiguration_request(rrc_reconfig_args));
-
-    // Handle RRC Reconfiguration result.
-    if (handle_procedure_response(response_msg, modify_request, rrc_reconfig_result, logger) == false) {
-      logger.error("ue={}: \"{}\" RRC Reconfiguration failed.", modify_request.ue_index, name());
-      CORO_EARLY_RETURN(generate_pdu_session_resource_modify_response(false));
-    }
-  }
-
-  // we are done
-  CORO_RETURN(generate_pdu_session_resource_modify_response(true));
-}
-
 // Helper to mark all PDU sessions that were requested to be set up as failed.
 void mark_all_sessions_as_failed(cu_cp_pdu_session_resource_modify_response&      response_msg,
                                  const cu_cp_pdu_session_resource_modify_request& modify_request)
@@ -287,13 +319,15 @@ void mark_all_sessions_as_failed(cu_cp_pdu_session_resource_modify_response&    
     failed_item.unsuccessful_transfer.cause = cause_radio_network_t::unspecified;
     response_msg.pdu_session_res_failed_to_modify_list.emplace(failed_item.pdu_session_id, failed_item);
   }
+  // No PDU session modified can be successful at the same time.
+  response_msg.pdu_session_res_modify_list.clear();
 }
 
 cu_cp_pdu_session_resource_modify_response
 pdu_session_resource_modification_routine::generate_pdu_session_resource_modify_response(bool success)
 {
   if (success) {
-    logger.debug("ue={}: \"{}\" finalized.", modify_request.ue_index, name());
+    logger.debug("ue={}: \"{}\" finalized", modify_request.ue_index, name());
 
     // Prepare update for UP resource manager.
     up_config_update_result result;
@@ -309,7 +343,7 @@ pdu_session_resource_modification_routine::generate_pdu_session_resource_modify_
       response_msg.pdu_session_res_failed_to_modify_list.emplace(failed_item.pdu_session_id, failed_item);
     }
   } else {
-    logger.error("ue={}: \"{}\" failed.", modify_request.ue_index, name());
+    logger.warning("ue={}: \"{}\" failed", modify_request.ue_index, name());
     mark_all_sessions_as_failed(response_msg, modify_request);
   }
   return response_msg;

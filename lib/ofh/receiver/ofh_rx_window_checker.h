@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "srsran/ofh/ofh_ota_symbol_handler.h"
-#include "srsran/ofh/ofh_receiver_configuration.h"
+#include "srsran/ofh/receiver/ofh_receiver_timing_parameters.h"
+#include "srsran/ofh/timing/ofh_ota_symbol_boundary_notifier.h"
 #include <atomic>
 
 namespace srsran {
@@ -33,13 +33,14 @@ namespace ofh {
 ///
 /// Checks if the given slot and symbol is within the reception window or not. The window checker also collects
 /// statistics and prints them every second.
-class rx_window_checker : public ota_symbol_handler
+class rx_window_checker : public ota_symbol_boundary_notifier
 {
   /// Helper class that represents the reception window statistics.
   class rx_window_checker_statistics
   {
     static constexpr unsigned NOF_BITS_PER_COUNTER = 21U;
 
+    srslog::basic_logger& logger;
     std::atomic<uint64_t> on_time_counter{0};
     std::atomic<uint64_t> early_counter{0};
     std::atomic<uint64_t> late_counter{0};
@@ -48,8 +49,10 @@ class rx_window_checker : public ota_symbol_handler
     uint64_t              last_late_value_printed    = 0U;
 
   public:
-    /// Prints the statistics using the given logger.
-    void print_statistics(srslog::basic_logger& logger);
+    explicit rx_window_checker_statistics(srslog::basic_logger& logger_) : logger(logger_) {}
+
+    /// Prints the statistics.
+    void print_statistics();
 
     /// Functions to increment the counters.
     void increment_on_time_counter() { on_time_counter.fetch_add(1, std::memory_order_relaxed); }
@@ -84,7 +87,7 @@ public:
                     std::chrono::duration<double, std::nano> symbol_duration);
 
   // See interface for documentation.
-  void handle_new_ota_symbol(slot_symbol_point symbol_point) override;
+  void on_new_symbol(slot_symbol_point symbol_point) override;
 
   /// Returns true if the given symbol point is within the reception window, otherwise false.
   bool update_rx_window_statistics(slot_symbol_point symbol_point);
@@ -99,7 +102,6 @@ private:
   void print_statistics();
 
 private:
-  srslog::basic_logger&        logger;
   const rx_timing_parameters   timing_parameters;
   const unsigned               nof_symbols_in_one_second;
   unsigned                     nof_symbols;

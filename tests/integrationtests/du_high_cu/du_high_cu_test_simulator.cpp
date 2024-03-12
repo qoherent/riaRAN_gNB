@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,10 +24,12 @@
 #include "lib/du_high/du_high_executor_strategies.h"
 #include "tests/test_doubles/f1ap/f1ap_test_message_validators.h"
 #include "tests/test_doubles/mac/mac_test_messages.h"
+#include "tests/unittests/ngap/ngap_test_messages.h"
 #include "srsran/cu_cp/cu_cp_factory.h"
 #include "srsran/du/du_cell_config_helpers.h"
 #include "srsran/du_high/du_high_factory.h"
 #include "srsran/support/test_utils.h"
+#include <gtest/gtest.h>
 
 using namespace srsran;
 
@@ -110,6 +112,7 @@ du_high_cu_test_simulator::du_high_cu_test_simulator(const du_high_cu_cp_test_si
   s_nssai_t slice_cfg;
   slice_cfg.sst = 1;
   cu_cfg.ngap_config.slice_configurations.push_back(slice_cfg);
+  cu_cfg.statistics_report_period = std::chrono::seconds(1);
 
   // Instatiate CU-CP.
   cu_cp_inst = create_cu_cp(cu_cfg);
@@ -117,8 +120,11 @@ du_high_cu_test_simulator::du_high_cu_test_simulator(const du_high_cu_cp_test_si
   // Start CU-CP.
   cu_cp_inst->start();
 
+  // Connect AMF by injecting a ng_setup_response
+  cu_cp_inst->get_ng_handler().get_ngap_message_handler().handle_message(srs_cu_cp::generate_ng_setup_response());
+
   // Connect F1-C to CU-CP.
-  f1c_gw.attach_cu_cp_du_repo(cu_cp_inst->get_connected_dus());
+  f1c_gw.attach_cu_cp_du_repo(cu_cp_inst->get_f1c_handler());
 }
 
 du_high_cu_test_simulator::~du_high_cu_test_simulator()
@@ -172,7 +178,8 @@ void du_high_cu_test_simulator::start_dus()
     du_hi_cfg.sched_ue_metrics_notifier      = &du_ctxt.ue_metrics_notifier;
     du_hi_cfg.cells                          = cfg.dus[du_idx];
     du_hi_cfg.sched_cfg                      = config_helpers::make_default_scheduler_expert_config();
-    du_hi_cfg.pcap                           = &du_ctxt.mac_pcap;
+    du_hi_cfg.mac_p                          = &du_ctxt.mac_pcap;
+    du_hi_cfg.rlc_p                          = &du_ctxt.rlc_pcap;
     du_ctxt.du_high_inst                     = make_du_high(du_hi_cfg);
 
     du_ctxt.du_high_inst->start();

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,6 +31,12 @@ class ue_pdsch_param_candidate_searcher_test : public ::testing::Test
 {
 protected:
   ue_pdsch_param_candidate_searcher_test() :
+    cell_cfg(*[this]() {
+      cell_cfg_list.emplace(to_du_cell_index(0),
+                            std::make_unique<cell_configuration>(
+                                sched_cfg, test_helpers::make_default_sched_cell_configuration_request()));
+      return cell_cfg_list[to_du_cell_index(0)].get();
+    }()),
     logger(srslog::fetch_basic_logger("SCHED", true)),
     next_slot(test_helpers::generate_random_slot_point(cell_cfg.dl_cfg_common.init_dl_bwp.generic_params.scs))
   {
@@ -44,15 +50,17 @@ protected:
     for (lcid_t lcid : std::array<lcid_t, 3>{uint_to_lcid(1), uint_to_lcid(2), uint_to_lcid(4)}) {
       ue_creation_req.cfg.lc_config_list->push_back(config_helpers::create_default_logical_channel_config(lcid));
     }
-    ue_ptr = std::make_unique<ue>(expert_cfg, cell_cfg, ue_creation_req, harq_timeout_handler);
-    ue_cc  = &ue_ptr->get_cell(to_ue_cell_index(0));
+    ue_ded_cfg.emplace(ue_creation_req.ue_index, ue_creation_req.crnti, cell_cfg_list, ue_creation_req.cfg);
+    ue_ptr = std::make_unique<ue>(
+        ue_creation_command{*ue_ded_cfg, ue_creation_req.starts_in_fallback, harq_timeout_handler});
+    ue_cc = &ue_ptr->get_cell(to_ue_cell_index(0));
   }
 
   void run_slot() { next_slot++; }
 
   void handle_harq_newtx(harq_id_t harq_id, unsigned k1 = 4)
   {
-    const search_space_info& ss = ue_cc->cfg().search_space(to_search_space_id(1));
+    const search_space_info& ss = ue_cc->cfg().search_space(to_search_space_id(2));
 
     pdsch_information pdsch{ue_ptr->crnti,
                             &ss.bwp->dl_common->generic_params,
@@ -64,19 +72,21 @@ protected:
                             0,
                             1,
                             false,
-                            search_space_set_type::type1,
-                            dci_dl_format::f1_0,
+                            search_space_set_type::ue_specific,
+                            dci_dl_format::f1_1,
                             harq_id,
                             nullopt};
 
-    ue_cc->harqs.dl_harq(harq_id).new_tx(next_slot, k1, 4, 0);
-    ue_cc->harqs.dl_harq(harq_id).save_alloc_params(srsran::dci_dl_rnti_config_type::c_rnti_f1_0, pdsch);
+    ue_cc->harqs.dl_harq(harq_id).new_tx(next_slot, k1, 4, 0, 15, 1);
+    ue_cc->harqs.dl_harq(harq_id).save_alloc_params(srsran::dci_dl_rnti_config_type::c_rnti_f1_1, pdsch);
   }
 
-  const scheduler_expert_config     sched_cfg = config_helpers::make_default_scheduler_expert_config();
-  const scheduler_ue_expert_config& expert_cfg{sched_cfg.ue};
-  cell_configuration                cell_cfg{sched_cfg, test_helpers::make_default_sched_cell_configuration_request()};
+  const scheduler_expert_config        sched_cfg = config_helpers::make_default_scheduler_expert_config();
+  const scheduler_ue_expert_config&    expert_cfg{sched_cfg.ue};
+  cell_common_configuration_list       cell_cfg_list;
+  const cell_configuration&            cell_cfg;
   scheduler_harq_timeout_dummy_handler harq_timeout_handler;
+  optional<ue_configuration>           ue_ded_cfg;
 
   srslog::basic_logger& logger;
 
@@ -140,7 +150,7 @@ TEST_F(ue_pdsch_param_candidate_searcher_test, when_harqs_with_pending_retx_exis
 
   // Action: NACK the HARQs.
   for (unsigned hid : harq_ids) {
-    ue_cc->harqs.dl_harq(to_harq_id(hid)).ack_info(0, srsran::mac_harq_ack_report_status::nack);
+    ue_cc->harqs.dl_harq(to_harq_id(hid)).ack_info(0, srsran::mac_harq_ack_report_status::nack, nullopt);
     EXPECT_TRUE(ue_cc->harqs.dl_harq(to_harq_id(hid)).has_pending_retx());
   }
 

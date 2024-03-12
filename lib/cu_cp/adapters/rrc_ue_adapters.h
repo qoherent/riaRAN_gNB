@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,10 @@
 
 #pragma once
 
+#include "../cu_cp_controller/cu_cp_controller.h"
 #include "../cu_cp_impl_interface.h"
+#include "../du_processor/du_processor_impl_interface.h"
 #include "srsran/adt/byte_buffer.h"
-#include "srsran/cu_cp/du_processor.h"
 #include "srsran/f1ap/cu_cp/f1ap_cu.h"
 #include "srsran/ngap/ngap.h"
 #include "srsran/rrc/rrc_ue.h"
@@ -41,11 +42,10 @@ public:
   {
   }
 
-  void on_new_rrc_pdu(const srb_id_t srb_id, const byte_buffer& pdu, ue_index_t old_ue_index) override
+  void on_new_rrc_pdu(const srb_id_t srb_id, const byte_buffer& pdu) override
   {
     f1ap_dl_rrc_message f1ap_msg = {};
     f1ap_msg.ue_index            = ue_index;
-    f1ap_msg.old_ue_index        = old_ue_index;
     f1ap_msg.srb_id              = srb_id;
     f1ap_msg.rrc_container       = pdu.copy();
     f1ap_handler.handle_dl_rrc_message_transfer(f1ap_msg);
@@ -66,7 +66,7 @@ public:
   }
 
   async_task<cu_cp_ue_context_release_complete>
-  on_ue_context_release_command(const rrc_ue_context_release_command& cmd) override
+  on_ue_context_release_command(const cu_cp_ue_context_release_command& cmd) override
   {
     srsran_assert(du_processor_rrc_ue_handler != nullptr, "DU processor handler must not be nullptr");
     return du_processor_rrc_ue_handler->handle_ue_context_release_command(cmd);
@@ -96,7 +96,7 @@ public:
     timers                    = timer_factory{du_processor_task_handler->get_timer_manager(), *ue_exec};
   }
 
-  void schedule_async_task(async_task<void>&& task) override
+  void schedule_async_task(async_task<void> task) override
   {
     srsran_assert(du_processor_task_handler != nullptr, "DU Processor task handler must not be nullptr");
     du_processor_task_handler->handle_ue_async_task(ue_index, std::move(task));
@@ -131,46 +131,23 @@ public:
     ngap_ctrl_msg_handler = &ngap_ctrl_msg_handler_;
   }
 
-  void on_initial_ue_message(const initial_ue_message& msg) override
+  void on_initial_ue_message(const cu_cp_initial_ue_message& msg) override
   {
     srsran_assert(ngap_nas_msg_handler != nullptr, "NGAP handler must not be nullptr");
-
-    ngap_initial_ue_message ngap_init_ue_msg;
-    ngap_init_ue_msg.ue_index = msg.ue_index;
-    ngap_init_ue_msg.nas_pdu  = msg.nas_pdu.copy();
-
-    ngap_init_ue_msg.establishment_cause.value =
-        rrc_establishment_cause_to_ngap_rrcestablishment_cause(msg.establishment_cause).value;
-
-    ngap_init_ue_msg.nr_cgi.nr_cell_id.from_number(msg.cell.cgi.nci);
-    ngap_init_ue_msg.nr_cgi.plmn_id.from_string(msg.cell.cgi.plmn_hex);
-    ngap_init_ue_msg.tac = msg.cell.tac;
-
-    ngap_init_ue_msg.five_g_s_tmsi = msg.five_g_s_tmsi;
-
-    ngap_nas_msg_handler->handle_initial_ue_message(ngap_init_ue_msg);
+    ngap_nas_msg_handler->handle_initial_ue_message(msg);
   }
 
-  void on_ul_nas_transport_message(const ul_nas_transport_message& msg) override
+  void on_ul_nas_transport_message(const cu_cp_ul_nas_transport& msg) override
   {
     srsran_assert(ngap_nas_msg_handler != nullptr, "NGAP handler must not be nullptr");
-
-    ngap_ul_nas_transport_message ngap_ul_nas_msg;
-    ngap_ul_nas_msg.ue_index = msg.ue_index;
-    ngap_ul_nas_msg.nas_pdu  = msg.nas_pdu.copy();
-
-    ngap_ul_nas_msg.nr_cgi.nr_cell_id.from_number(msg.cell.cgi.nci);
-    ngap_ul_nas_msg.nr_cgi.plmn_id.from_string(msg.cell.cgi.plmn_hex);
-    ngap_ul_nas_msg.tac = msg.cell.tac;
-
-    ngap_nas_msg_handler->handle_ul_nas_transport_message(ngap_ul_nas_msg);
+    ngap_nas_msg_handler->handle_ul_nas_transport_message(msg);
   }
 
-  void on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override
+  async_task<bool> on_ue_context_release_request(const cu_cp_ue_context_release_request& msg) override
   {
     srsran_assert(ngap_ctrl_msg_handler != nullptr, "NGAP handler must not be nullptr");
 
-    ngap_ctrl_msg_handler->handle_ue_context_release_request(msg);
+    return ngap_ctrl_msg_handler->handle_ue_context_release_request(msg);
   }
 
   void on_inter_cu_ho_rrc_recfg_complete_received(const ue_index_t           ue_index,
@@ -185,59 +162,28 @@ public:
 private:
   ngap_nas_message_handler*     ngap_nas_msg_handler  = nullptr;
   ngap_control_message_handler* ngap_ctrl_msg_handler = nullptr;
-
-  /// \brief Convert a RRC Establishment Cause to a NGAP RRC Establishment Cause.
-  /// \param establishment_cause The RRC Establishment Cause.
-  /// \return The NGAP RRC Establishment Cause.
-  inline asn1::ngap::rrc_establishment_cause_opts rrc_establishment_cause_to_ngap_rrcestablishment_cause(
-      const asn1::rrc_nr::establishment_cause_opts& establishment_cause)
-  {
-    asn1::ngap::rrc_establishment_cause_opts rrcestablishment_cause = {};
-    switch (establishment_cause.value) {
-      case asn1::rrc_nr::establishment_cause_opts::options::emergency:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::emergency;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::high_prio_access:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::high_prio_access;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mt_access:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mt_access;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mo_sig:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mo_sig;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mo_data:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mo_data;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mo_voice_call:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mo_voice_call;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mo_video_call:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mo_video_call;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mo_sms:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mo_sms;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mps_prio_access:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mps_prio_access;
-        break;
-      case asn1::rrc_nr::establishment_cause_opts::options::mcs_prio_access:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::mcs_prio_access;
-        break;
-      default:
-        rrcestablishment_cause.value = asn1::ngap::rrc_establishment_cause_opts::nulltype;
-        break;
-    }
-
-    return rrcestablishment_cause;
-  }
 };
 
 /// Adapter between RRC UE and CU-CP
-class rrc_ue_cu_cp_adapter : public rrc_ue_reestablishment_notifier
+class rrc_ue_cu_cp_adapter : public rrc_ue_context_update_notifier, public rrc_ue_measurement_notifier
 {
 public:
-  void connect_cu_cp(cu_cp_rrc_ue_interface& cu_cp_rrc_ue_) { cu_cp_rrc_ue_handler = &cu_cp_rrc_ue_; }
+  void connect_cu_cp(cu_cp_rrc_ue_interface&    cu_cp_rrc_ue_,
+                     cu_cp_ue_removal_handler&  ue_removal_handler_,
+                     cu_cp_controller&          ctrl_,
+                     cu_cp_measurement_handler& meas_handler_)
+  {
+    cu_cp_rrc_ue_handler = &cu_cp_rrc_ue_;
+    ue_removal_handler   = &ue_removal_handler_;
+    controller           = &ctrl_;
+    meas_handler         = &meas_handler_;
+  }
+
+  bool on_ue_setup_request() override
+  {
+    srsran_assert(controller != nullptr, "CU-CP controller must not be nullptr");
+    return controller->request_ue_setup();
+  }
 
   rrc_reestablishment_ue_context_t
   on_rrc_reestablishment_request(pci_t old_pci, rnti_t old_c_rnti, ue_index_t ue_index) override
@@ -246,14 +192,36 @@ public:
     return cu_cp_rrc_ue_handler->handle_rrc_reestablishment_request(old_pci, old_c_rnti, ue_index);
   }
 
-  void on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) override
+  async_task<bool> on_ue_transfer_required(ue_index_t ue_index, ue_index_t old_ue_index) override
   {
     srsran_assert(cu_cp_rrc_ue_handler != nullptr, "CU-CP handler must not be nullptr");
     return cu_cp_rrc_ue_handler->handle_ue_context_transfer(ue_index, old_ue_index);
   }
 
+  void on_ue_removal_required(ue_index_t ue_index) override
+  {
+    srsran_assert(ue_removal_handler != nullptr, "CU-CP UE removal handler must not be nullptr");
+    return ue_removal_handler->handle_ue_removal_request(ue_index);
+  }
+
+  optional<rrc_meas_cfg> on_measurement_config_request(nr_cell_id_t           nci,
+                                                       optional<rrc_meas_cfg> current_meas_config = {}) override
+  {
+    srsran_assert(meas_handler != nullptr, "Measurement handler must not be nullptr");
+    return meas_handler->handle_measurement_config_request(nci, current_meas_config);
+  }
+
+  void on_measurement_report(const ue_index_t ue_index, const rrc_meas_results& meas_results) override
+  {
+    srsran_assert(meas_handler != nullptr, "Measurement handler must not be nullptr");
+    meas_handler->handle_measurement_report(ue_index, meas_results);
+  }
+
 private:
-  cu_cp_rrc_ue_interface* cu_cp_rrc_ue_handler = nullptr;
+  cu_cp_rrc_ue_interface*    cu_cp_rrc_ue_handler = nullptr;
+  cu_cp_ue_removal_handler*  ue_removal_handler   = nullptr;
+  cu_cp_controller*          controller           = nullptr;
+  cu_cp_measurement_handler* meas_handler         = nullptr;
 };
 
 } // namespace srs_cu_cp

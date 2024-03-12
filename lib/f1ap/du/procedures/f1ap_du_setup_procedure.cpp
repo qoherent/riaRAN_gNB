@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #include "f1ap_du_setup_procedure.h"
 #include "../f1ap_du_context.h"
+#include "srsran/asn1/f1ap/common.h"
 #include "srsran/f1ap/common/f1ap_message.h"
 #include "srsran/ran/bcd_helpers.h"
 #include "srsran/support/async/async_timer.h"
@@ -50,6 +51,9 @@ void f1ap_du_setup_procedure::operator()(coro_context<async_task<f1_setup_respon
 
   while (true) {
     transaction = ev_mng.transactions.create_transaction();
+    if (not transaction.valid()) {
+      CORO_EARLY_RETURN(create_f1_setup_result());
+    }
 
     // Send request to CU.
     send_f1_setup_request();
@@ -175,7 +179,7 @@ bool f1ap_du_setup_procedure::retry_required()
   const f1_setup_fail_ies_container& f1_setup_fail = *cu_pdu_response.error().value.f1_setup_fail();
   if (not f1_setup_fail.time_to_wait_present) {
     // CU didn't command a waiting time.
-    logger.error("CU-CP did not set any retry waiting time");
+    logger.debug("CU-CP did not set any retry waiting time");
     return false;
   }
   if (f1_setup_retry_no++ >= request.max_setup_retries) {
@@ -192,6 +196,12 @@ f1_setup_response_message f1ap_du_setup_procedure::create_f1_setup_result()
 {
   f1_setup_response_message res{};
 
+  if (not transaction.valid()) {
+    // Transaction could not be allocated.
+    logger.error("F1 Setup: Procedure cancelled. Cause: Failed to allocate transaction.");
+    res.success = false;
+    return res;
+  }
   if (transaction.aborted()) {
     // Abortion/timeout case.
     logger.error("F1 Setup: Procedure cancelled. Cause: Timeout reached.");

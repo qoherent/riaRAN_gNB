@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/srslog/logger.h"
+#include <rte_eal.h>
 
 namespace srsran {
 namespace dpdk {
@@ -33,10 +34,14 @@ class dpdk_eal
 public:
   /// Constructor.
   /// \param[in] logger SRS logger.
-  explicit dpdk_eal(srslog::basic_logger& logger_);
+  explicit dpdk_eal(srslog::basic_logger& logger_) : logger(logger_) {}
 
-  /// Default destructor.
-  ~dpdk_eal();
+  /// Destructor.
+  ~dpdk_eal()
+  {
+    // Clean up the EAL.
+    ::rte_eal_cleanup();
+  }
 
   // Returns the internal SRS logger.
   /// \return SRS logger.

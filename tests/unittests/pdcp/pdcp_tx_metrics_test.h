@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -35,7 +35,7 @@ namespace srsran {
 /// It requires TEST_P() and INSTANTIATE_TEST_SUITE_P() to create/spawn tests for each supported SN size
 class pdcp_tx_metrics_test : public pdcp_tx_test_helper,
                              public ::testing::Test,
-                             public ::testing::WithParamInterface<pdcp_sn_size>
+                             public ::testing::WithParamInterface<std::tuple<pdcp_sn_size, unsigned>>
 {
 protected:
   void SetUp() override

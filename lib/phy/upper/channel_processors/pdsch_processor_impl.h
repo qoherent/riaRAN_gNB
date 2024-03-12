@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,14 +29,6 @@
 
 namespace srsran {
 
-/// Implements a parameter validator for \ref pdsch_processor_impl.
-class pdsch_processor_validator_impl : public pdsch_pdu_validator
-{
-public:
-  // See interface for documentation.
-  bool is_valid(const pdsch_processor::pdu_t& pdu) const override;
-};
-
 /// Implements a generic PDSCH processor.
 class pdsch_processor_impl : public pdsch_processor
 {
@@ -55,12 +47,11 @@ public:
 
   // See interface for documentation.
   void process(resource_grid_mapper&                                        mapper,
+               pdsch_processor_notifier&                                    notifier,
                static_vector<span<const uint8_t>, MAX_NOF_TRANSPORT_BLOCKS> data,
                const pdu_t&                                                 pdu) override;
 
 private:
-  void assert_pdu(const pdu_t& pdu) const;
-
   /// \brief Computes the number of RE used for mapping PDSCH data.
   ///
   /// The number of RE excludes the elements described by \c pdu as reserved and the RE used for DM-RS.
@@ -71,11 +62,11 @@ private:
 
   /// \brief Encodes a codeword as per TS 38.212 section 7.2.
   ///
-  /// \param[in] data        Provides the data to transmit as packed bits.
-  /// \param[in] codeword_id Indicates the codeword identifier.
-  /// \param[in] nof_layers  Indicates the number of layers the codeword is mapped on to.
-  /// \param[in] Nre         Indicates the number of resource elements used for PDSCH mapping.
-  /// \param[in] pdu         Provides the PDSCH processor PDU.
+  /// \param[in]     data        Provides the data to transmit as packed bits.
+  /// \param[in]     codeword_id Indicates the codeword identifier.
+  /// \param[in]     nof_layers  Indicates the number of layers the codeword is mapped on to.
+  /// \param[in]     Nre         Indicates the number of resource elements used for PDSCH mapping.
+  /// \param[in]     pdu         Provides the PDSCH processor PDU.
   /// \return A view of the encoded codeword.
   const bit_buffer&
   encode(span<const uint8_t> data, unsigned codeword_id, unsigned nof_layers, unsigned Nre, const pdu_t& pdu);

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/cu_cp/ue_manager.h" // for ngap_ue
+#include "../ue_context/ngap_ue_context.h"
 #include "srsran/ngap/ngap.h"
 #include "srsran/ngap/ngap_handover.h"
 #include "srsran/support/async/async_task.h"
@@ -35,9 +35,12 @@ class ngap_handover_resource_allocation_procedure
 public:
   ngap_handover_resource_allocation_procedure(const ngap_handover_request&       request_,
                                               const amf_ue_id_t                  amf_ue_id_,
+                                              ngap_ue_context_list&              ue_ctxt_list_,
+                                              ngap_cu_cp_ue_creation_notifier&   cu_cp_ue_creation_notifier_,
                                               ngap_cu_cp_du_repository_notifier& du_repository_notif_,
                                               ngap_message_notifier&             amf_notif_,
-                                              ngap_ue_manager&                   ue_manager_,
+                                              timer_manager&                     timers_,
+                                              task_executor&                     task_exec_,
                                               srslog::basic_logger&              logger_);
 
   void operator()(coro_context<async_task<void>>& ctx);
@@ -45,18 +48,21 @@ public:
   static const char* name() { return "NG Handover Target GNB Routine"; }
 
 private:
+  bool create_ngap_ue(ue_index_t ue_index);
+
   // results senders
-  void send_handover_request_ack();
+  void send_handover_request_ack(ue_index_t ue_index, ran_ue_id_t ran_ue_id);
   void send_handover_failure();
 
   const ngap_handover_request&       request;
   const amf_ue_id_t                  amf_ue_id;
+  ngap_ue_context_list&              ue_ctxt_list;
+  ngap_cu_cp_ue_creation_notifier&   cu_cp_ue_creation_notifier;
   ngap_cu_cp_du_repository_notifier& du_repository_notifier;
   ngap_message_notifier&             amf_notifier;
-  ngap_ue_manager&                   ue_manager;
+  timer_manager&                     timers;
+  task_executor&                     task_exec;
   srslog::basic_logger&              logger;
-
-  ngap_ue* ue = nullptr;
 
   // (sub-)routine requests
 

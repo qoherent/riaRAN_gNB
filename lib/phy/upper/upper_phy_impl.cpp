@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -42,29 +42,29 @@ static upper_phy_timing_notifier_dummy notifier_dummy;
 upper_phy_impl::upper_phy_impl(upper_phy_impl_config&& config) :
   logger(srslog::fetch_basic_logger("Upper PHY", true)),
   sector_id(config.sector_id),
-  dl_processor_pool(std::move(config.dl_processor_pool)),
+  rx_buf_pool(std::move(config.rx_buf_pool)),
   dl_rg_pool(std::move(config.dl_rg_pool)),
   ul_rg_pool(std::move(config.ul_rg_pool)),
-  ul_processor_pool(std::move(config.ul_processor_pool)),
+  pdu_repository(config.nof_slots_ul_pdu_repository),
   prach_pool(std::move(config.prach_pool)),
-  softbuffer_pool(std::move(config.softbuffer_pool)),
+  dl_processor_pool(std::move(config.dl_processor_pool)),
+  ul_processor_pool(std::move(config.ul_processor_pool)),
   dl_pdu_validator(std::move(config.dl_pdu_validator)),
   ul_pdu_validator(std::move(config.ul_pdu_validator)),
   ul_request_processor(*config.rx_symbol_request_notifier, *prach_pool),
-  pdu_repository(config.nof_slots_ul_pdu_repository),
   rx_symbol_handler(std::make_unique<upper_phy_rx_symbol_handler_impl>(*ul_processor_pool,
                                                                        pdu_repository,
-                                                                       *softbuffer_pool,
+                                                                       rx_buf_pool->get_pool(),
                                                                        rx_results_notifier,
                                                                        logger)),
-  timing_handler(notifier_dummy, *softbuffer_pool, config.timing_handler_executor)
+  timing_handler(notifier_dummy)
 {
   srsran_assert(dl_processor_pool, "Invalid downlink processor pool");
   srsran_assert(dl_rg_pool, "Invalid downlink resource grid pool");
   srsran_assert(ul_rg_pool, "Invalid uplink resource grid pool");
   srsran_assert(ul_processor_pool, "Invalid uplink processor pool");
   srsran_assert(prach_pool, "Invalid PRACH buffer pool");
-  srsran_assert(softbuffer_pool, "Invalid softbuffer pool");
+  srsran_assert(rx_buf_pool, "Invalid receive buffer pool");
   srsran_assert(dl_pdu_validator, "Invalid downlink PDU validator");
   srsran_assert(ul_pdu_validator, "Invalid uplink PDU validator");
 
@@ -72,12 +72,26 @@ upper_phy_impl::upper_phy_impl(upper_phy_impl_config&& config) :
 
   // Configure RX symbol handler for printing the resource grid.
   if (!config.rx_symbol_printer_filename.empty()) {
-    rx_symbol_handler = std::make_unique<upper_phy_rx_symbol_handler_printer_decorator>(
-        std::move(rx_symbol_handler), logger, config.rx_symbol_printer_filename, config.ul_bw_rb);
+    interval<unsigned> ul_ports(0, config.nof_rx_ports);
+    if (config.rx_symbol_printer_port.has_value()) {
+      ul_ports.set(config.rx_symbol_printer_port.value(), config.rx_symbol_printer_port.value() + 1);
+    }
+    rx_symbol_handler =
+        std::make_unique<upper_phy_rx_symbol_handler_printer_decorator>(std::move(rx_symbol_handler),
+                                                                        logger,
+                                                                        config.rx_symbol_printer_filename,
+                                                                        config.ul_bw_rb,
+                                                                        ul_ports,
+                                                                        config.rx_symbol_printer_prach);
   }
 
   // :TODO: Add a logger here.
   (void)sector_id;
+}
+
+upper_phy_error_handler& upper_phy_impl::get_error_handler()
+{
+  return error_handler;
 }
 
 upper_phy_rx_symbol_handler& upper_phy_impl::get_rx_symbol_handler()
@@ -115,6 +129,11 @@ uplink_slot_pdu_repository& upper_phy_impl::get_uplink_slot_pdu_repository()
   return pdu_repository;
 }
 
+void upper_phy_impl::set_error_notifier(upper_phy_error_notifier& notifier)
+{
+  error_handler.set_error_notifier(notifier);
+}
+
 void upper_phy_impl::set_timing_notifier(srsran::upper_phy_timing_notifier& notifier)
 {
   timing_handler.set_upper_phy_notifier(notifier);
@@ -133,4 +152,9 @@ const uplink_pdu_validator& upper_phy_impl::get_uplink_pdu_validator() const
 const downlink_pdu_validator& upper_phy_impl::get_downlink_pdu_validator() const
 {
   return *dl_pdu_validator;
+}
+
+void upper_phy_impl::stop()
+{
+  rx_buf_pool->stop();
 }

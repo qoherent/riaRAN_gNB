@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -86,65 +86,9 @@ TEST_F(ue_deletion_tester,
   ASSERT_TRUE(proc.ready());
 }
 
-TEST_F(ue_deletion_tester, when_du_manager_is_removing_ue_from_mac_then_rlc_buffer_states_have_no_effect)
+TEST_F(ue_deletion_tester, when_du_manager_is_removing_ue_then_ue_notifier_disconnection_gets_called)
 {
-  // RLC buffer state updates of DRBs should reach the MAC.
-  ASSERT_FALSE(mac.last_dl_bs.has_value());
-  test_ue->bearers.drbs().at(drb_id_t::drb1)->connector.rlc_tx_buffer_state_notif.on_buffer_state_update(10);
-  ASSERT_TRUE(mac.last_dl_bs.has_value());
-  ASSERT_EQ(mac.last_dl_bs->ue_index, test_ue->ue_index);
-  ASSERT_EQ(mac.last_dl_bs->lcid, lcid_t::LCID_MIN_DRB);
-  ASSERT_EQ(mac.last_dl_bs->bs, 10);
-
-  // RLC buffer state updates of SRBs should reach the MAC.
-  mac.last_dl_bs.reset();
-  ASSERT_FALSE(mac.last_dl_bs.has_value());
-  test_ue->bearers.srbs()[srb_id_t::srb1].connector.rlc_tx_buffer_state_notif.on_buffer_state_update(100);
-  ASSERT_TRUE(mac.last_dl_bs.has_value());
-  ASSERT_EQ(mac.last_dl_bs->ue_index, test_ue->ue_index);
-  ASSERT_EQ(mac.last_dl_bs->lcid, LCID_SRB1);
-  ASSERT_EQ(mac.last_dl_bs->bs, 100);
-
+  ASSERT_FALSE(ue_mng.ues[test_ue->ue_index].ue_notifiers_disconnected);
   start_procedure();
-
-  // RLC buffer state updates should not reach the MAC while UE is being removed.
-  mac.last_dl_bs.reset();
-  test_ue->bearers.drbs().at(drb_id_t::drb1)->connector.rlc_tx_buffer_state_notif.on_buffer_state_update(10);
-  ASSERT_FALSE(mac.last_dl_bs.has_value());
-  test_ue->bearers.srbs()[srb_id_t::srb1].connector.rlc_tx_buffer_state_notif.on_buffer_state_update(10);
-  ASSERT_FALSE(mac.last_dl_bs.has_value());
-}
-
-TEST_F(ue_deletion_tester, when_du_manager_is_removing_ue_from_mac_then_rlf_notifications_have_no_effect)
-{
-  // MAC RLF notification should be handled.
-  ASSERT_TRUE(test_ue->rlf_notifier->on_rlf_detected());
-  ASSERT_EQ(ue_mng.last_rlf_ue_index, test_ue->ue_index);
-  ASSERT_EQ(ue_mng.last_rlf_cause, rlf_cause::max_mac_kos_reached);
-
-  // RLC RLF notification should be handled.
-  test_ue->rlf_notifier->on_max_retx();
-  ASSERT_EQ(ue_mng.last_rlf_ue_index, test_ue->ue_index);
-  ASSERT_EQ(ue_mng.last_rlf_cause, rlf_cause::max_rlc_retxs_reached);
-
-  // RLC RLF notification should be handled.
-  test_ue->rlf_notifier->on_protocol_failure();
-  ASSERT_EQ(ue_mng.last_rlf_ue_index, test_ue->ue_index);
-  ASSERT_EQ(ue_mng.last_rlf_cause, rlf_cause::rlc_protocol_failure);
-
-  // Start UE deletion.
-  ue_mng.last_rlf_ue_index.reset();
-  ue_mng.last_rlf_cause.reset();
-  start_procedure();
-
-  // RLF notifications should not be handled.
-  ASSERT_TRUE(test_ue->rlf_notifier->on_rlf_detected());
-  ASSERT_FALSE(ue_mng.last_rlf_cause.has_value());
-  ASSERT_FALSE(ue_mng.last_rlf_ue_index.has_value());
-  test_ue->rlf_notifier->on_max_retx();
-  ASSERT_FALSE(ue_mng.last_rlf_cause.has_value());
-  ASSERT_FALSE(ue_mng.last_rlf_ue_index.has_value());
-  test_ue->rlf_notifier->on_protocol_failure();
-  ASSERT_FALSE(ue_mng.last_rlf_cause.has_value());
-  ASSERT_FALSE(ue_mng.last_rlf_ue_index.has_value());
+  ASSERT_TRUE(ue_mng.ues[test_ue->ue_index].ue_notifiers_disconnected);
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -42,7 +42,7 @@ namespace srsran {
 template <typename T, std::size_t N>
 class circular_array
 {
-  std::array<T, N> data{};
+  std::array<T, N> data;
 
 public:
   using iterator       = T*;

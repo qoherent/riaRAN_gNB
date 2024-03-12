@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,5 +33,5 @@ amplitude_controller_metrics amplitude_controller_scaling_impl::process(span<cf_
   srsvec::sc_prod(input, amplitude_gain, output);
 
   // Return empty metrics.
-  return empty_metrics;
+  return {0.0F, 0.0F, 0.0F, 0.0F, 0UL, 0UL, 0.0, false};
 }

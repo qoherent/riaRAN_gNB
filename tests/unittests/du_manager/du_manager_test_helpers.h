@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -56,8 +56,10 @@ class dummy_ue_executor_mapper : public du_high_ue_executor_mapper
 {
 public:
   explicit dummy_ue_executor_mapper(task_executor& exec_) : exec(exec_) {}
-  task_executor& rebind_executor(du_ue_index_t ue_index, du_cell_index_t pcell_index) override { return exec; }
-  task_executor& executor(du_ue_index_t ue_index) override { return exec; }
+  void           rebind_executors(du_ue_index_t ue_index, du_cell_index_t pcell_index) override {}
+  task_executor& ctrl_executor(du_ue_index_t ue_index) override { return exec; }
+  task_executor& f1u_dl_pdu_executor(du_ue_index_t ue_index) override { return exec; }
+  task_executor& mac_ul_pdu_executor(du_ue_index_t ue_index) override { return exec; }
 
   task_executor& exec;
 };
@@ -68,6 +70,7 @@ public:
   explicit dummy_cell_executor_mapper(task_executor& exec_) : exec(exec_) {}
   task_executor& executor(du_cell_index_t cell_index) override { return exec; }
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override { return exec; }
+  task_executor& error_ind_executor(du_cell_index_t cell_index) override { return exec; }
 
   task_executor& exec;
 };
@@ -270,6 +273,7 @@ public:
   wait_manual_event_tester<mac_ue_create_response>          wait_ue_create;
   wait_manual_event_tester<mac_ue_reconfiguration_response> wait_ue_reconf;
   wait_manual_event_tester<mac_ue_delete_response>          wait_ue_delete;
+  bool                                                      next_ul_ccch_msg_result = true;
 
   void                 add_cell(const mac_cell_creation_request& cell_cfg) override {}
   void                 remove_cell(du_cell_index_t cell_index) override {}
@@ -291,9 +295,10 @@ public:
     last_ue_delete_msg = msg;
     return wait_ue_delete.launch();
   }
-  void handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override
+  bool handle_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override
   {
     last_pushed_ul_ccch_msg = std::move(pdu);
+    return next_ul_ccch_msg_result;
   }
 
   void handle_dl_buffer_state_update(const mac_dl_buffer_state_indication_message& dl_bs) override
@@ -350,6 +355,7 @@ public:
   f1ap_test_dummy                        f1ap;
   f1u_gateway_dummy                      f1u_gw;
   mac_test_dummy                         mac;
+  null_rlc_pcap                          rlc_pcap;
   du_manager_params                      params;
   dummy_ue_resource_configurator_factory cell_res_alloc;
   srslog::basic_logger&                  logger;

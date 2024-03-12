@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -76,3 +76,12 @@ target_link_libraries(scheduler_metrics_handler_test
         gtest
         gtest_main)
 gtest_discover_tests(scheduler_metrics_handler_test)
+
+add_executable(multi_cell_scheduler_test multi_cell_scheduler_test.cpp)
+target_link_libraries(multi_cell_scheduler_test
+        srsran_sched
+        sched_config
+        scheduler_test_suite
+        gtest
+        gtest_main)
+gtest_discover_tests(multi_cell_scheduler_test)

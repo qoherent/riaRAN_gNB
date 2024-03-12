@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,14 @@
 #include "srsran/support/unique_thread.h"
 
 namespace srsran {
+
+struct io_broker_config {
+  std::string                 thread_name = "io_broker_epoll";
+  os_thread_realtime_priority thread_prio = os_thread_realtime_priority::no_realtime();
+  os_sched_affinity_bitmask   cpu_mask    = {};
+  /// Constructor receives CPU affinity mask.
+  io_broker_config(os_sched_affinity_bitmask mask_ = {}) : cpu_mask(mask_) {}
+};
 
 /// \brief Describes the base interface for an (async) IO broker.
 /// The IO broker is responsible for handling all IO events, including
@@ -57,10 +65,10 @@ public:
   io_broker& operator=(io_broker&&) = delete;
 
   /// \brief Register a file descriptor to be handled by the IO interface.
-  virtual bool register_fd(int fd, recv_callback_t handler) = 0;
+  SRSRAN_NODISCARD virtual bool register_fd(int fd, recv_callback_t handler) = 0;
 
   /// \brief Unregister a file descriptor from the IO interface.
-  virtual bool unregister_fd(int fd) = 0;
+  SRSRAN_NODISCARD virtual bool unregister_fd(int fd) = 0;
 };
 
 } // namespace srsran

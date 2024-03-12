@@ -1,5 +1,6 @@
 #pragma once
 
+#include "port_channel_estimator_parameters.h"
 #include "srsran/phy/generic_functions/generic_functions_factories.h"
 #include "srsran/phy/upper/sequence_generators/sequence_generator_factories.h"
 #include "srsran/phy/upper/signal_processors/dmrs_pbch_processor.h"
@@ -76,17 +77,23 @@ public:
   virtual ~nzp_csi_rs_generator_factory()                                        = default;
   virtual std::unique_ptr<nzp_csi_rs_generator>               create()           = 0;
   virtual std::unique_ptr<nzp_csi_rs_configuration_validator> create_validator() = 0;
-  std::unique_ptr<nzp_csi_rs_generator>                       create(srslog::basic_logger& logger);
+  virtual std::unique_ptr<nzp_csi_rs_generator>               create(srslog::basic_logger& logger);
 };
 
 std::shared_ptr<nzp_csi_rs_generator_factory>
 create_nzp_csi_rs_generator_factory_sw(std::shared_ptr<pseudo_random_generator_factory> prg_factory);
 
+std::shared_ptr<nzp_csi_rs_generator_factory>
+create_nzp_csi_rs_generator_pool_factory(std::shared_ptr<nzp_csi_rs_generator_factory> generator_factory,
+                                         unsigned                                      nof_concurrent_threads);
+
 class port_channel_estimator_factory
 {
 public:
-  virtual ~port_channel_estimator_factory()                = default;
-  virtual std::unique_ptr<port_channel_estimator> create() = 0;
+  virtual ~port_channel_estimator_factory() = default;
+  virtual std::unique_ptr<port_channel_estimator>
+  create(port_channel_estimator_fd_smoothing_strategy fd_smoothing_strategy =
+             port_channel_estimator_fd_smoothing_strategy::filter) = 0;
 };
 
 std::shared_ptr<port_channel_estimator_factory>

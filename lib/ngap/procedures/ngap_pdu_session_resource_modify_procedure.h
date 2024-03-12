@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "../ngap_asn1_utils.h"
-#include "srsran/cu_cp/ue_manager.h" // for ngap_ue
+#include "../ngap_validators/ngap_validators.h"
+#include "../ue_context/ngap_ue_context.h"
 #include "srsran/ngap/ngap.h"
 #include "srsran/support/async/async_task.h"
 
@@ -33,26 +33,37 @@ namespace srs_cu_cp {
 class ngap_pdu_session_resource_modify_procedure
 {
 public:
-  ngap_pdu_session_resource_modify_procedure(const cu_cp_pdu_session_resource_modify_request& request_,
-                                             ngap_ue&                                         ue_,
-                                             ngap_du_processor_control_notifier&              du_processor_ctrl_notif_,
-                                             ngap_message_notifier&                           amf_notif_,
-                                             srslog::basic_logger&                            logger_);
+  ngap_pdu_session_resource_modify_procedure(const cu_cp_pdu_session_resource_modify_request&    request_,
+                                             const asn1::ngap::pdu_session_res_modify_request_s& asn1_request_,
+                                             const ngap_ue_ids&                                  ue_ids_,
+                                             ngap_du_processor_control_notifier& du_processor_ctrl_notifier_,
+                                             ngap_message_notifier&              amf_notifier_,
+                                             ngap_control_message_handler&       ngap_ctrl_handler_,
+                                             ngap_ue_logger&                     logger_);
 
   void operator()(coro_context<async_task<void>>& ctx);
 
   static const char* name() { return "PDU Session Resource Modify Procedure"; }
 
 private:
+  void combine_pdu_session_resource_modify_response();
+
   // results senders
   void send_pdu_session_resource_modify_response();
 
-  cu_cp_pdu_session_resource_modify_request  request;
-  ngap_ue&                                   ue;
-  cu_cp_pdu_session_resource_modify_response response;
-  ngap_du_processor_control_notifier&        du_processor_ctrl_notifier;
-  ngap_message_notifier&                     amf_notifier;
-  srslog::basic_logger&                      logger;
+  const cu_cp_pdu_session_resource_modify_request    request;
+  const asn1::ngap::pdu_session_res_modify_request_s asn1_request;
+  const ngap_ue_ids                                  ue_ids;
+  cu_cp_pdu_session_resource_modify_response         response;
+  ngap_du_processor_control_notifier&                du_processor_ctrl_notifier;
+  ngap_message_notifier&                             amf_notifier;
+  ngap_control_message_handler&                      ngap_ctrl_handler;
+  ngap_ue_logger&                                    logger;
+
+  cu_cp_ue_context_release_request ue_context_release_request;
+
+  // procedure outcomes
+  pdu_session_resource_modify_validation_outcome verification_outcome;
 };
 
 } // namespace srs_cu_cp

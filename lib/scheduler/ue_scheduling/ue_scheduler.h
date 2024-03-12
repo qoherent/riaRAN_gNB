@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,13 +24,13 @@
 
 #include "../pucch_scheduling/pucch_allocator.h"
 #include "../uci_scheduling/uci_allocator.h"
-#include "ue.h" // TEMP
 #include "srsran/scheduler/scheduler_configurator.h"
 
 namespace srsran {
 
 class pdcch_resource_allocator;
 struct cell_resource_allocator;
+class sched_ue_configuration_handler;
 
 struct ue_scheduler_cell_params {
   du_cell_index_t           cell_index;
@@ -49,11 +49,16 @@ public:
 
   virtual void add_cell(const ue_scheduler_cell_params& params) = 0;
 
-  /// Schedule UE DL grants for a given {slot, cell}.
+  /// Schedule UE DL and UL grants for a given {slot, cell}.
   virtual void run_slot(slot_point slot_tx, du_cell_index_t cell_index) = 0;
 
+  /// Handle error in the lower layers.
+  virtual void handle_error_indication(slot_point                            sl_tx,
+                                       du_cell_index_t                       cell_index,
+                                       scheduler_slot_handler::error_outcome event) = 0;
+
   /// Return UE configurator.
-  virtual scheduler_ue_configurator& get_ue_configurator() = 0;
+  virtual sched_ue_configuration_handler& get_ue_configurator() = 0;
 
   virtual scheduler_feedback_handler& get_feedback_handler() = 0;
 

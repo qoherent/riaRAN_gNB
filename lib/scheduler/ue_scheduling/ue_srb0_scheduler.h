@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -61,7 +61,7 @@ private:
                        dl_harq_process&           h_dl,
                        pdcch_dl_information&      pdcch,
                        dl_msg_alloc&              msg,
-                       pucch_harq_ack_grant&      pucch,
+                       unsigned                   pucch_res_indicator,
                        unsigned                   pdsch_time_res,
                        unsigned                   k1,
                        sch_mcs_index              mcs_idx,

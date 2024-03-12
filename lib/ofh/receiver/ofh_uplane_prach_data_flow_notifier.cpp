@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -41,5 +41,5 @@ void uplane_prach_data_flow_notifier::notify_prach(slot_point slot)
   const auto ctx_value = context.value();
   notifier.on_new_prach_window_data(ctx_value.context, *ctx_value.buffer);
 
-  logger.debug("Notifying PRACH at slot={} and sector={}", ctx_value.context.slot, ctx_value.context.sector);
+  logger.debug("Notifying PRACH in slot '{}' for sector#{}", ctx_value.context.slot, ctx_value.context.sector);
 }

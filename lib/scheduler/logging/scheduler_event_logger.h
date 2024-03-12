@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,6 +44,10 @@ public:
     rnti_t          rnti;
     du_cell_index_t pcell_index;
   };
+  struct ue_reconf_event {
+    du_ue_index_t ue_index;
+    rnti_t        rnti;
+  };
   struct crc_event {
     du_ue_index_t   ue_index;
     rnti_t          rnti;
@@ -85,6 +89,10 @@ public:
     ph_db_range                ph;
     optional<p_cmax_dbm_range> p_cmax;
   };
+  struct error_indication_event {
+    slot_point                            sl_tx;
+    scheduler_slot_handler::error_outcome outcome;
+  };
 
   scheduler_event_logger() :
     logger(srslog::fetch_basic_logger("SCHED")),
@@ -125,8 +133,10 @@ private:
   void enqueue_impl(const rach_indication_message& rach_ind);
 
   void enqueue_impl(const ue_creation_event& ue_request);
-  void enqueue_impl(const sched_ue_reconfiguration_message& ue_request);
+  void enqueue_impl(const ue_reconf_event& ue_request);
   void enqueue_impl(const sched_ue_delete_message& ue_request);
+
+  void enqueue_impl(const error_indication_event& err_ind);
 
   void enqueue_impl(const sr_event& sr);
   void enqueue_impl(const bsr_event& bsr);

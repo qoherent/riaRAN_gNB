@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/ran/pdcch/search_space.h"
+#include "srsran/scheduler/scheduler_dci.h"
 
 namespace srsran {
 namespace pdcch_helper {

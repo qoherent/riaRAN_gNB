@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -30,4 +30,4 @@ set(SOURCES
 )
 
 add_library(srsran_rlc STATIC ${SOURCES})
-target_link_libraries(srsran_rlc srsran_instrumentation srsran_support)
+target_link_libraries(srsran_rlc srsran_instrumentation srsran_support srsran_pcap)

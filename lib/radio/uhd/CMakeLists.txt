@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -23,8 +23,9 @@ set(SOURCES_UHD
         radio_uhd_impl.cpp
         radio_uhd_rx_stream.cpp
         radio_uhd_tx_stream.cpp)
+
 add_library(srsran_radio_uhd STATIC ${SOURCES_UHD})
 
-target_link_libraries(srsran_radio_uhd ${UHD_LIBRARIES})
+target_link_libraries(srsran_radio_uhd ${UHD_LIBRARIES} fmt srslog)
 
 install(TARGETS srsran_radio_uhd EXPORT srsran_export)

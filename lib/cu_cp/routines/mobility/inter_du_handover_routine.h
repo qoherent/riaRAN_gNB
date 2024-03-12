@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "../../ue_manager_impl.h"
-#include "srsran/cu_cp/du_processor.h"
+#include "../../du_processor/du_processor_impl_interface.h"
+#include "../../ue_manager/ue_manager_impl.h"
 #include "srsran/support/async/async_task.h"
 #include "srsran/support/async/eager_async_task.h"
 
@@ -35,15 +35,14 @@ namespace srs_cu_cp {
 class inter_du_handover_routine
 {
 public:
-  inter_du_handover_routine(const cu_cp_inter_du_handover_request&        command_,
-                            du_processor_ue_handler&                      du_proc_ue_handler_,
-                            du_processor_f1ap_ue_context_notifier&        source_du_f1ap_ue_ctxt_notif_,
-                            du_processor_f1ap_ue_context_notifier&        target_du_f1ap_ue_ctxt_notif_,
-                            du_processor_e1ap_control_notifier&           e1ap_ctrl_notif_,
-                            du_processor_ue_manager&                      ue_manager_,
-                            du_processor_rrc_ue_control_message_notifier& rrc_ue_ctrl_notifier_,
-                            up_resource_manager&                          ue_up_resource_manager_,
-                            srslog::basic_logger&                         logger_);
+  inter_du_handover_routine(const cu_cp_inter_du_handover_request& command_,
+                            du_processor_cu_cp_notifier&           cu_cp_notifier_,
+                            du_processor_f1ap_ue_context_notifier& target_du_f1ap_ue_ctxt_notif_,
+                            du_processor_e1ap_control_notifier&    e1ap_ctrl_notif_,
+                            du_processor_ue_context_notifier&      source_du_processor_notifier_,
+                            du_processor_ue_context_notifier&      target_du_processor_notifier_,
+                            du_processor_ue_manager&               ue_manager_,
+                            srslog::basic_logger&                  logger_);
 
   void operator()(coro_context<async_task<cu_cp_inter_du_handover_response>>& ctx);
 
@@ -51,31 +50,34 @@ public:
 
 private:
   bool generate_ue_context_setup_request(f1ap_ue_context_setup_request&               setup_request,
-                                         const static_vector<srb_id_t, MAX_NOF_SRBS>& srbs);
-  void create_srb1(du_ue* ue);
+                                         const static_vector<srb_id_t, MAX_NOF_SRBS>& srbs,
+                                         const rrc_ue_transfer_context&               transfer_context);
+  void create_srb(du_ue* ue, srb_id_t srb_id);
 
   const cu_cp_inter_du_handover_request command;
 
   du_ue* source_ue = nullptr; // Pointer to UE in the source DU
   du_ue* target_ue = nullptr; // Pointer to UE in the target DU
 
-  du_processor_ue_handler&               du_proc_ue_handler;
-  du_processor_f1ap_ue_context_notifier& source_du_f1ap_ue_ctxt_notifier; // to trigger UE context creation at target DU
+  rrc_ue_transfer_context source_rrc_context;
+
+  du_processor_cu_cp_notifier&
+      cu_cp_notifier; // to trigger UE removal (if setup fails) or context transfer (if sucessful)
   du_processor_f1ap_ue_context_notifier& target_du_f1ap_ue_ctxt_notifier; // to trigger UE context creation at target DU
-  du_processor_e1ap_control_notifier&    e1ap_ctrl_notifier;          // to trigger bearer context modification at CU-UP
-  du_processor_ue_manager&               ue_manager;                  // to remove UE context from source DU processor
-  du_processor_rrc_ue_control_message_notifier& rrc_ue_ctrl_notifier; // to request the current RRC configuration
-  up_resource_manager&  ue_up_resource_manager;                       // to figure out if there is an active E1 context
-  up_config_update      next_config;
-  srslog::basic_logger& logger;
+  du_processor_e1ap_control_notifier&    e1ap_ctrl_notifier; // to trigger bearer context modification at CU-UP
+  du_processor_ue_context_notifier&      source_du_processor_notifier; // to remove source UE context
+  du_processor_ue_context_notifier&      target_du_processor_notifier; // to remove target UE context
+  du_processor_ue_manager&               ue_manager;                   // to remove UE context from source DU processor
+  up_config_update                       next_config;
+  srslog::basic_logger&                  logger;
 
   // (sub-)routine requests
   f1ap_ue_context_setup_request            target_ue_context_setup_request;
   f1ap_ue_context_modification_request     source_ue_context_mod_request;
   e1ap_bearer_context_modification_request bearer_context_modification_request;
   rrc_reconfiguration_procedure_request    rrc_reconfig_args;
-  f1ap_ue_context_release_command ue_context_release_cmd; // After succesfull HO (source UE) or if HO fails and context
-                                                          // needs to be removed again (target UE).
+  f1ap_ue_context_release_command          ue_context_release_cmd; // If HO fails target UE context needs to be removed.
+  cu_cp_ue_context_release_command ue_context_release_command;     // After succesfull HO source UE needs to be removed.
 
   // (sub-)routine results
   cu_cp_inter_du_handover_response response_msg;
@@ -83,7 +85,7 @@ private:
   e1ap_bearer_context_modification_response
       bearer_context_modification_response; // to inform CU-UP about the new TEID for UL F1u traffic
   f1ap_ue_context_modification_response source_ue_context_modification_response;
-  ue_index_t                            ue_context_release_result = ue_index_t::invalid;
+  bool                                  reconf_result = false;
 };
 
 } // namespace srs_cu_cp

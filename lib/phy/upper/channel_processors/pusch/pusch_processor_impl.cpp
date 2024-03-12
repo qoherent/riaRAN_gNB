@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,9 +25,9 @@
 #include "pusch_processor_notifier_adaptor.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_codeword_buffer.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_decoder_buffer.h"
-#include "srsran/phy/upper/unique_rx_softbuffer.h"
+#include "srsran/phy/upper/unique_rx_buffer.h"
 #include "srsran/ran/pusch/ulsch_info.h"
-#include "srsran/ran/sch_dmrs_power.h"
+#include "srsran/ran/sch/sch_dmrs_power.h"
 #include "srsran/ran/uci/uci_formatters.h"
 #include "srsran/ran/uci/uci_part2_size_calculator.h"
 
@@ -38,11 +38,13 @@ class pusch_processor_csi_part1_feedback_impl : public pusch_processor_csi_part1
 {
 public:
   pusch_processor_csi_part1_feedback_impl(pusch_uci_decoder_wrapper&        csi_part2_decoder_,
+                                          pusch_decoder&                    ulsch_decoder_,
                                           ulsch_demultiplex&                demultiplex_,
                                           modulation_scheme                 modulation_,
                                           const uci_part2_size_description& csi_part2_size_,
                                           const ulsch_configuration&        ulsch_config_) :
     csi_part2_decoder(csi_part2_decoder_),
+    ulsch_decoder(ulsch_decoder_),
     demultiplex(demultiplex_),
     modulation(modulation_),
     csi_part2_size(csi_part2_size_),
@@ -52,7 +54,7 @@ public:
 
   void connect_notifier(pusch_processor_notifier_adaptor& notifier_) { notifier = &notifier_; }
 
-  void on_csi_part1(span<const uint8_t> part1) override
+  void on_csi_part1(const uci_payload_type& part1) override
   {
     srsran_assert(notifier != nullptr, "Notifier not connected.");
 
@@ -78,11 +80,15 @@ public:
 
     // Configure UL-SCH demultiplex.
     demultiplex.set_csi_part2(csi_part2_buffer, nof_csi_part_2_bits, info.nof_csi_part2_bits.value());
+
+    // Set the number of UL-SCH softbits in the PUSCH decoder.
+    ulsch_decoder.set_nof_softbits(info.nof_ul_sch_bits);
   }
 
 private:
   pusch_processor_notifier_adaptor* notifier;
   pusch_uci_decoder_wrapper&        csi_part2_decoder;
+  pusch_decoder&                    ulsch_decoder;
   ulsch_demultiplex&                demultiplex;
   modulation_scheme                 modulation;
   uci_part2_size_description        csi_part2_size;
@@ -182,37 +188,34 @@ bool pusch_processor_validator_impl::is_valid(const pusch_processor::pdu_t& pdu)
   return true;
 }
 
-pusch_processor_impl::pusch_processor_impl(pusch_processor_configuration& config) :
-  estimator(std::move(config.estimator)),
-  demodulator(std::move(config.demodulator)),
-  demultiplex(std::move(config.demultiplex)),
+pusch_processor_impl::pusch_processor_impl(configuration& config) :
+  thread_local_dependencies_pool(std::move(config.thread_local_dependencies_pool)),
   decoder(std::move(config.decoder)),
-  uci_dec(std::move(config.uci_dec)),
-  harq_ack_decoder(*uci_dec, pusch_constants::CODEWORD_MAX_SIZE.value()),
-  csi_part1_decoder(*uci_dec, pusch_constants::CODEWORD_MAX_SIZE.value()),
-  csi_part2_decoder(*uci_dec, pusch_constants::CODEWORD_MAX_SIZE.value()),
-  ch_estimate(config.ce_dims),
   dec_nof_iterations(config.dec_nof_iterations),
   dec_enable_early_stop(config.dec_enable_early_stop),
   csi_sinr_calc_method(config.csi_sinr_calc_method)
 {
-  srsran_assert(estimator, "Invalid estimator.");
-  srsran_assert(demodulator, "Invalid demodulator.");
-  srsran_assert(demultiplex, "Invalid demultiplex.");
+  srsran_assert(thread_local_dependencies_pool, "Invalid dependency pool.");
   srsran_assert(decoder, "Invalid decoder.");
-  srsran_assert(uci_dec, "Invalid UCI decoder.");
   srsran_assert(dec_nof_iterations != 0, "The decoder number of iterations must be non-zero.");
 }
 
 void pusch_processor_impl::process(span<uint8_t>                    data,
-                                   rx_softbuffer&                   softbuffer,
+                                   unique_rx_buffer                 rm_buffer,
                                    pusch_processor_result_notifier& notifier,
                                    const resource_grid_reader&      grid,
                                    const pusch_processor::pdu_t&    pdu)
 {
   using namespace units::literals;
 
-  assert_pdu(pdu);
+  // Get thread local dependencies.
+  concurrent_dependencies& dependencies = thread_local_dependencies_pool->get();
+
+  // Get channel estimates.
+  channel_estimate& ch_estimate = dependencies.get_channel_estimate();
+
+  // Assert PDU.
+  assert_pdu(pdu, ch_estimate);
 
   // Number of RB used by this transmission.
   unsigned nof_rb = pdu.freq_alloc.get_nof_rb();
@@ -220,7 +223,7 @@ void pusch_processor_impl::process(span<uint8_t>                    data,
   // Get RB mask relative to Point A. It assumes PUSCH is never interleaved.
   bounded_bitset<MAX_RB> rb_mask = pdu.freq_alloc.get_prb_mask(pdu.bwp_start_rb, pdu.bwp_size_rb);
 
-  // Get UL-SCH information.
+  // Get UL-SCH information as if there was no CSI Part 2 in the PUSCH.
   ulsch_configuration ulsch_config;
   ulsch_config.tbs                   = units::bytes(data.size()).to_bits();
   ulsch_config.mcs_descr             = pdu.mcs_descr;
@@ -254,7 +257,7 @@ void pusch_processor_impl::process(span<uint8_t>                    data,
   ch_est_config.nof_symbols   = pdu.nof_symbols;
   ch_est_config.nof_tx_layers = pdu.nof_tx_layers;
   ch_est_config.rx_ports.assign(pdu.rx_ports.begin(), pdu.rx_ports.end());
-  estimator->estimate(ch_estimate, grid, ch_est_config);
+  dependencies.get_estimator().estimate(ch_estimate, grid, ch_est_config);
 
   // Handles the direct current if it is present.
   if (pdu.dc_position.has_value()) {
@@ -294,11 +297,6 @@ void pusch_processor_impl::process(span<uint8_t>                    data,
   demux_config.nof_csi_part1_bits          = ulsch_config.nof_csi_part1_bits.value();
   demux_config.nof_enc_csi_part1_bits      = info.nof_csi_part1_bits.value();
 
-  // Convert DM-RS symbol mask to array.
-  std::array<bool, MAX_NSYMB_PER_SLOT> dmrs_symbol_mask = {};
-  pdu.dmrs_symbol_mask.for_each(
-      0, pdu.dmrs_symbol_mask.size(), [&dmrs_symbol_mask](unsigned i_symb) { dmrs_symbol_mask[i_symb] = true; });
-
   bool has_sch_data = pdu.codeword.has_value();
 
   // Prepare decoder buffers with dummy instances.
@@ -307,11 +305,15 @@ void pusch_processor_impl::process(span<uint8_t>                    data,
   std::reference_wrapper<pusch_decoder_buffer> csi_part1_buffer(decoder_buffer_dummy);
 
   // Prepare CSI Part 1 feedback.
-  pusch_processor_csi_part1_feedback_impl csi_part1_feedback(
-      csi_part2_decoder, *demultiplex, pdu.mcs_descr.modulation, pdu.uci.csi_part2_size, ulsch_config);
+  pusch_processor_csi_part1_feedback_impl csi_part1_feedback(dependencies.get_csi_part2_decoder(),
+                                                             *decoder,
+                                                             dependencies.get_demultiplex(),
+                                                             pdu.mcs_descr.modulation,
+                                                             pdu.uci.csi_part2_size,
+                                                             ulsch_config);
 
   // Prepare notifiers.
-  pusch_processor_notifier_adaptor notifier_adaptor(notifier, csi, csi_part1_feedback);
+  notifier_adaptor.new_transmission(notifier, csi_part1_feedback, csi);
   csi_part1_feedback.connect_notifier(notifier_adaptor);
 
   if (has_sch_data) {
@@ -327,24 +329,31 @@ void pusch_processor_impl::process(span<uint8_t>                    data,
     decoder_config.new_data            = pdu.codeword.value().new_data;
 
     // Setup decoder.
-    decoder_buffer = decoder->new_data(data, softbuffer, notifier_adaptor.get_sch_data_notifier(), decoder_config);
+    decoder_buffer =
+        decoder->new_data(data, std::move(rm_buffer), notifier_adaptor.get_sch_data_notifier(), decoder_config);
+
+    // If there is no expected CSI Part 2 payload, the number of UL-SCH LLRs is known without the need to decode the
+    // CSI Part 1 payload.
+    if (pdu.uci.csi_part2_size.entries.empty()) {
+      decoder->set_nof_softbits(info.nof_ul_sch_bits);
+    }
   }
 
   // Prepares HARQ-ACK notifier and buffer.
   if (pdu.uci.nof_harq_ack != 0) {
-    harq_ack_buffer = harq_ack_decoder.new_transmission(
+    harq_ack_buffer = dependencies.get_harq_ack_decoder().new_transmission(
         pdu.uci.nof_harq_ack, pdu.mcs_descr.modulation, notifier_adaptor.get_harq_ack_notifier());
   }
 
   // Prepares CSI Part 1 notifier and buffer.
   if (pdu.uci.nof_csi_part1 != 0) {
-    csi_part1_buffer = csi_part1_decoder.new_transmission(
+    csi_part1_buffer = dependencies.get_csi_part1_decoder().new_transmission(
         pdu.uci.nof_csi_part1, pdu.mcs_descr.modulation, notifier_adaptor.get_csi_part1_notifier());
   }
 
   // Demultiplex SCH data, HARQ-ACK and CSI Part 1.
   pusch_codeword_buffer& demodulator_buffer =
-      demultiplex->demultiplex(decoder_buffer, harq_ack_buffer, csi_part1_buffer, demux_config);
+      dependencies.get_demultiplex().demultiplex(decoder_buffer, harq_ack_buffer, csi_part1_buffer, demux_config);
 
   // Demodulate.
   pusch_demodulator::configuration demod_config;
@@ -353,35 +362,35 @@ void pusch_processor_impl::process(span<uint8_t>                    data,
   demod_config.modulation                  = pdu.mcs_descr.modulation;
   demod_config.start_symbol_index          = pdu.start_symbol_index;
   demod_config.nof_symbols                 = pdu.nof_symbols;
-  demod_config.dmrs_symb_pos               = dmrs_symbol_mask;
+  demod_config.dmrs_symb_pos               = pdu.dmrs_symbol_mask;
   demod_config.dmrs_config_type            = pdu.dmrs;
   demod_config.nof_cdm_groups_without_data = pdu.nof_cdm_groups_without_data;
   demod_config.n_id                        = pdu.n_id;
   demod_config.nof_tx_layers               = pdu.nof_tx_layers;
   demod_config.rx_ports                    = pdu.rx_ports;
-  demodulator->demodulate(
+  dependencies.get_demodulator().demodulate(
       demodulator_buffer, notifier_adaptor.get_demodulator_notifier(), grid, ch_estimate, demod_config);
 }
 
-void pusch_processor_impl::assert_pdu(const pusch_processor::pdu_t& pdu) const
+void pusch_processor_impl::assert_pdu(const pusch_processor::pdu_t& pdu, const channel_estimate& ch_estimate) const
 {
   // Make sure the configuration is supported.
-  srsran_assert((pdu.bwp_start_rb + pdu.bwp_size_rb) <= ch_estimate.size().nof_prb,
+  srsran_assert((pdu.bwp_start_rb + pdu.bwp_size_rb) <= ch_estimate.capacity().nof_prb,
                 "The sum of the BWP start (i.e., {}) and size (i.e., {}) exceeds the maximum grid size (i.e., {} PRB).",
                 pdu.bwp_start_rb,
                 pdu.bwp_size_rb,
-                ch_estimate.size().nof_prb);
+                ch_estimate.capacity().nof_prb);
   srsran_assert(pdu.dmrs == dmrs_type::TYPE1, "Only DM-RS Type 1 is currently supported.");
   srsran_assert(pdu.nof_cdm_groups_without_data == 2, "Only two CDM groups without data are currently supported.");
   srsran_assert(
-      pdu.nof_tx_layers <= ch_estimate.size().nof_tx_layers,
+      pdu.nof_tx_layers <= ch_estimate.capacity().nof_tx_layers,
       "The number of transmit layers (i.e., {}) exceeds the maximum number of transmission layers (i.e., {}).",
       pdu.nof_tx_layers,
-      ch_estimate.size().nof_tx_layers);
-  srsran_assert(pdu.rx_ports.size() <= ch_estimate.size().nof_rx_ports,
+      ch_estimate.capacity().nof_tx_layers);
+  srsran_assert(pdu.rx_ports.size() <= ch_estimate.capacity().nof_rx_ports,
                 "The number of receive ports (i.e., {}) exceeds the maximum number of receive ports (i.e., {}).",
                 pdu.rx_ports.size(),
-                ch_estimate.size().nof_rx_ports);
+                ch_estimate.capacity().nof_rx_ports);
 
   srsran_assert(pdu.uci.csi_part2_size.is_valid(pdu.uci.nof_csi_part1),
                 "CSI Part 1 UCI field length (i.e., {}) does not correspond with the CSI Part 2 (i.e., {})",

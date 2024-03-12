@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "procedures/initial_du_setup_procedure.h"
 #include <condition_variable>
 #include <future>
+#include <thread>
 
 using namespace srsran;
 using namespace srs_du;
@@ -34,7 +35,7 @@ du_manager_impl::du_manager_impl(const du_manager_params& params_) :
   params(params_),
   logger(srslog::fetch_basic_logger("DU-MNG")),
   cell_mng(params),
-  cell_res_alloc(params.ran.cells, params.ran.qos),
+  cell_res_alloc(params.ran.cells, params.mac.sched_cfg, params.ran.srbs, params.ran.qos),
   ue_mng(params, cell_res_alloc),
   main_ctrl_loop(128)
 {
@@ -125,7 +126,7 @@ void du_manager_impl::handle_ul_ccch_indication(const ul_ccch_indication_message
         // Start UE create procedure
         ue_mng.handle_ue_create_request(msg);
       })) {
-    logger.warning("Discarding UL-CCCH message cell={} tc-rnti={:#x} slot_rx={}. Cause: DU manager task queue is full",
+    logger.warning("Discarding UL-CCCH message cell={} tc-rnti={} slot_rx={}. Cause: DU manager task queue is full",
                    msg.cell_index,
                    msg.tc_rnti,
                    msg.slot_rx);
@@ -164,14 +165,15 @@ size_t du_manager_impl::nof_ues()
   // TODO: This is temporary code.
   std::promise<size_t> p;
   std::future<size_t>  fut = p.get_future();
-  if (not params.services.du_mng_exec.execute([this, &p]() { p.set_value(ue_mng.get_ues().size()); })) {
+  if (not params.services.du_mng_exec.execute([this, &p]() { p.set_value(ue_mng.nof_ues()); })) {
     logger.warning("Unable to compute the number of UEs active in the DU");
     return std::numeric_limits<size_t>::max();
   }
   return fut.get();
 }
 
-async_task<ric_control_config_response> du_manager_impl::configure_ue_mac_scheduler(ric_control_config reconf)
+async_task<du_mac_sched_control_config_response>
+du_manager_impl::configure_ue_mac_scheduler(du_mac_sched_control_config reconf)
 {
   return launch_async<srs_du::du_ue_ric_configuration_procedure>(reconf, ue_mng, params);
 }

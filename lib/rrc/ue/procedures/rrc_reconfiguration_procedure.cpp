@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #include "rrc_reconfiguration_procedure.h"
 #include "../rrc_asn1_helpers.h"
-#include "srsran/cu_cp/du_processor.h"
+#include "srsran/ran/cause.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
@@ -31,12 +31,16 @@ using namespace asn1::rrc_nr;
 rrc_reconfiguration_procedure::rrc_reconfiguration_procedure(rrc_ue_context_t&                            context_,
                                                              const rrc_reconfiguration_procedure_request& args_,
                                                              rrc_ue_reconfiguration_proc_notifier& rrc_ue_notifier_,
+                                                             rrc_ue_control_notifier&              ngap_ctrl_notifier_,
+                                                             rrc_ue_du_processor_notifier&         du_proc_notifier_,
                                                              rrc_ue_event_manager&                 event_mng_,
                                                              rrc_ue_srb_handler&                   srb_notifier_,
-                                                             srslog::basic_logger&                 logger_) :
+                                                             rrc_ue_logger&                        logger_) :
   context(context_),
   args(args_),
   rrc_ue(rrc_ue_notifier_),
+  ngap_ctrl_notifier(ngap_ctrl_notifier_),
+  du_processor_notifier(du_proc_notifier_),
   event_mng(event_mng_),
   srb_notifier(srb_notifier_),
   logger(logger_)
@@ -48,11 +52,11 @@ void rrc_reconfiguration_procedure::operator()(coro_context<async_task<bool>>& c
   CORO_BEGIN(ctx);
 
   if (context.state != rrc_state::connected) {
-    logger.error("ue={} \"{}\" failed - UE is not RRC connected", context.ue_index, name());
+    logger.log_error("\"{}\" failed. UE is not RRC connected", name());
     CORO_EARLY_RETURN(false);
   }
 
-  logger.debug("ue={} \"{}\" initialized", context.ue_index, name());
+  logger.log_debug("\"{}\" initialized", name());
   // create new transaction for RRC Reconfiguration procedure
   transaction =
       event_mng.transactions.create_transaction(std::chrono::milliseconds(context.cfg.rrc_procedure_timeout_ms));
@@ -70,14 +74,22 @@ void rrc_reconfiguration_procedure::operator()(coro_context<async_task<bool>>& c
   CORO_AWAIT(transaction);
 
   if (transaction.has_response()) {
-    logger.debug("ue={} \"{}\" finished successfull.", context.ue_index, name());
+    logger.log_debug("\"{}\" finished successfully", name());
     procedure_result = true;
   } else {
-    logger.debug("ue={} \"{}\" timed out after {}ms", context.ue_index, name(), context.cfg.rrc_procedure_timeout_ms);
-    rrc_ue.on_ue_delete_request(cause_protocol_t::unspecified); // delete UE context if reconfig fails
+    logger.log_warning("\"{}\" timed out after {}ms", name(), context.cfg.rrc_procedure_timeout_ms);
+    // Notify NGAP to request UE context release from AMF
+    CORO_AWAIT_VALUE(release_request_sent,
+                     ngap_ctrl_notifier.on_ue_context_release_request(
+                         {context.ue_index, {}, cause_radio_network_t::release_due_to_ngran_generated_reason}));
+    if (!release_request_sent) {
+      // If NGAP release request was not sent to AMF, release UE from DU processor, RRC and F1AP
+      CORO_AWAIT(
+          du_processor_notifier.on_ue_context_release_command({context.ue_index, cause_radio_network_t::unspecified}));
+    }
   }
 
-  logger.debug("ue={} \"{}\" finalized.", context.ue_index, name());
+  logger.log_debug("\"{}\" finalized", name());
   CORO_RETURN(procedure_result);
 }
 

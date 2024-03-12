@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -100,4 +100,17 @@ bool ofh_uplane_fragment_size_calculator::calculate_fragment_size(unsigned& frag
   next_fragment_start_prb_index += nof_prbs_fit_in_frame;
 
   return false;
+}
+
+unsigned
+ofh_uplane_fragment_size_calculator::calculate_nof_segments(units::bytes                              frame_size,
+                                                            unsigned                                  nof_prbs,
+                                                            const srsran::ofh::ru_compression_params& comp_params,
+                                                            units::bytes                              headers_size)
+{
+  units::bytes prb_size              = get_prb_data_size(comp_params);
+  units::bytes frame_size_data       = frame_size - headers_size;
+  unsigned     nof_prbs_fit_in_frame = frame_size_data.value() / prb_size.value();
+
+  return std::ceil(static_cast<float>(nof_prbs) / nof_prbs_fit_in_frame);
 }

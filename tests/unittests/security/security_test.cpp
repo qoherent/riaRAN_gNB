@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -81,8 +81,10 @@ TEST(security_nea1_test, testset1)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea1(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea1(key, count, bearer, dir, plaintext_view, length);
+
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA1 Test Set 2
@@ -111,8 +113,9 @@ TEST(security_nea1_test, testset2)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea1(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea1(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA1 Test Set 3
@@ -137,8 +140,9 @@ TEST(security_nea1_test, testset3)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea1(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea1(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA1 Test Set 4
@@ -167,8 +171,9 @@ TEST(security_nea1_test, testset4)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea1(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea1(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA1 Test Set 5
@@ -199,8 +204,9 @@ TEST(security_nea1_test, testset5)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea1(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea1(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA1 Test Set 6
@@ -243,8 +249,9 @@ TEST(security_nea1_test, testset6)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea1(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea1(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NIA1 Test Set 1
@@ -267,8 +274,9 @@ TEST(security_nia1_test, testset1)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -292,8 +300,9 @@ TEST(security_nia1_test, testset2)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -318,8 +327,9 @@ TEST(security_nia1_test, testset3)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -345,8 +355,9 @@ TEST(security_nia1_test, testset4)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -371,8 +382,9 @@ TEST(security_nia1_test, testset5)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -402,8 +414,9 @@ TEST(security_nia1_test, testset6)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -464,8 +477,9 @@ TEST(security_nia1_test, testset7)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia1(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -489,8 +503,9 @@ TEST(security_nea2_test, testset1)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea2(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea2(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA2 Test Set 2
@@ -517,8 +532,9 @@ TEST(security_nea2_test, testset2)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea2(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea2(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA2 Test Set 3
@@ -541,9 +557,9 @@ TEST(security_nea2_test, testset3)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea2(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out.length(), ciphertext.length());
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea2(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA2 Test Set 4
@@ -570,8 +586,9 @@ TEST(security_nea2_test, testset4)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea2(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea2(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA2 Test Set 5
@@ -600,8 +617,9 @@ TEST(security_nea2_test, testset5)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea2(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea2(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA2 Test Set 6
@@ -642,12 +660,16 @@ TEST(security_nea2_test, testset6)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea2(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea2(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NIA2 Test Set 1
 /// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 1 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
 TEST(security_nia2_test, testset1)
 {
   // Testdata in plain format
@@ -666,8 +688,9 @@ TEST(security_nia2_test, testset1)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -691,13 +714,29 @@ TEST(security_nia2_test, testset2)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 3
 /// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 3 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
 TEST(security_nia2_test, testset3)
 {
   // Testdata in plain format
@@ -716,13 +755,17 @@ TEST(security_nia2_test, testset3)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
 /// 128-NIA2 Test Set 4
 /// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 4 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
 TEST(security_nia2_test, testset4)
 {
   // Testdata in plain format
@@ -742,8 +785,9 @@ TEST(security_nia2_test, testset4)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -769,13 +813,29 @@ TEST(security_nia2_test, testset5)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 6
 /// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 6 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
 TEST(security_nia2_test, testset6)
 {
   // Testdata in plain format
@@ -795,13 +855,17 @@ TEST(security_nia2_test, testset6)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
 /// 128-NIA2 Test Set 7
 /// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 7 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
 TEST(security_nia2_test, testset7)
 {
   // Testdata in plain format
@@ -826,8 +890,9 @@ TEST(security_nia2_test, testset7)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mact_out), mact_buf);
 }
 
@@ -888,9 +953,22 @@ TEST(security_nia2_test, testset8)
   byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
 
   // Apply integrity check
-  sec_mac mact_out = {};
-  security_nia2(mact_out, key, count_i, bearer, dir, message.begin(), message.end(), length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  }
 }
 
 /// 128-NEA3 Test Set 1
@@ -915,8 +993,9 @@ TEST(security_nea3_test, testset1)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea3(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea3(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA3 Test Set 2
@@ -945,8 +1024,9 @@ TEST(security_nea3_test, testset2)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea3(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea3(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA3 Test Set 3
@@ -979,8 +1059,9 @@ TEST(security_nea3_test, testset3)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea3(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea3(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA3 Test Set 4
@@ -1019,8 +1100,9 @@ TEST(security_nea3_test, testset4)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea3(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea3(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NEA3 Test Set 5
@@ -1063,8 +1145,9 @@ TEST(security_nea3_test, testset5)
   byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
 
   // Apply ciphering and compare results
-  byte_buffer ciphertext_out = security_nea3(key, count, bearer, dir, plaintext.begin(), plaintext.end(), length);
-  EXPECT_EQ(ciphertext_out, ciphertext);
+  byte_buffer_view plaintext_view{plaintext};
+  security_nea3(key, count, bearer, dir, plaintext_view, length);
+  EXPECT_EQ(ciphertext, plaintext);
 }
 
 /// 128-NIA3 Test Set 1
@@ -1089,8 +1172,9 @@ TEST(security_nia3_test, testset1)
   byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
 
   // Apply integrity check
-  sec_mac mac_out = {};
-  security_nia3(mac_out, key, count, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mac_out), mac_buf);
 }
 
@@ -1116,8 +1200,9 @@ TEST(security_nia3_test, testset2)
   byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
 
   // Apply integrity check
-  sec_mac mac_out = {};
-  security_nia3(mac_out, key, count, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mac_out), mac_buf);
 }
 
@@ -1144,8 +1229,9 @@ TEST(security_nia3_test, testset3)
   byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
 
   // Apply integrity check
-  sec_mac mac_out = {};
-  security_nia3(mac_out, key, count, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mac_out), mac_buf);
 }
 
@@ -1176,8 +1262,9 @@ TEST(security_nia3_test, testset4)
   byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
 
   // Apply integrity check
-  sec_mac mac_out = {};
-  security_nia3(mac_out, key, count, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mac_out), mac_buf);
 }
 
@@ -1216,8 +1303,9 @@ TEST(security_nia3_test, testset5)
   byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
 
   // Apply integrity check
-  sec_mac mac_out = {};
-  security_nia3(mac_out, key, count, bearer, dir, message.begin(), message.end(), length);
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
   EXPECT_EQ(byte_buffer(mac_out), mac_buf);
 }
 
@@ -1395,6 +1483,7 @@ TEST(short_mac, short_mac_valid)
 
 int main(int argc, char** argv)
 {
+  srslog::init();
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,8 @@
  */
 
 #include "srsran/asn1/asn1_utils.h"
+#include "srsran/adt/bounded_bitset.h"
+#include "srsran/asn1/asn1_ap_utils.h"
 
 using srsran::byte_buffer;
 using srsran::span;
@@ -132,7 +134,9 @@ SRSASN_CODE bit_ref::pack(uint64_t val, uint32_t n_bits)
   srsran_assert(n_bits < 64, "Invalid number of bits passed to pack()");
   while (n_bits > 0) {
     if (offset == 0) {
-      writer.append(0);
+      if (not writer.append(0)) {
+        return SRSASN_ERROR;
+      }
     }
     uint64_t mask = ((1ul << n_bits) - 1ul); // bitmap of n_bits ones.
     val           = val & mask;
@@ -160,10 +164,10 @@ SRSASN_CODE bit_ref::pack_bytes(srsran::span<const uint8_t> bytes)
   }
   if (offset == 0) {
     // Aligned case
-    writer.append(bytes);
+    HANDLE_CODE(writer.append(bytes) ? SRSASN_SUCCESS : SRSASN_ERROR_ENCODE_FAIL);
   } else {
     for (uint8_t byte : bytes) {
-      pack(byte, 8U);
+      HANDLE_CODE(pack(byte, 8U));
     }
   }
   return SRSASN_SUCCESS;
@@ -176,10 +180,10 @@ SRSASN_CODE bit_ref::pack_bytes(srsran::byte_buffer_view bytes)
   }
   if (offset == 0) {
     // Aligned case.
-    writer.append(bytes);
+    HANDLE_CODE(writer.append(bytes) ? SRSASN_SUCCESS : SRSASN_ERROR_ENCODE_FAIL);
   } else {
     for (uint8_t byte : bytes) {
-      pack(byte, 8U);
+      HANDLE_CODE(pack(byte, 8U));
     }
   }
   return SRSASN_SUCCESS;
@@ -951,7 +955,10 @@ void octet_string_helper::to_octet_string(srsran::byte_buffer& buf, uint64_t num
   buf.clear();
   size_t nbytes = sizeof(number);
   for (uint32_t i = 0; i < nbytes; ++i) {
-    buf.append((number >> (uint64_t)((nbytes - 1 - i) * 8U)) & 0xffu);
+    if (not buf.append((number >> (uint64_t)((nbytes - 1 - i) * 8U)) & 0xffu)) {
+      log_error("Failed to append octet string byte to buffer");
+      return;
+    }
   }
 }
 
@@ -1008,7 +1015,9 @@ void octet_string_helper::append_hex_string(byte_buffer& buf, const std::string&
   char cstr[] = "\0\0\0";
   for (unsigned i = 0; i < str.size(); i += 2) {
     memcpy(&cstr[0], &str[i], 2);
-    buf.append(strtoul(cstr, nullptr, 16));
+    if (not buf.append(strtoul(cstr, nullptr, 16))) {
+      log_error("Failed to append octet string byte to buffer");
+    }
   }
 }
 
@@ -1051,7 +1060,7 @@ SRSASN_CODE unbounded_octstring<Al>::unpack(cbit_ref& bref)
   for (unsigned i = 0; i != len; ++i) {
     uint8_t b;
     HANDLE_CODE(bref.unpack(b, 8));
-    append(b);
+    HANDLE_CODE(append(b) ? SRSASN_SUCCESS : SRSASN_ERROR_DECODE_FAIL);
   }
   return SRSASN_SUCCESS;
 }
@@ -1547,6 +1556,17 @@ void json_writer::write_bool(bool value)
   write_bool("", value);
 }
 
+void json_writer::write_float(const char* fieldname, float value)
+{
+  write_fieldname(fieldname);
+  fmt::format_to(buffer, "{}", value);
+  sep = COMMA;
+}
+
+void json_writer::write_float(float value)
+{
+  write_float("", value);
+}
 void json_writer::write_null(const char* fieldname)
 {
   write_fieldname(fieldname);
@@ -1635,5 +1655,96 @@ const char* detail::empty_obj_set_item_c::types_opts::to_string() const
   log_error("The enum value=0 of type protocol_ies_empty_o::value_c::types is not valid.");
   return "";
 }
+
+const int real_mantissa_len = 23;
+const int real_exponent_len = 7;
+const int buf_len           = 10;
+
+SRSASN_CODE pack_unconstrained_real(bit_ref& bref, float n, bool aligned)
+{
+  if (aligned) {
+    HANDLE_CODE(bref.align_bytes_zero());
+  }
+  uint8_t   buf[buf_len];
+  uint32_t* bits_ptr      = (uint32_t*)&n;
+  uint32_t  bits          = *bits_ptr;
+  bool      sign          = ((bits >> 31) & 0x1);
+  uint32_t  mantissa      = (bits & 0x7fffff) | 0x800000;
+  uint32_t  trailingZeros = srsran::detail::bitset_builtin_helper<unsigned>::zero_lsb_count(mantissa);
+  uint32_t  pack_mantissa = mantissa >> trailingZeros;
+  // the inverse of the trailing zeros gives the number of bits to shift
+  // the mantissa to the right to make it a whole number, this number must be added to the exponent
+  uint8_t inv_trailing_zeros = real_mantissa_len - trailingZeros;
+
+  int8_t exponent = (bits >> real_mantissa_len) & 0xff;
+  exponent -= (127 + inv_trailing_zeros);
+  uint8_t pack_exponent = exponent & 0xff;
+
+  uint8_t info_octet = 0x80;
+  if (sign) {
+    info_octet |= 0x1 << 6;
+  }
+  // compute the number of octets needed to represent the mantissa
+  uint8_t mantissa_bit_len = real_mantissa_len + 1 - trailingZeros;
+  uint8_t mantissa_oct_len = (mantissa_bit_len + 7) / 8;
+
+  for (uint8_t i = 0; i < mantissa_oct_len; i++) {
+    uint8_t octet                   = pack_mantissa & 0xff;
+    buf[(mantissa_oct_len - 1) - i] = octet;
+    pack_mantissa >>= 8;
+  }
+  uint32_t len = mantissa_oct_len + 2;
+  pack_length(bref, len, aligned);
+
+  bref.pack(info_octet, 8);
+  bref.pack(pack_exponent, 8);
+  for (uint8_t i = 0; i < mantissa_oct_len; i++) {
+    bref.pack(buf[i], 8);
+  }
+  return SRSASN_SUCCESS;
+};
+
+SRSASN_CODE unpack_unconstrained_real(float& n, cbit_ref& bref, bool aligned)
+{
+  if (aligned) {
+    HANDLE_CODE(bref.align_bytes());
+  }
+  uint32_t len;
+  HANDLE_CODE(unpack_length(len, bref, aligned));
+
+  uint8_t buf[buf_len];
+  for (uint32_t i = 0; i < len; i++) {
+    HANDLE_CODE(bref.unpack(buf[i], 8));
+  }
+
+  uint8_t  info_octet = buf[0];
+  uint8_t  exponent   = buf[1];
+  uint32_t mantissa   = 0;
+
+  bool    sign             = (info_octet >> 6) & 0x1;
+  uint8_t mantissa_oct_len = len - 2;
+
+  for (uint32_t i = 0; i < mantissa_oct_len; i++) {
+    mantissa |= (uint32_t)buf[i + 2] << (8 * i);
+  }
+
+  uint8_t leading_zeros = srsran::detail::bitset_builtin_helper<unsigned>::zero_msb_count(mantissa) - 9;
+
+  mantissa <<= leading_zeros + 1;
+  mantissa &= 0x7fffff;
+
+  uint32_t trailingZeros      = srsran::detail::bitset_builtin_helper<unsigned>::zero_lsb_count(mantissa);
+  uint8_t  inv_trailing_zeros = real_mantissa_len - trailingZeros;
+
+  int8_t unpacked_exponent = exponent;
+  unpacked_exponent += 127 + inv_trailing_zeros;
+
+  uint32_t bits =
+      (sign << (real_mantissa_len + real_exponent_len)) | (unpacked_exponent << real_mantissa_len) | (mantissa);
+
+  float* bits_ptr = (float*)&bits;
+  n               = *bits_ptr;
+  return SRSASN_SUCCESS;
+};
 
 } // namespace asn1

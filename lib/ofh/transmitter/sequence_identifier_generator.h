@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,9 @@
 
 #pragma once
 
-#include "srsran/adt/circular_map.h"
 #include "srsran/ofh/ofh_constants.h"
 #include "srsran/support/srsran_assert.h"
+#include <array>
 
 namespace srsran {
 namespace ofh {
@@ -32,14 +32,14 @@ namespace ofh {
 /// Sequence identifier generator.
 class sequence_identifier_generator
 {
-  circular_map<unsigned, uint8_t, MAX_SUPPORTED_EAXC_ID_VALUE> counters;
+  std::array<std::atomic<uint8_t>, MAX_SUPPORTED_EAXC_ID_VALUE> counters;
 
 public:
   /// Default constructor.
   explicit sequence_identifier_generator(unsigned init_value = 0)
   {
     for (unsigned K = 0; K != MAX_SUPPORTED_EAXC_ID_VALUE; ++K) {
-      counters.insert(K, init_value);
+      counters[K] = init_value;
     }
   }
 
@@ -47,11 +47,11 @@ public:
   uint8_t generate(unsigned eaxc)
   {
     srsran_assert(eaxc < MAX_SUPPORTED_EAXC_ID_VALUE,
-                  "Invalid eAxC={} detected. Maximum supported eAxC value = {}",
+                  "Invalid eAxC value '{}'. Maximum eAxC value is '{}'",
                   eaxc,
                   MAX_SUPPORTED_EAXC_ID_VALUE);
 
-    uint8_t& value = counters[eaxc];
+    auto& value = counters[eaxc];
     return value++;
   }
 };

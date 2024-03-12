@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -23,3 +23,4 @@ add_subdirectory(e2ap)
 add_subdirectory(rlc)
 add_subdirectory(du_high)
 add_subdirectory(du_high_cu)
+add_subdirectory(ofh)

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "srsran/adt/bit_buffer.h"
 #include "srsran/adt/complex.h"
 #include "srsran/adt/span.h"
-#include "srsran/ran/modulation_scheme.h"
+#include "srsran/ran/sch/modulation_scheme.h"
 
 namespace srsran {
 
@@ -35,6 +35,9 @@ namespace srsran {
 class modulation_mapper
 {
 public:
+  /// Gets the modulation scaling factor.
+  static float get_modulation_scaling(modulation_scheme);
+
   /// Default destructor.
   virtual ~modulation_mapper() = default;
 

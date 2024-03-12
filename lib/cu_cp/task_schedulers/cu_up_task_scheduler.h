@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,7 @@
 
 #include "srsran/adt/slotted_array.h"
 #include "srsran/cu_cp/cu_cp_types.h"
-#include "srsran/support/async/async_task_loop.h"
+#include "srsran/support/async/fifo_async_task_scheduler.h"
 #include "srsran/support/executors/task_executor.h"
 #include "srsran/support/timers.h"
 
@@ -35,7 +35,10 @@ namespace srs_cu_cp {
 class cu_up_task_scheduler
 {
 public:
-  explicit cu_up_task_scheduler(timer_manager& timers_, task_executor& exec_, srslog::basic_logger& logger_);
+  explicit cu_up_task_scheduler(timer_manager&        timers_,
+                                task_executor&        exec_,
+                                uint16_t              max_nof_cu_ups,
+                                srslog::basic_logger& logger_);
   ~cu_up_task_scheduler() = default;
 
   // CU-UP task scheduler
@@ -50,7 +53,7 @@ private:
   srslog::basic_logger& logger;
 
   // task event loops indexed by cu_up_index
-  slotted_array<async_task_sequencer, MAX_NOF_CU_UPS> cu_up_ctrl_loop;
+  slotted_array<fifo_async_task_scheduler, MAX_NOF_CU_UPS> cu_up_ctrl_loop;
 };
 
 } // namespace srs_cu_cp

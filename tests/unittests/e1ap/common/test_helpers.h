@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,7 @@
 #include "srsran/cu_up/cu_up.h"
 #include "srsran/cu_up/cu_up_types.h"
 #include "srsran/e1ap/common/e1ap_common.h"
+#include "srsran/e1ap/common/e1ap_message.h"
 #include "srsran/e1ap/cu_cp/e1ap_cu_cp.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up_bearer_context_update.h"
@@ -220,10 +221,10 @@ private:
 class dummy_cu_cp_e1ap_pdu_notifier : public e1ap_message_notifier
 {
 public:
-  dummy_cu_cp_e1ap_pdu_notifier(srs_cu_cp::cu_cp_interface* cu_cp_, e1ap_message_handler* handler_) :
+  dummy_cu_cp_e1ap_pdu_notifier(srs_cu_cp::cu_cp* cu_cp_, e1ap_message_handler* handler_) :
     logger(srslog::fetch_basic_logger("TEST")), cu_cp(cu_cp_), handler(handler_){};
 
-  void attach_handler(srs_cu_cp::cu_cp_interface* cu_cp_, e1ap_message_handler* handler_)
+  void attach_handler(srs_cu_cp::cu_cp* cu_cp_, e1ap_message_handler* handler_)
   {
     cu_cp   = cu_cp_;
     handler = handler_;
@@ -241,9 +242,9 @@ public:
   e1ap_message last_e1ap_msg;
 
 private:
-  srslog::basic_logger&       logger;
-  srs_cu_cp::cu_cp_interface* cu_cp   = nullptr;
-  e1ap_message_handler*       handler = nullptr;
+  srslog::basic_logger& logger;
+  srs_cu_cp::cu_cp*     cu_cp   = nullptr;
+  e1ap_message_handler* handler = nullptr;
 };
 
 /// Dummy handler just printing the received PDU.
@@ -286,7 +287,9 @@ class dummy_e1ap_cu_cp_notifier : public srs_cu_cp::e1ap_cu_cp_notifier
 public:
   dummy_e1ap_cu_cp_notifier() : logger(srslog::fetch_basic_logger("TEST")){};
 
-  void on_e1ap_created(srs_cu_cp::e1ap_bearer_context_manager& bearer_context_manager) override
+  void on_e1ap_created(srs_cu_cp::e1ap_bearer_context_manager&         bearer_context_manager,
+                       srs_cu_cp::e1ap_bearer_context_removal_handler& bearer_removal_handler,
+                       srs_cu_cp::e1ap_statistics_handler&             e1ap_statistic_handler) override
   {
     logger.info("Received E1AP creation notification");
   }

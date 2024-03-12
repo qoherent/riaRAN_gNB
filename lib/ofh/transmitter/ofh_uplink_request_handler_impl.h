@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,9 +22,11 @@
 
 #pragma once
 
+#include "../support/prach_context_repository.h"
 #include "../support/uplink_context_repository.h"
 #include "ofh_data_flow_cplane_scheduling_commands.h"
 #include "srsran/adt/optional.h"
+#include "srsran/ofh/ethernet/ethernet_frame_pool.h"
 #include "srsran/ofh/transmitter/ofh_uplink_request_handler.h"
 #include "srsran/ran/tdd/tdd_ul_dl_config.h"
 
@@ -47,10 +49,14 @@ struct uplink_request_handler_impl_config {
 
 /// Uplink request handler implmentation dependencies.
 struct uplink_request_handler_impl_dependencies {
+  /// Logger.
+  srslog::basic_logger* logger = nullptr;
   /// Uplink slot context repository.
-  std::shared_ptr<uplink_context_repository<ul_slot_context>> ul_slot_repo;
+  std::shared_ptr<uplink_context_repository> ul_slot_repo;
   /// Uplink PRACH context repository.
-  std::shared_ptr<uplink_context_repository<ul_prach_context>> ul_prach_repo;
+  std::shared_ptr<prach_context_repository> ul_prach_repo;
+  /// Ethernet frame pool.
+  std::shared_ptr<ether::eth_frame_pool> frame_pool_ptr;
   /// Data flow for Control-Plane scheduling commands.
   std::unique_ptr<data_flow_cplane_scheduling_commands> data_flow;
 };
@@ -69,16 +75,19 @@ public:
   void handle_new_uplink_slot(const resource_grid_context& context, resource_grid& grid) override;
 
 private:
-  bool                                                         is_prach_cp_enabled;
-  const cyclic_prefix                                          cp;
-  const optional<tdd_ul_dl_config_common>                      tdd_config;
-  const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC>        prach_eaxc;
-  const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC>        ul_eaxc;
-  std::shared_ptr<uplink_context_repository<ul_slot_context>>  ul_slot_repo_ptr;
-  std::shared_ptr<uplink_context_repository<ul_prach_context>> ul_prach_repo_ptr;
-  uplink_context_repository<ul_slot_context>&                  ul_slot_repo;
-  uplink_context_repository<ul_prach_context>&                 ul_prach_repo;
-  std::unique_ptr<data_flow_cplane_scheduling_commands>        data_flow;
+  srslog::basic_logger&                                 logger;
+  bool                                                  is_prach_cp_enabled;
+  const cyclic_prefix                                   cp;
+  const optional<tdd_ul_dl_config_common>               tdd_config;
+  const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> prach_eaxc;
+  const static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> ul_eaxc;
+  std::shared_ptr<uplink_context_repository>            ul_slot_repo_ptr;
+  std::shared_ptr<prach_context_repository>             ul_prach_repo_ptr;
+  uplink_context_repository&                            ul_slot_repo;
+  prach_context_repository&                             ul_prach_repo;
+  std::unique_ptr<data_flow_cplane_scheduling_commands> data_flow;
+  std::shared_ptr<ether::eth_frame_pool>                frame_pool_ptr;
+  ether::eth_frame_pool&                                frame_pool;
 };
 
 } // namespace ofh

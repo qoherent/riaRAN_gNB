@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,16 +25,22 @@
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/gateways/sctp_network_gateway.h"
 #include "srsran/ngap/ngap.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/srslog/srslog.h"
 #include <cstdio>
 
 namespace srsran {
+namespace srs_cu_cp {
+
+struct ngap_message;
 
 class ngap_asn1_packer : public srs_cu_cp::ngap_message_handler
 {
 public:
-  ngap_asn1_packer(sctp_network_gateway_data_handler& gw, ngap_message_handler& ngap, dlt_pcap& pcap_);
+  ngap_asn1_packer(sctp_network_gateway_data_handler& gw,
+                   ngap_message_notifier&             amf_notifier_,
+                   ngap_message_handler&              ngap,
+                   dlt_pcap&                          pcap_);
 
   void handle_packed_pdu(const byte_buffer& pdu);
 
@@ -43,8 +49,10 @@ public:
 private:
   srslog::basic_logger&              logger;
   sctp_network_gateway_data_handler& gw;
+  ngap_message_notifier&             amf_notifier;
   ngap_message_handler&              ngap;
   dlt_pcap&                          pcap;
 };
 
+} // namespace srs_cu_cp
 } // namespace srsran

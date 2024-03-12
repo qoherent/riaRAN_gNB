@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,6 +32,9 @@ namespace srsran {
 
 /// Computes the number of threads that are usable in the given host.
 size_t compute_host_nof_hardware_threads();
+
+/// Get maximum CPU ID available to the application.
+size_t get_host_max_cpu_id();
 
 /// OS thread RT scheduling priority.
 /// Note: posix defines a minimum spread between sched_get_priority_max() and sched_get_priority_min() of 32.
@@ -107,22 +110,60 @@ private:
 /// CPU affinity bitmap.
 struct os_sched_affinity_bitmask {
 public:
-  os_sched_affinity_bitmask() : cpu_bitset(compute_host_nof_hardware_threads()) {}
+  static constexpr size_t MAX_CPUS = 1024;
 
-  explicit os_sched_affinity_bitmask(size_t cpu_idx) : cpu_bitset(compute_host_nof_hardware_threads()) { set(cpu_idx); }
+  os_sched_affinity_bitmask() : cpu_bitset(get_host_max_cpu_id() + 1) {}
+
+  explicit os_sched_affinity_bitmask(size_t cpu_idx) : cpu_bitset(get_host_max_cpu_id() + 1) { set(cpu_idx); }
+
+  os_sched_affinity_bitmask(size_t bitset_size, size_t cpu_idx) : cpu_bitset(bitset_size) { set(cpu_idx); }
 
   size_t size() const { return cpu_bitset.size(); }
 
   void set(size_t cpu_idx) { cpu_bitset.set(cpu_idx); }
 
+  /// Returns a bitmap of the CPUs available to the application.
+  static const os_sched_affinity_bitmask& available_cpus();
+
+  /// \brief Finds, within a range of CPU indexes, the lowest CPU enabled.
+  /// \param[in] start_cpu_index Starting CPU index for the search.
+  /// \param[in] end_cpu_index End CPU index for the search.
+  /// \return Returns the lowest found bit index or -1 in case no bit was found with the provided value argument.
+  int find_lowest(size_t start_cpu_index, size_t end_cpu_index)
+  {
+    return cpu_bitset.find_lowest(start_cpu_index, end_cpu_index);
+  }
+
+  /// Returns true if no CPU is enabled.
+  bool none() const { return cpu_bitset.none(); }
+
+  /// \brief Fills range of bits to true.
+  /// \param[in] start Starting bit index that will be set.
+  /// \param[in] end End bit index (excluding) where the bits stop being set.
+  void fill(size_t start, size_t end) { cpu_bitset.fill(start, end); }
+
   bool test(size_t cpu_idx) const { return cpu_bitset.test(cpu_idx); }
 
   bool any() const { return cpu_bitset.any(); }
 
+  bool all() const { return cpu_bitset.all(); }
+
   uint64_t to_uint64() const { return cpu_bitset.to_uint64(); }
 
+  /// \brief Number of CPUs enabled in the bitmask.
+  size_t count() const { return cpu_bitset.count(); }
+
+  /// \brief Returns the list of CPU Ids contained in \c this bitmask but not in the \c rhs bitmask.
+  static_vector<size_t, os_sched_affinity_bitmask::MAX_CPUS> subtract(const os_sched_affinity_bitmask& rhs) const;
+
+  /// \brief Get CPU ids of the affinity mask.
+  static_vector<size_t, os_sched_affinity_bitmask::MAX_CPUS> get_cpu_ids() const
+  {
+    return cpu_bitset.get_bit_positions();
+  }
+
 private:
-  bounded_bitset<1024> cpu_bitset;
+  bounded_bitset<MAX_CPUS> cpu_bitset;
 };
 
 /// Unique thread wrapper that ensures the thread is joined on destruction and provides an interface to set/get

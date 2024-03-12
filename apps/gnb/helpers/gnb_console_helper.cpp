@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,8 +33,13 @@
 
 using namespace srsran;
 
-gnb_console_helper::gnb_console_helper(io_broker& io_broker_) :
-  logger(srslog::fetch_basic_logger("GNB")), io_broker_handle(io_broker_)
+gnb_console_helper::gnb_console_helper(io_broker&           io_broker_,
+                                       srslog::log_channel& log_chan_,
+                                       bool                 autostart_stdout_metrics_) :
+  logger(srslog::fetch_basic_logger("GNB")),
+  io_broker_handle(io_broker_),
+  metrics_json(log_chan_),
+  autostart_stdout_metrics(autostart_stdout_metrics_)
 {
   // set STDIN file descripter into non-blocking mode
   int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -49,7 +54,10 @@ gnb_console_helper::gnb_console_helper(io_broker& io_broker_) :
 
 gnb_console_helper::~gnb_console_helper()
 {
-  io_broker_handle.unregister_fd(STDIN_FILENO);
+  bool success = io_broker_handle.unregister_fd(STDIN_FILENO);
+  if (!success) {
+    report_fatal_error("Failed to unregister stdin file descriptor at IO broker. fd={}", STDIN_FILENO);
+  }
 }
 
 void gnb_console_helper::stdin_handler(int fd)
@@ -138,6 +146,10 @@ void gnb_console_helper::on_app_running()
 
   fmt::print("==== gNodeB started ===\n");
   fmt::print("Type <t> to view trace\n");
+
+  if (autostart_stdout_metrics) {
+    metrics_plotter.enable_print();
+  }
 }
 
 void gnb_console_helper::on_app_stopping()

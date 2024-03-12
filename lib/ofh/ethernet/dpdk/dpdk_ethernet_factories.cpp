@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,19 +21,23 @@
  */
 
 #include "dpdk_ethernet_factories.h"
+#include "dpdk_ethernet_port_context.h"
 #include "dpdk_ethernet_receiver.h"
 #include "dpdk_ethernet_transmitter.h"
+#include "srsran/ofh/ethernet/ethernet_gw_config.h"
 
 using namespace srsran;
 using namespace ether;
 
-std::unique_ptr<gateway> srsran::ether::create_dpdk_gateway(srslog::basic_logger& logger)
+std::pair<std::unique_ptr<gateway>, std::unique_ptr<receiver>>
+srsran::ether::create_dpdk_txrx(const gw_config& config, task_executor& rx_executor, srslog::basic_logger& logger)
 {
-  return std::make_unique<dpdk_transmitter_impl>(logger);
-}
+  dpdk_port_config port_cfg;
+  port_cfg.pcie_id                     = config.interface;
+  port_cfg.is_promiscuous_mode_enabled = config.is_promiscuous_mode_enabled;
+  port_cfg.mtu_size                    = config.mtu_size;
 
-std::unique_ptr<receiver>
-srsran::ether::create_dpdk_receiver(task_executor& executor, frame_notifier& notifier, srslog::basic_logger& logger)
-{
-  return std::make_unique<dpdk_receiver_impl>(executor, notifier, logger);
+  auto ctx = dpdk_port_context::create(port_cfg);
+  return {std::make_unique<dpdk_transmitter_impl>(ctx, logger),
+          std::make_unique<dpdk_receiver_impl>(rx_executor, ctx, logger)};
 }

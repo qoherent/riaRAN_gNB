@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -23,7 +23,6 @@ set(SOURCES f1ap_configuration_helpers.cpp
         asn1_rrc_config_helpers.cpp
         asn1_csi_meas_config_helpers.cpp
         rlc_config_helpers.cpp
-        mac_config_helpers.cpp
         scheduler_configuration_helpers.cpp)
 
 add_library(du_manager_converters STATIC ${SOURCES})

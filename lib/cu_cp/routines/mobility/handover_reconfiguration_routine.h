@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "../../ue_manager_impl.h"
+#include "../../ue_manager/ue_manager_impl.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -49,11 +49,11 @@ void pdu_session_resource_release_routine::operator()(
 {
   CORO_BEGIN(ctx);
 
-  logger.debug("ue={}: \"{}\" initialized.", release_cmd.ue_index, name());
+  logger.debug("ue={}: \"{}\" initialized", release_cmd.ue_index, name());
 
   // Perform initial sanity checks on incoming message.
   if (!rrc_ue_up_resource_manager.validate_request(release_cmd)) {
-    logger.error("ue={}: \"{}\" Invalid PDU Session Resource Release Command", release_cmd.ue_index, name());
+    logger.warning("ue={}: \"{}\" Invalid PduSessionResourceReleaseCommand", release_cmd.ue_index, name());
     CORO_EARLY_RETURN(generate_pdu_session_resource_release_response(false));
   }
 
@@ -62,24 +62,8 @@ void pdu_session_resource_release_routine::operator()(
     next_config = rrc_ue_up_resource_manager.calculate_update(release_cmd);
   }
 
-  // Release DRB resources at DU
-  {
-    // prepare UeContextModificationRequest and call F1 notifier
-    ue_context_mod_request.ue_index = release_cmd.ue_index;
-    for (const auto& drb_id : next_config.drb_to_remove_list) {
-      ue_context_mod_request.drbs_to_be_released_list.push_back(drb_id);
-    }
-
-    CORO_AWAIT_VALUE(ue_context_modification_response,
-                     f1ap_ue_ctxt_notifier.on_ue_context_modification_request(ue_context_mod_request));
-
-    // Handle UE Context Modification Response
-    if (not ue_context_modification_response.success) {
-      logger.error("ue={}: \"{}\" failed to modify UE context at DU.", release_cmd.ue_index, name());
-    }
-  }
-
   // Inform CU-UP about the release of a bearer
+  // Note: The Bearers must be released at CU-UP before the DRBs are released at DU.
   if (next_config.context_removal_required) {
     // Remove bearer context.
     bearer_context_release_command.ue_index = release_cmd.ue_index;
@@ -89,7 +73,9 @@ void pdu_session_resource_release_routine::operator()(
 
     // Request UE context removal.
     logger.info("ue={}: \"{}\" Requesting UE context release", release_cmd.ue_index, name());
-    task_sched.schedule_async_task(release_cmd.ue_index, request_context_release());
+    ue_context_release_request.ue_index = release_cmd.ue_index;
+    ue_context_release_request.cause    = cause_radio_network_t::unknown_pdu_session_id;
+    CORO_AWAIT(ngap_ctrl_notifier.on_ue_context_release_request(ue_context_release_request));
   } else {
     // prepare BearerContextModificationRequest and call e1 notifier
     bearer_context_modification_request.ue_index = release_cmd.ue_index;
@@ -106,25 +92,28 @@ void pdu_session_resource_release_routine::operator()(
 
     // Handle BearerContextModificationResponse
     if (not bearer_context_modification_response.success) {
-      logger.error("ue={}: \"{}\" failed to release bearer at CU-UP.", release_cmd.ue_index, name());
+      logger.warning("ue={}: \"{}\" failed to release bearer(s) at CU-UP", release_cmd.ue_index, name());
+    }
+  }
+
+  // Release DRB resources at DU
+  {
+    // prepare UeContextModificationRequest and call F1 notifier
+    ue_context_mod_request.ue_index = release_cmd.ue_index;
+    for (const auto& drb_id : next_config.drb_to_remove_list) {
+      ue_context_mod_request.drbs_to_be_released_list.push_back(drb_id);
+    }
+
+    CORO_AWAIT_VALUE(ue_context_modification_response,
+                     f1ap_ue_ctxt_notifier.on_ue_context_modification_request(ue_context_mod_request));
+
+    // Handle UE Context Modification Response
+    if (not ue_context_modification_response.success) {
+      logger.warning("ue={}: \"{}\" failed to release bearer(s) at DU", release_cmd.ue_index, name());
     }
   }
 
   CORO_RETURN(generate_pdu_session_resource_release_response(true));
-}
-
-async_task<void> pdu_session_resource_release_routine::request_context_release()
-{
-  return launch_async([this](coro_context<async_task<void>>& ctx) {
-    CORO_BEGIN(ctx);
-
-    cu_cp_ue_context_release_request ue_context_release_request;
-    ue_context_release_request.ue_index = release_cmd.ue_index;
-    ue_context_release_request.cause    = cause_radio_network_t::unknown_pdu_session_id;
-    ngap_ctrl_notifier.on_ue_context_release_request(ue_context_release_request);
-
-    CORO_RETURN();
-  });
 }
 
 cu_cp_pdu_session_resource_release_response

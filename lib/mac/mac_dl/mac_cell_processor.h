@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,7 +31,7 @@
 #include "sib_pdu_assembler.h"
 #include "ssb_assembler.h"
 #include "srsran/mac/mac.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/scheduler/mac_scheduler.h"
 #include "srsran/support/memory_pool/ring_buffer_pool.h"
 
@@ -46,6 +46,7 @@ public:
                      mac_cell_result_notifier&        phy_notifier,
                      task_executor&                   cell_exec,
                      task_executor&                   slot_exec,
+                     task_executor&                   err_ind_exec,
                      task_executor&                   ctrl_exec,
                      mac_pcap&                        pcap);
 
@@ -56,6 +57,7 @@ public:
   async_task<void> stop() override;
 
   void handle_slot_indication(slot_point sl_tx) override;
+  void handle_error_indication(slot_point sl_tx, error_event event) override;
 
 private:
   void handle_slot_indication_impl(slot_point sl_tx);
@@ -83,6 +85,7 @@ private:
   const mac_cell_creation_request cell_cfg;
   task_executor&                  cell_exec;
   task_executor&                  slot_exec;
+  task_executor&                  err_ind_exec;
   task_executor&                  ctrl_exec;
   mac_cell_result_notifier&       phy_cell;
 
@@ -105,6 +108,8 @@ private:
   enum class cell_state { inactive, active } state = cell_state::active;
 
   mac_pcap& pcap;
+
+  bool sib1_pcap_dumped = false;
 };
 
 } // namespace srsran

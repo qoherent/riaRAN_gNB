@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,6 +26,7 @@
 #include "serving_cell_config.h"
 #include "srsran/ran/csi_rs/csi_meas_config.h"
 #include "srsran/ran/pdcch/aggregation_level.h"
+#include "srsran/ran/sib/system_info_config.h"
 #include "srsran/ran/tdd/tdd_ul_dl_config.h"
 
 namespace srsran {
@@ -79,6 +80,8 @@ pdsch_serving_cell_config make_default_pdsch_serving_cell_config();
 
 pdsch_config make_default_pdsch_config(const cell_config_builder_params_extended& params = {});
 
+pdcch_config make_ue_dedicated_pdcch_config(const cell_config_builder_params_extended& params = {});
+
 /// \brief Creates a default UE Serving Cell configuration.
 serving_cell_config
 create_default_initial_ue_serving_cell_config(const cell_config_builder_params_extended& params = {});
@@ -108,6 +111,9 @@ make_pdsch_time_domain_resource(uint8_t                           ss0_idx,
                                 const pdcch_config_common&        common_pdcch_cfg,
                                 optional<pdcch_config>            ded_pdcch_cfg = {},
                                 optional<tdd_ul_dl_config_common> tdd_cfg       = {});
+
+/// \brief Creates a default UE timers and constants configuration.
+ue_timers_and_constants_config make_default_ue_timers_and_constants_config();
 
 } // namespace config_helpers
 } // namespace srsran

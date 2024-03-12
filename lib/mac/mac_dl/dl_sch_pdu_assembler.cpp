@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,72 @@
 
 using namespace srsran;
 
+// Note: Do not attempt to build an SDU if there is not enough space for the MAC subheader, min payload size and
+// potential RLC header.
+static const unsigned RLC_HEADER_SIZE_ESTIM = 2;
+
+// Minimum size required to fit a MAC subheader and SDU.
+static size_t min_mac_subhdr_and_sdu_space_required(lcid_t lcid)
+{
+  return MIN_MAC_SDU_SUBHEADER_SIZE + 1 + (lcid != LCID_SRB0 ? RLC_HEADER_SIZE_ESTIM : 0);
+}
+
+dl_sch_pdu::mac_sdu_encoder::mac_sdu_encoder(dl_sch_pdu& pdu_,
+                                             lcid_t      lcid_,
+                                             unsigned    subhdr_len_,
+                                             unsigned    max_sdu_size_) :
+  pdu(&pdu_), lcid(lcid_), subhr_len(subhdr_len_), max_sdu_size(max_sdu_size_)
+{
+}
+
+span<uint8_t> dl_sch_pdu::mac_sdu_encoder::sdu_space() const
+{
+  if (pdu == nullptr) {
+    return {};
+  }
+  unsigned sdu_offset = pdu->byte_offset + subhr_len;
+  return pdu->pdu.subspan(sdu_offset, max_sdu_size);
+}
+
+unsigned dl_sch_pdu::mac_sdu_encoder::encode_sdu(unsigned sdu_bytes_written)
+{
+  srsran_assert(pdu != nullptr, "encode_sdu called for invalid MAC grant");
+  if (sdu_bytes_written == 0 or sdu_bytes_written > max_sdu_size) {
+    return 0;
+  }
+
+  // Encode MAC SubHeader.
+  const bool F_bit = subhr_len > MIN_MAC_SDU_SUBHEADER_SIZE;
+  pdu->encode_subheader(F_bit, lcid, subhr_len, sdu_bytes_written);
+
+  // Advance byte offset to account for MAC SDU.
+  pdu->byte_offset += sdu_bytes_written;
+
+  return subhr_len + sdu_bytes_written;
+}
+
+dl_sch_pdu::mac_sdu_encoder dl_sch_pdu::get_sdu_encoder(lcid_t lcid, unsigned sdu_payload_len_estimate)
+{
+  if (sdu_payload_len_estimate == 0) {
+    return mac_sdu_encoder{};
+  }
+
+  unsigned rem_grant_space = pdu.size() - byte_offset;
+  if (rem_grant_space < min_mac_subhdr_and_sdu_space_required(lcid)) {
+    // No space available for the smallest possible MAC SDU.
+    return mac_sdu_encoder{};
+  }
+
+  // Space to be used to encode the MAC subheader + SDU (expected sizes).
+  unsigned space_estim = std::min(rem_grant_space, get_mac_sdu_required_bytes(sdu_payload_len_estimate));
+  // Space to encode expected MAC SDU without subheader.
+  unsigned sdu_space_estim = get_mac_sdu_payload_size(space_estim);
+  // Determine whether a MAC subheader with 8-bit or 16-bit L field is required.
+  unsigned chosen_subhdr_len = get_mac_sdu_subheader_size(sdu_space_estim);
+
+  return mac_sdu_encoder{*this, lcid, chosen_subhdr_len, sdu_space_estim};
+}
+
 unsigned dl_sch_pdu::add_sdu(lcid_t lcid_, byte_buffer_chain&& sdu)
 {
   srsran_assert(not sdu.empty(), "Trying to add an empty SDU");
@@ -50,8 +116,12 @@ unsigned dl_sch_pdu::add_sdu(lcid_t lcid_, byte_buffer_chain&& sdu)
   encode_subheader(F_bit, lcid, header_length, sdu_len);
 
   // Encode Payload.
-  std::copy(sdu.begin(), sdu.end(), pdu.data() + byte_offset);
-  byte_offset += sdu_len;
+  for (const byte_buffer_slice& sl : sdu.slices()) {
+    for (const span<const uint8_t> seg : sl.segments()) {
+      std::copy(seg.begin(), seg.end(), pdu.data() + byte_offset);
+      byte_offset += seg.size();
+    }
+  }
   return sdu_len + header_length;
 }
 
@@ -113,25 +183,40 @@ void dl_sch_pdu::encode_subheader(bool F_bit, lcid_dl_sch_t lcid, unsigned heade
 
 // /////////////////////////
 
-class dl_sch_pdu_assembler::dl_sch_pdu_logger
+class dl_sch_pdu_assembler::pdu_log_builder
 {
 public:
-  explicit dl_sch_pdu_logger(du_ue_index_t ue_index_, rnti_t rnti_, units::bytes tbs_, srslog::basic_logger& logger_) :
-    ue_index(ue_index_), rnti(rnti_), tbs(tbs_), logger(logger_)
+  explicit pdu_log_builder(du_ue_index_t         ue_index_,
+                           rnti_t                rnti_,
+                           units::bytes          tbs_,
+                           fmt::memory_buffer&   fmtbuf_,
+                           srslog::basic_logger& logger_) :
+    ue_index(ue_index_), rnti(rnti_), tbs(tbs_), logger(logger_), fmtbuf(fmtbuf_), enabled(logger.info.enabled())
   {
+    fmtbuf.clear();
   }
 
   void add_sdu(lcid_t lcid, unsigned len)
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
-    fmt::format_to(fmtbuf, "{}SDU: lcid={} size={}", separator(), lcid, len);
+    if (lcid != current_sdu_lcid) {
+      if (current_sdu_lcid != lcid_t::INVALID_LCID) {
+        fmt::format_to(fmtbuf, "SDU: lcid={} nof_sdus={} total_size={}", current_sdu_lcid, nof_sdus, sum_bytes);
+      }
+      current_sdu_lcid = lcid;
+      nof_sdus         = 1;
+      sum_bytes        = units::bytes{len};
+    } else {
+      ++nof_sdus;
+      sum_bytes += units::bytes{len};
+    }
   }
 
   void add_conres_id(const ue_con_res_id_t& conres)
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
     fmt::format_to(fmtbuf, "{}CON_RES: id={:x}", separator(), fmt::join(conres, ""));
@@ -139,7 +224,7 @@ public:
 
   void add_ta_cmd(const ta_cmd_ce_payload& ce_payload)
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
     fmt::format_to(fmtbuf, "{}TA_CMD: tag_id={}, ta_cmd={}", separator(), ce_payload.tag_id, ce_payload.ta_cmd);
@@ -147,20 +232,32 @@ public:
 
   void log()
   {
-    if (not logger.info.enabled()) {
+    if (not enabled) {
       return;
     }
-    logger.info("DL PDU: ue={} rnti={:#x} size={}: {}", ue_index, rnti, tbs, to_c_str(fmtbuf));
+
+    // Log pending LCID SDUs.
+    if (current_sdu_lcid != lcid_t::INVALID_LCID) {
+      fmt::format_to(fmtbuf, "SDU: lcid={} nof_sdus={} total_size={}", current_sdu_lcid, nof_sdus, sum_bytes);
+    }
+
+    logger.info("DL PDU: ue={} rnti={} size={}: {}", ue_index, rnti, tbs, to_c_str(fmtbuf));
   }
 
 private:
   const char* separator() const { return fmtbuf.size() == 0 ? "" : ", "; }
 
-  du_ue_index_t         ue_index;
-  rnti_t                rnti;
-  units::bytes          tbs;
+  du_ue_index_t ue_index;
+  rnti_t        rnti;
+  units::bytes  tbs;
+
   srslog::basic_logger& logger;
-  fmt::memory_buffer    fmtbuf;
+  fmt::memory_buffer&   fmtbuf;
+  const bool            enabled;
+
+  lcid_t       current_sdu_lcid = lcid_t::INVALID_LCID;
+  unsigned     nof_sdus         = 0;
+  units::bytes sum_bytes{0U};
 };
 
 // /////////////////////////
@@ -181,7 +278,7 @@ span<const uint8_t> dl_sch_pdu_assembler::assemble_newtx_pdu(rnti_t             
 {
   span<uint8_t> buffer = ue_mng.get_dl_harq_buffer(rnti, h_id, tb_idx);
   if (buffer.size() < tb_size_bytes) {
-    logger.error("DL ue={} rnti={:#x} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available",
+    logger.error("DL ue={} rnti={} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available",
                  ue_mng.get_ue_index(rnti),
                  rnti,
                  h_id);
@@ -189,7 +286,7 @@ span<const uint8_t> dl_sch_pdu_assembler::assemble_newtx_pdu(rnti_t             
   }
   dl_sch_pdu ue_pdu(buffer.first(tb_size_bytes));
 
-  dl_sch_pdu_logger pdu_logger{ue_mng.get_ue_index(rnti), rnti, units::bytes{tb_size_bytes}, logger};
+  pdu_log_builder pdu_logger{ue_mng.get_ue_index(rnti), rnti, units::bytes{tb_size_bytes}, fmtbuf, logger};
 
   // Encode added subPDUs.
   for (const dl_msg_lc_info& sched_lch : tb_info.lc_chs_to_sched) {
@@ -217,66 +314,75 @@ span<const uint8_t> dl_sch_pdu_assembler::assemble_newtx_pdu(rnti_t             
 void dl_sch_pdu_assembler::assemble_sdus(dl_sch_pdu&           ue_pdu,
                                          rnti_t                rnti,
                                          const dl_msg_lc_info& lc_grant_info,
-                                         dl_sch_pdu_logger&    pdu_logger)
+                                         pdu_log_builder&      pdu_logger)
 {
   // Note: Do not attempt to build an SDU if there is not enough space for the MAC subheader, min payload size and
   // potential RLC header.
-  static const unsigned RLC_HEADER_SIZE_ESTIM = 2;
   static const unsigned MIN_MAC_SDU_SIZE =
       MIN_MAC_SDU_SUBHEADER_SIZE + 1 + (lc_grant_info.lcid.value() != LCID_SRB0 ? RLC_HEADER_SIZE_ESTIM : 0);
 
   // Fetch RLC Bearer.
-  mac_sdu_tx_builder* bearer = ue_mng.get_bearer(rnti, lc_grant_info.lcid.to_lcid());
+  const lcid_t        lcid   = lc_grant_info.lcid.to_lcid();
+  mac_sdu_tx_builder* bearer = ue_mng.get_bearer(rnti, lcid);
   srsran_sanity_check(bearer != nullptr, "Scheduler is allocating inexistent bearers");
 
   const unsigned total_space =
       std::min(get_mac_sdu_required_bytes(lc_grant_info.sched_bytes), ue_pdu.nof_empty_bytes());
   unsigned rem_bytes = total_space;
   while (rem_bytes >= MIN_MAC_SDU_SIZE) {
-    // Fetch MAC Tx SDU.
-    byte_buffer_chain sdu = bearer->on_new_tx_sdu(get_mac_sdu_payload_size(rem_bytes));
-    if (sdu.empty()) {
-      logger.debug("ue={} rnti={:#x} lcid={}: Failed to encode MAC SDU in MAC opportunity of size={}.",
-                   ue_mng.get_ue_index(rnti),
-                   rnti,
-                   lc_grant_info.lcid.to_lcid(),
-                   get_mac_sdu_payload_size(rem_bytes));
+    // Determine the space in the MAC PDU where the MAC SDU payload is going to be encoded.
+    unsigned                    max_mac_sdu_len = get_mac_sdu_payload_size(rem_bytes);
+    dl_sch_pdu::mac_sdu_encoder sdu_enc         = ue_pdu.get_sdu_encoder(lcid, max_mac_sdu_len);
+    if (not sdu_enc.valid()) {
+      logger.info("ue={} rnti={} lcid={}: Insufficient MAC SDU buffer length of size={}. rem_bytes={}",
+                  ue_mng.get_ue_index(rnti),
+                  rnti,
+                  lcid,
+                  max_mac_sdu_len,
+                  rem_bytes);
       break;
     }
-    srsran_assert(sdu.length() <= get_mac_sdu_payload_size(rem_bytes),
-                  "RLC Tx SDU exceeded MAC opportunity size ({} > {})",
-                  sdu.length(),
-                  get_mac_sdu_payload_size(rem_bytes));
 
-    // Add SDU as a subPDU.
-    unsigned nwritten = ue_pdu.add_sdu(lc_grant_info.lcid.to_lcid(), std::move(sdu));
-    if (nwritten == 0) {
-      logger.error("ue={} rnti={:#x} lcid={}: Scheduled SubPDU with size={} cannot fit in scheduled DL grant",
+    // Fetch MAC Tx SDU from upper layers.
+    size_t nwritten_sdu = bearer->on_new_tx_sdu(sdu_enc.sdu_space());
+    if (nwritten_sdu == 0) {
+      logger.debug("ue={} rnti={} lcid={}: Failed to encode MAC SDU in MAC opportunity of size={}.",
+                   ue_mng.get_ue_index(rnti),
+                   rnti,
+                   lcid,
+                   max_mac_sdu_len);
+      break;
+    }
+
+    // Encode MAC SDU.
+    size_t nwritten_tot = sdu_enc.encode_sdu(nwritten_sdu);
+    if (nwritten_tot == 0) {
+      logger.error("ue={} rnti={} lcid={}: Scheduled SubPDU with size={} cannot fit in scheduled DL grant",
                    ue_mng.get_ue_index(rnti),
                    rnti,
                    lc_grant_info.lcid.to_lcid(),
                    lc_grant_info.sched_bytes);
       break;
     }
-    srsran_assert(rem_bytes >= nwritten, "Too many bytes were packed in MAC SDU");
+    srsran_assert(rem_bytes >= nwritten_tot, "Too many bytes were packed in MAC SDU");
 
     // Log SDU.
-    pdu_logger.add_sdu(lc_grant_info.lcid.to_lcid(), nwritten);
+    pdu_logger.add_sdu(lc_grant_info.lcid.to_lcid(), nwritten_tot);
 
-    rem_bytes -= nwritten;
+    rem_bytes -= nwritten_tot;
   }
   if (rem_bytes == total_space) {
     // No SDU was encoded for this LCID.
     // Causes for failure to create MAC SDU include: RLC Tx window is full, mismatch between the logical channel
     // buffer states in the scheduler and RLC bearers, or the MAC opportunity is too small.
     if (rem_bytes < MIN_MAC_SDU_SIZE) {
-      logger.warning("ue={} rnti={:#x} lcid={}: Skipping MAC SDU encoding. Cause: Allocated SDU size={} is too small.",
+      logger.warning("ue={} rnti={} lcid={}: Skipping MAC SDU encoding. Cause: Allocated SDU size={} is too small.",
                      ue_mng.get_ue_index(rnti),
                      rnti,
                      lc_grant_info.lcid.to_lcid(),
                      lc_grant_info.sched_bytes);
     } else {
-      logger.info("ue={} rnti={:#x} lcid={}: Skipping MAC SDU encoding. Cause: RLC could not encode any SDU",
+      logger.info("ue={} rnti={} lcid={}: Skipping MAC SDU encoding. Cause: RLC could not encode any SDU",
                   ue_mng.get_ue_index(rnti),
                   rnti,
                   lc_grant_info.lcid.to_lcid());
@@ -287,7 +393,7 @@ void dl_sch_pdu_assembler::assemble_sdus(dl_sch_pdu&           ue_pdu,
 void dl_sch_pdu_assembler::assemble_ce(dl_sch_pdu&           ue_pdu,
                                        rnti_t                rnti,
                                        const dl_msg_lc_info& subpdu,
-                                       dl_sch_pdu_logger&    pdu_logger)
+                                       pdu_log_builder&      pdu_logger)
 {
   switch (subpdu.lcid.value()) {
     case lcid_dl_sch_t::UE_CON_RES_ID: {
@@ -314,7 +420,7 @@ dl_sch_pdu_assembler::assemble_retx_pdu(rnti_t rnti, harq_id_t h_id, unsigned tb
 {
   span<uint8_t> buffer = ue_mng.get_dl_harq_buffer(rnti, h_id, tb_idx);
   if (buffer.size() < tbs_bytes) {
-    logger.error("DL ue={} rnti={:#x} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available",
+    logger.error("DL ue={} rnti={} h_id={}: Failed to assemble MAC PDU. Cause: No HARQ buffers available",
                  ue_mng.get_ue_index(rnti),
                  rnti,
                  h_id);

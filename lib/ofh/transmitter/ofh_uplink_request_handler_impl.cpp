@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -50,6 +50,7 @@ static filter_index_type get_prach_cplane_filter_index(const prach_buffer_contex
 
 uplink_request_handler_impl::uplink_request_handler_impl(const uplink_request_handler_impl_config&  config,
                                                          uplink_request_handler_impl_dependencies&& dependencies) :
+  logger(*dependencies.logger),
   is_prach_cp_enabled(config.is_prach_cp_enabled),
   cp(config.cp),
   tdd_config(config.tdd_config),
@@ -59,15 +60,22 @@ uplink_request_handler_impl::uplink_request_handler_impl(const uplink_request_ha
   ul_prach_repo_ptr(dependencies.ul_prach_repo),
   ul_slot_repo(*ul_slot_repo_ptr),
   ul_prach_repo(*ul_prach_repo_ptr),
-  data_flow(std::move(dependencies.data_flow))
+  data_flow(std::move(dependencies.data_flow)),
+  frame_pool_ptr(dependencies.frame_pool_ptr),
+  frame_pool(*frame_pool_ptr)
 {
   srsran_assert(ul_slot_repo_ptr, "Invalid uplink repository");
   srsran_assert(ul_prach_repo_ptr, "Invalid PRACH repository");
   srsran_assert(data_flow, "Invalid data flow");
+  srsran_assert(frame_pool_ptr, "Invalid frame pool");
 }
 
 void uplink_request_handler_impl::handle_prach_occasion(const prach_buffer_context& context, prach_buffer& buffer)
 {
+  logger.debug("Registering PRACH context entry for slot '{}' and sector#{}", context.slot, context.sector);
+
+  frame_pool.clear_uplink_slot(context.slot, logger);
+
   // Sampling rate defining the \f$T_s = 1/(\Delta f_{ref} \times N_{f,ref})\f$ parameter, see 3GPP TS38.211,
   // clause 4.1.
   // Open Fronthaul parameters timeOffset and cpLength are expressed in multiple of \f$T_s\f$ units.
@@ -79,12 +87,9 @@ void uplink_request_handler_impl::handle_prach_occasion(const prach_buffer_conte
           ? get_prach_preamble_long_info(context.format)
           : get_prach_preamble_short_info(context.format, to_ra_subcarrier_spacing(context.pusch_scs), true);
 
-  unsigned         nof_prach_ports = std::min(size_t(buffer.get_max_nof_ports()), prach_eaxc.size());
-  ul_prach_context repo_context(context, buffer, nof_prach_ports);
-
   // Store the context in the repository, use correct slot index for long format accounting for PRACH duration.
   if (is_short_preamble(context.format)) {
-    ul_prach_repo.add(context.slot, repo_context);
+    ul_prach_repo.add(context, buffer);
   } else {
     static constexpr unsigned nof_symbols_per_slot = get_nsymb_per_slot(cyclic_prefix::NORMAL);
 
@@ -93,14 +98,14 @@ void uplink_request_handler_impl::handle_prach_occasion(const prach_buffer_conte
         static_cast<double>(get_nof_slots_per_subframe(context.pusch_scs) * nof_symbols_per_slot);
 
     double   len_msecs   = (preamble_info.cp_length.to_seconds() + preamble_info.symbol_length.to_seconds()) * 1000;
-    unsigned nof_symbols = ceil(len_msecs / symbol_duration_msec);
+    unsigned nof_symbols = std::ceil(len_msecs / symbol_duration_msec);
 
-    unsigned prach_length_slots = static_cast<unsigned>(std::ceil(
-        static_cast<double>(context.start_symbol + nof_symbols) / (static_cast<double>(nof_symbols_per_slot))));
+    unsigned prach_length_slots =
+        std::ceil(static_cast<double>(context.start_symbol + nof_symbols) / static_cast<double>(nof_symbols_per_slot));
 
     // Subtract one to account for the current slot.
     slot_point slot = context.slot + (prach_length_slots - 1);
-    ul_prach_repo.add(slot, repo_context);
+    ul_prach_repo.add(context, buffer, slot);
   }
 
   if (!is_prach_cp_enabled) {
@@ -125,15 +130,15 @@ void uplink_request_handler_impl::handle_prach_occasion(const prach_buffer_conte
 
   unsigned K = (1000 * scs_to_khz(context.pusch_scs)) / ra_scs_to_Hz(preamble_info.scs);
 
-  data_flow_cplane_scheduling_prach_context cp_prach_context = {};
-  cp_prach_context.slot                                      = context.slot;
-  cp_prach_context.nof_repetitions                           = repo_context.get_prach_nof_symbols();
-  cp_prach_context.start_symbol                              = prach_start_symbol;
-  cp_prach_context.prach_scs                                 = preamble_info.scs;
-  cp_prach_context.scs                                       = context.pusch_scs;
-  cp_prach_context.prach_nof_rb                              = freq_mapping_info.nof_rb_ra * K;
-  cp_prach_context.time_offset                               = cp_length;
-  cp_prach_context.prach_start_re                            = context.rb_offset * K * NOF_SUBCARRIERS_PER_RB;
+  data_flow_cplane_scheduling_prach_context cp_prach_context;
+  cp_prach_context.slot            = context.slot;
+  cp_prach_context.nof_repetitions = get_preamble_duration(context.format);
+  cp_prach_context.start_symbol    = prach_start_symbol;
+  cp_prach_context.prach_scs       = preamble_info.scs;
+  cp_prach_context.scs             = context.pusch_scs;
+  cp_prach_context.prach_nof_rb    = freq_mapping_info.nof_rb_ra * K;
+  cp_prach_context.time_offset     = cp_length;
+  cp_prach_context.prach_start_re  = context.rb_offset * K * NOF_SUBCARRIERS_PER_RB;
 
   // Determine Open Fronthaul filter index.
   cp_prach_context.filter_type = get_prach_cplane_filter_index(context, preamble_info);
@@ -146,9 +151,12 @@ void uplink_request_handler_impl::handle_prach_occasion(const prach_buffer_conte
 
 void uplink_request_handler_impl::handle_new_uplink_slot(const resource_grid_context& context, resource_grid& grid)
 {
+  logger.debug("Registering UL context entry for slot '{}' and sector#{}", context.slot, context.sector);
+
+  frame_pool.clear_uplink_slot(context.slot, logger);
+
   // Store the context in the repository.
-  ul_slot_context repo_context(context, grid);
-  ul_slot_repo.add(context.slot, repo_context);
+  ul_slot_repo.add(context, grid);
 
   data_flow_cplane_type_1_context df_context;
   df_context.slot         = context.slot;

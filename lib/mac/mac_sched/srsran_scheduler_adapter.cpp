@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -49,11 +49,9 @@ make_scheduler_ue_reconfiguration_request(const mac_ue_reconfiguration_request& 
   return ret;
 }
 
-srsran_scheduler_adapter::srsran_scheduler_adapter(const mac_config& params,
-                                                   rnti_manager&     rnti_mng_,
-                                                   rlf_detector&     rlf_handler_) :
+srsran_scheduler_adapter::srsran_scheduler_adapter(const mac_config& params, rnti_manager& rnti_mng_) :
   rnti_mng(rnti_mng_),
-  rlf_handler(rlf_handler_),
+  rlf_handler(params.mac_cfg),
   ctrl_exec(params.ctrl_exec),
   logger(srslog::fetch_basic_logger("MAC")),
   notifier(*this),
@@ -74,6 +72,9 @@ async_task<bool> srsran_scheduler_adapter::handle_ue_creation_request(const mac_
 {
   return launch_async([this, msg](coro_context<async_task<bool>>& ctx) {
     CORO_BEGIN(ctx);
+
+    // Add UE to RLF handler.
+    rlf_handler.add_ue(msg.ue_index, *msg.rlf_notifier);
 
     // Create UE in the Scheduler.
     sched_impl->handle_ue_creation_request(make_scheduler_ue_creation_request(msg));
@@ -113,6 +114,10 @@ async_task<bool> srsran_scheduler_adapter::handle_ue_removal_request(const mac_u
     // Await Scheduler notification.
     CORO_AWAIT(sched_cfg_notif_map[msg.ue_index].ue_config_ready);
     sched_cfg_notif_map[msg.ue_index].ue_config_ready.reset();
+
+    // Remove UE from RLF handler.
+    rlf_handler.rem_ue(msg.ue_index, msg.cell_index);
+
     CORO_RETURN(true);
   });
 }
@@ -195,16 +200,32 @@ void srsran_scheduler_adapter::handle_ul_phr_indication(const mac_phr_ce_info& p
   sched_impl->handle_ul_phr_indication(ind);
 }
 
+void srsran_scheduler_adapter::handle_crnti_ce_indication(du_ue_index_t old_ue_index, du_cell_index_t cell_index)
+{
+  rlf_handler.handle_crnti_ce(old_ue_index);
+}
+
 const sched_result& srsran_scheduler_adapter::slot_indication(slot_point slot_tx, du_cell_index_t cell_idx)
 {
   const sched_result& res = sched_impl->slot_indication(slot_tx, cell_idx);
 
   if (res.success) {
     // Store UCI PDUs for later decoding.
-    cell_handlers[cell_idx].uci_decoder.store_uci(slot_tx, res.ul.pucchs);
+    cell_handlers[cell_idx].uci_decoder.store_uci(slot_tx, res.ul.pucchs, res.ul.puschs);
   }
 
   return res;
+}
+
+void srsran_scheduler_adapter::handle_error_indication(slot_point                         slot_tx,
+                                                       du_cell_index_t                    cell_idx,
+                                                       mac_cell_slot_handler::error_event event)
+{
+  scheduler_slot_handler::error_outcome sched_err;
+  sched_err.pdcch_discarded           = event.pdcch_discarded;
+  sched_err.pdsch_discarded           = event.pdsch_discarded;
+  sched_err.pusch_and_pucch_discarded = event.pusch_and_pucch_discarded;
+  sched_impl->handle_error_indication(slot_tx, cell_idx, sched_err);
 }
 
 void srsran_scheduler_adapter::sched_config_notif_adapter::on_ue_config_complete(du_ue_index_t ue_index,
@@ -256,7 +277,7 @@ void srsran_scheduler_adapter::cell_handler::handle_rach_indication(const mac_ra
     sched_occasion.start_symbol    = occasion.start_symbol;
     sched_occasion.frequency_index = occasion.frequency_index;
     for (const auto& preamble : occasion.preambles) {
-      rnti_t alloc_tc_rnti = parent->rnti_alloc.allocate();
+      rnti_t alloc_tc_rnti = parent->rnti_mng.allocate();
       if (alloc_tc_rnti == rnti_t::INVALID_RNTI) {
         parent->logger.warning(
             "cell={} preamble id={}: Ignoring PRACH. Cause: Failed to allocate TC-RNTI.", cell_idx, preamble.index);
@@ -303,7 +324,7 @@ void srsran_scheduler_adapter::cell_handler::handle_crc(const mac_crc_indication
     // If Msg3, ignore the CRC result.
     // Note: UE index is invalid for Msg3 CRCs because no UE has been allocated yet.
     if (ind.crcs[i].ue_index != INVALID_DU_UE_INDEX) {
-      parent->rlf_handler.handle_crc(ind.crcs[i].ue_index, ind.crcs[i].tb_crc_success);
+      parent->rlf_handler.handle_crc(ind.crcs[i].ue_index, cell_idx, ind.crcs[i].tb_crc_success);
     }
   }
 }

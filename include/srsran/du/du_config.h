@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,8 +28,9 @@
 namespace srsran {
 
 struct fapi_configuration {
-  std::string log_level;
-  unsigned    sector;
+  std::string          log_level;
+  unsigned             sector;
+  std::vector<uint8_t> prach_ports;
 };
 
 struct du_config {

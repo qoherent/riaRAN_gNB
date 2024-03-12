@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "../support/uplink_context_repo.h"
+#include "../support/uplink_context_repository.h"
 #include "../support/uplink_cplane_context_repository.h"
 #include "ofh_data_flow_uplane_uplink_data.h"
 #include "ofh_uplane_rx_symbol_data_flow_notifier.h"
@@ -45,11 +45,11 @@ struct data_flow_uplane_uplink_data_impl_dependencies {
   /// Logger.
   srslog::basic_logger* logger;
   /// User-Plane received symbol notifier.
-  uplane_rx_symbol_notifier* notifier;
+  std::shared_ptr<uplane_rx_symbol_notifier> notifier;
   /// Control-Plane context repository.
   std::shared_ptr<uplink_cplane_context_repository> ul_cplane_context_repo_ptr;
   /// Uplink context repository.
-  std::shared_ptr<uplink_context_repo> ul_context_repo;
+  std::shared_ptr<uplink_context_repository> ul_context_repo;
   /// User-Plane message decoder.
   std::unique_ptr<uplane_message_decoder> uplane_decoder;
 };

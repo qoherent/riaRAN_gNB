@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -126,7 +127,7 @@ private:
   void print_percentile_header(unsigned descr_width, unsigned percentile_width, const std::string& units) const
   {
     fmt::print("\"{}\" performance for {} repetitions. All values are in {}.\n"
-               " {:<{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|\n",
+               " {:<{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|{:^{}}|\n",
                title,
                nof_repetitions,
                units,
@@ -141,6 +142,8 @@ private:
                "99th",
                percentile_width,
                "99.9th",
+               percentile_width,
+               "99.99th",
                percentile_width,
                "Worst",
                percentile_width);
@@ -161,6 +164,10 @@ private:
     // Converts to floating point.
     return static_cast<double>(throughput) * 0.1;
   }
+
+  struct do_nothing_functor {
+    void operator()() {}
+  };
 
 public:
   /// \brief Creates a bench marker.
@@ -188,7 +195,7 @@ public:
 
     print_percentile_header(descr_width, percentile_width, units);
     for (const benchmark_result& result : benchmark_results) {
-      fmt::print(" {:{}}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|\n",
+      fmt::print(" {:{}}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|\n",
                  result.description,
                  descr_width,
                  result.measurements[static_cast<size_t>(nof_repetitions * 0.5)] * scaling,
@@ -200,6 +207,8 @@ public:
                  result.measurements[static_cast<size_t>(nof_repetitions * 0.99)] * scaling,
                  percentile_width,
                  result.measurements[static_cast<size_t>(nof_repetitions * 0.999)] * scaling,
+                 percentile_width,
+                 result.measurements[static_cast<size_t>(nof_repetitions * 0.9999)] * scaling,
                  percentile_width,
                  result.measurements.back() * scaling,
                  percentile_width);
@@ -221,7 +230,7 @@ public:
     print_percentile_header(descr_width, percentile_width, "mega" + units + " per second");
     for (const benchmark_result& result : benchmark_results) {
       fmt::print(
-          " {:{}}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|\n",
+          " {:{}}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|{:{}.1f}|\n",
           result.description,
           descr_width,
           convert_to_throughput(result.measurements[static_cast<size_t>(nof_repetitions * 0.5)], result.size) * scaling,
@@ -237,18 +246,27 @@ public:
           convert_to_throughput(result.measurements[static_cast<size_t>(nof_repetitions * 0.999)], result.size) *
               scaling,
           percentile_width,
+          convert_to_throughput(result.measurements[static_cast<size_t>(nof_repetitions * 0.9999)], result.size) *
+              scaling,
+          percentile_width,
           convert_to_throughput(result.measurements.back(), result.size) * scaling,
           percentile_width);
     }
   }
 
   /// \brief Performs a new performance measurement.
-  /// \tparam Func           Lambda type to perform the benchmark.
-  /// \param[in] description Measurement description for later reporting.
-  /// \param[in] size        Number of elements processed in the measurement.
-  /// \param[in] function    Lambda function to call repeatedly.
-  template <typename Func>
-  void new_measure(const std::string& description, uint64_t size, Func&& function)
+  /// \tparam Func             Lambda type to perform the benchmark.
+  /// \tparam PostFunc     Lambda type to call after each Func call.
+  /// \param[in] description   Measurement description for later reporting.
+  /// \param[in] size          Number of elements processed in the measurement.
+  /// \param[in] function      Lambda function to call repeatedly.
+  /// \param[in] post_func Lambda function to call repeatedly, after \c function, but without being accounted for
+  /// in the benchmark results.
+  template <typename Func, typename PostFunc = do_nothing_functor>
+  void new_measure(const std::string& description,
+                   uint64_t           size,
+                   Func&&             function,
+                   PostFunc&&         post_func = do_nothing_functor{})
   {
     benchmark_result result;
     result.description = description;
@@ -256,6 +274,34 @@ public:
     result.measurements.reserve(nof_repetitions);
 
     for (uint64_t rep = 0; rep != nof_repetitions; ++rep) {
+      auto start = std::chrono::high_resolution_clock::now();
+      function();
+      auto end = std::chrono::high_resolution_clock::now();
+      result.measurements.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
+      post_func();
+    }
+
+    std::sort(result.measurements.begin(), result.measurements.end());
+
+    benchmark_results.push_back(std::move(result));
+  }
+
+  /// \brief Performs a new performance measurement with some context setup.
+  /// \tparam Func           Lambda type to perform the benchmark.
+  /// \param[in] description Measurement description for later reporting.
+  /// \param[in] size        Number of elements processed in the measurement.
+  /// \param[in] function    Lambda function to call repeatedly.
+  template <typename Context, typename Func>
+  void
+  new_measure_with_context(const std::string& description, uint64_t size, Context&& context_function, Func&& function)
+  {
+    benchmark_result result;
+    result.description = description;
+    result.size        = size;
+    result.measurements.reserve(nof_repetitions);
+
+    for (uint64_t rep = 0; rep != nof_repetitions; ++rep) {
+      context_function();
       auto start = std::chrono::high_resolution_clock::now();
       function();
       auto end = std::chrono::high_resolution_clock::now();

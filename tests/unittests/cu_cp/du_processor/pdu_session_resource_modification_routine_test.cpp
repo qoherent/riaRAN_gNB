@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -122,17 +122,20 @@ protected:
             request, rrc_ue_ctrl_notifier, *rrc_ue_up_resource_manager);
     lazy_task_launcher<cu_cp_pdu_session_resource_modify_response> modify_launcher(modify_task);
 
-    // Verify content of UE context modifcation.
+    // Verify content of UE context modification.
     ASSERT_EQ(f1ap_ue_ctxt_notifier.get_ctxt_mod_request().drbs_to_be_setup_mod_list.size(), 1);
 
     // PDU session resource modification succeeded.
     ASSERT_TRUE(modify_task.ready());
-    ASSERT_EQ(modify_task.get().pdu_session_res_modify_list.size(), 1);
-    ASSERT_EQ(modify_task.get().pdu_session_res_modify_list.begin()->pdu_session_id, uint_to_pdu_session_id(1));
     if (success) {
+      ASSERT_EQ(modify_task.get().pdu_session_res_modify_list.size(), 1);
+      ASSERT_EQ(modify_task.get().pdu_session_res_modify_list.begin()->pdu_session_id, uint_to_pdu_session_id(1));
       ASSERT_EQ(modify_task.get().pdu_session_res_failed_to_modify_list.size(), 0);
     } else {
+      ASSERT_EQ(modify_task.get().pdu_session_res_modify_list.size(), 0);
       ASSERT_EQ(modify_task.get().pdu_session_res_failed_to_modify_list.size(), 1);
+      ASSERT_EQ(modify_task.get().pdu_session_res_failed_to_modify_list.begin()->pdu_session_id,
+                uint_to_pdu_session_id(1));
     }
 
     // clear stored E1AP requests for next procedure
@@ -215,7 +218,7 @@ TEST_F(pdu_session_resource_modification_test, when_ue_ctxt_modification_fails_t
   cu_cp_pdu_session_resource_modify_request request = generate_pdu_session_resource_modification();
   start_procedure(request);
 
-  // Verify content of UE context modifcation.
+  // Verify content of UE context modification.
   ASSERT_EQ(f1ap_ue_ctxt_notifier.get_ctxt_mod_request().drbs_to_be_setup_mod_list.size(), 1);
 
   // PDU session resource modification for session 1 failed.
@@ -296,32 +299,33 @@ TEST_F(pdu_session_resource_modification_test, when_rrc_reconfiguration_fails_th
   cu_cp_pdu_session_resource_modify_request request = generate_pdu_session_resource_modification();
   start_procedure(request);
 
-  // Verify content of UE context modifcation.
+  // Verify content of UE context modification.
   ASSERT_EQ(f1ap_ue_ctxt_notifier.get_ctxt_mod_request().drbs_to_be_setup_mod_list.size(), 1);
 
   // PDU session resource modification for session 1 failed.
   ASSERT_TRUE(procedure_ready());
+  ASSERT_EQ(result().pdu_session_res_modify_list.size(), 0);
   ASSERT_EQ(result().pdu_session_res_failed_to_modify_list.size(), 1);
   ASSERT_EQ(result().pdu_session_res_failed_to_modify_list.begin()->pdu_session_id, uint_to_pdu_session_id(1));
 }
 
 TEST_F(pdu_session_resource_modification_test,
-       when_valid_modifcation_arrives_and_subprocedures_succeed_then_pdu_session_modification_succeeds)
+       when_valid_modification_arrives_and_subprocedures_succeed_then_pdu_session_modification_succeeds)
 {
   // Test Preamble - Setup a single PDU session initially.
   setup_pdu_session();
 
-  // Run PDU session modifcation and add second QoS flow.
+  // Run PDU session modification and add second QoS flow.
   modify_pdu_session_and_add_qos_flow(1, 2, 2, true);
 }
 
 TEST_F(pdu_session_resource_modification_test,
-       when_valid_modifcation_arrives_and_qos_flow_can_be_removed_then_pdu_session_modification_succeeds)
+       when_valid_modification_arrives_and_qos_flow_can_be_removed_then_pdu_session_modification_succeeds)
 {
   // Test Preamble - Setup a single PDU session initially.
   setup_pdu_session();
 
-  // Run PDU session modifcation and add second QoS flow.
+  // Run PDU session modification and add second QoS flow.
   modify_pdu_session_and_add_qos_flow(1, 2, 2, true);
 
   // Test body.
@@ -369,7 +373,7 @@ TEST_F(pdu_session_resource_modification_test,
                 ->drb_to_rem_list_ng_ran.size(),
             1);
 
-  // Verify content of UE context modifcation.
+  // Verify content of UE context modification.
   ASSERT_EQ(f1ap_ue_ctxt_notifier.get_ctxt_mod_request().drbs_to_be_released_list.size(), 1);
 
   // Verify RRC reconfig.
@@ -405,4 +409,16 @@ TEST_F(pdu_session_resource_modification_test, when_one_to_many_qos_flows_are_ad
 
   // Try to add one more QoS flow but addtion should fail.
   modify_pdu_session_and_add_qos_flow(1, MAX_NOF_DRBS + 1, MAX_NOF_DRBS + 1, false);
+}
+
+TEST_F(pdu_session_resource_modification_test, when_valid_modification_is_received_twice_then_second_modification_fails)
+{
+  // Test Preamble - Setup a single PDU session initially.
+  setup_pdu_session();
+
+  // Run PDU session modification and add second QoS flow.
+  modify_pdu_session_and_add_qos_flow(1, 2, 2, true);
+
+  // Run PDU session modification again and try to add same QoS flow.
+  modify_pdu_session_and_add_qos_flow(1, 2, 2, false);
 }

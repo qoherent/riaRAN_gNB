@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "srsran/cu_cp/ue_manager.h"
+#include "../ue_context/ngap_ue_context.h"
 #include "srsran/ngap/ngap.h"
 #include "srsran/support/async/async_task.h"
 
@@ -32,11 +32,11 @@ namespace srs_cu_cp {
 class ngap_ue_context_release_procedure
 {
 public:
-  ngap_ue_context_release_procedure(const cu_cp_ngap_ue_context_release_command& command_,
-                                    ngap_du_processor_control_notifier&          du_processor_ctrl_notif_,
-                                    ngap_message_notifier&                       amf_notif_,
-                                    ngap_ue_manager&                             ue_manager_,
-                                    srslog::basic_logger&                        logger_);
+  ngap_ue_context_release_procedure(const cu_cp_ue_context_release_command& command_,
+                                    const ngap_ue_ids&                      ue_ids_,
+                                    ngap_du_processor_control_notifier&     du_processor_ctrl_notifier_,
+                                    ngap_message_notifier&                  amf_notifier_,
+                                    ngap_ue_logger&                         logger_);
 
   void operator()(coro_context<async_task<void>>& ctx);
 
@@ -46,12 +46,12 @@ private:
   // results senders
   void send_ue_context_release_complete();
 
-  cu_cp_ngap_ue_context_release_command command;
-  cu_cp_ue_context_release_complete     ue_context_release_complete;
-  ngap_du_processor_control_notifier&   du_processor_ctrl_notifier;
-  ngap_message_notifier&                amf_notifier;
-  ngap_ue_manager&                      ue_manager;
-  srslog::basic_logger&                 logger;
+  cu_cp_ue_context_release_command    command;
+  const ngap_ue_ids                   ue_ids;
+  cu_cp_ue_context_release_complete   ue_context_release_complete;
+  ngap_du_processor_control_notifier& du_processor_ctrl_notifier;
+  ngap_message_notifier&              amf_notifier;
+  ngap_ue_logger                      logger;
 };
 
 } // namespace srs_cu_cp

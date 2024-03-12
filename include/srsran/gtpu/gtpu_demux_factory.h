@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,15 +23,16 @@
 #pragma once
 
 #include "gtpu_demux.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/support/executors/task_executor.h"
 #include <memory>
 
 namespace srsran {
 
 struct gtpu_demux_creation_request {
-  task_executor* cu_up_exec = nullptr;
-  dlt_pcap*      gtpu_pcap  = nullptr;
+  gtpu_demux_cfg_t cfg        = {};
+  task_executor*   cu_up_exec = nullptr;
+  dlt_pcap*        gtpu_pcap  = nullptr;
 };
 
 /// Creates an instance of an GTP-U demux object.

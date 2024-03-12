@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,7 +32,7 @@ using namespace srsran;
 
 std::random_device                      rd;
 std::mt19937                            gen(rd());
-std::uniform_int_distribution<unsigned> rnti_dist(MIN_CRNTI, MAX_CRNTI);
+std::uniform_int_distribution<unsigned> rnti_dist(to_value(rnti_t::MIN_CRNTI), to_value(rnti_t::MAX_CRNTI));
 std::uniform_int_distribution<unsigned> rapid_dist(0, 63);
 std::uniform_int_distribution<unsigned> mcs_dist(0, 15);
 std::uniform_int_distribution<unsigned> time_res_dist(0, 15);

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,7 +27,7 @@
 #include "srsran/adt/optional.h"
 #include "srsran/du_high/du_high_executor_mapper.h"
 #include "srsran/mac/mac_cell_result.h"
-#include "srsran/pcap/pcap.h"
+#include "srsran/pcap/dlt_pcap.h"
 #include "srsran/scheduler/scheduler_metrics.h"
 #include "srsran/support/async/manual_event.h"
 #include "srsran/support/executors/task_executor.h"
@@ -58,7 +58,11 @@ public:
                                   const std::vector<mac_logical_channel_config>& ul_logical_channels) override;
   async_task<bool> remove_bearers(du_ue_index_t ue_index, span<const lcid_t> lcids_to_rem) override;
   async_task<void> remove_ue(const mac_ue_delete_request& msg) override;
-  void             flush_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override { ul_ccch_forwarded = true; }
+  bool             flush_ul_ccch_msg(du_ue_index_t ue_index, byte_buffer pdu) override
+  {
+    ul_ccch_forwarded = true;
+    return true;
+  }
 };
 
 class mac_cell_dummy_controller final : public mac_cell_controller
@@ -97,11 +101,10 @@ class dummy_ue_executor_mapper : public du_high_ue_executor_mapper
 public:
   dummy_ue_executor_mapper(task_executor& exec_) : exec(exec_) {}
 
-  task_executor& rebind_executor(du_ue_index_t ue_index, du_cell_index_t pcell_index) override
-  {
-    return executor(ue_index);
-  }
-  task_executor& executor(du_ue_index_t ue_index) override { return exec; }
+  void           rebind_executors(du_ue_index_t ue_index, du_cell_index_t pcell_index) override {}
+  task_executor& ctrl_executor(du_ue_index_t ue_index) override { return exec; }
+  task_executor& f1u_dl_pdu_executor(du_ue_index_t ue_index) override { return exec; }
+  task_executor& mac_ul_pdu_executor(du_ue_index_t ue_index) override { return exec; }
 
   task_executor& exec;
 };
@@ -113,6 +116,7 @@ public:
 
   task_executor& executor(du_cell_index_t cell_index) override { return *execs[cell_index % execs.size()]; }
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override { return *execs[cell_index % execs.size()]; }
+  task_executor& error_ind_executor(du_cell_index_t cell_index) override { return *execs[cell_index % execs.size()]; }
 
   std::vector<task_executor*> execs;
 };
@@ -134,6 +138,8 @@ public:
                 last_ccch_ind.value().slot_rx == test_msg.slot_rx && last_ccch_ind.value().subpdu == test_msg.subpdu;
     return test;
   }
+
+  bool verify_no_ul_ccch_msg() const { return not last_ccch_ind.has_value(); }
 };
 
 class dummy_mac_cell_result_notifier : public mac_cell_result_notifier

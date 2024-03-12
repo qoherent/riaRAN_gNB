@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,15 +21,16 @@
  */
 
 #include "du_high_impl.h"
-#include "adapters.h"
+#include "adapters/adapters.h"
+#include "adapters/du_high_adapter_factories.h"
+#include "adapters/f1ap_adapters.h"
 #include "du_high_executor_strategies.h"
-#include "f1ap_adapters.h"
-#include "mac_test_mode_adapter.h"
 #include "srsran/du_manager/du_manager_factory.h"
 #include "srsran/e2/e2.h"
 #include "srsran/e2/e2_factory.h"
 #include "srsran/f1ap/du/f1ap_du_factory.h"
 #include "srsran/mac/mac_factory.h"
+#include "srsran/support/executors/task_redispatcher.h"
 #include "srsran/support/timers.h"
 
 using namespace srsran;
@@ -67,7 +68,10 @@ class du_high_slot_handler final : public mac_cell_slot_handler
 {
 public:
   du_high_slot_handler(timer_manager& timers_, mac_interface& mac_, task_executor& tick_exec_) :
-    timers(timers_), mac(mac_), tick_exec(tick_exec_)
+    timers(timers_),
+    mac(mac_),
+    tick_exec(tick_exec_, [this]() { timers.tick(); }),
+    logger(srslog::fetch_basic_logger("MAC"))
   {
   }
   void handle_slot_indication(slot_point sl_tx) override
@@ -75,17 +79,25 @@ public:
     // Step timers by one millisecond.
     if (sl_tx.to_uint() % get_nof_slots_per_subframe(to_subcarrier_spacing(sl_tx.numerology())) == 0) {
       // The timer tick is handled in a separate execution context.
-      tick_exec.execute([this]() { timers.tick(); });
+      if (not tick_exec.defer()) {
+        logger.info("Discarding timer tick={} due to full queue. Retrying later...", sl_tx);
+      }
     }
 
     // Handle slot indication in MAC & Scheduler.
     mac.get_slot_handler(to_du_cell_index(0)).handle_slot_indication(sl_tx);
   }
 
+  void handle_error_indication(slot_point sl_tx, error_event event) override
+  {
+    mac.get_slot_handler(to_du_cell_index(0)).handle_error_indication(sl_tx, event);
+  }
+
 private:
-  timer_manager& timers;
-  mac_interface& mac;
-  task_executor& tick_exec;
+  timer_manager&                    timers;
+  mac_interface&                    mac;
+  task_redispatcher<task_executor&> tick_exec;
+  srslog::basic_logger&             logger;
 };
 
 class scheduler_ue_metrics_null_notifier final : public scheduler_ue_metrics_notifier
@@ -105,30 +117,28 @@ du_high_impl::du_high_impl(const du_high_configuration& config_) :
   metrics_notifier(std::make_unique<scheduler_ue_metrics_null_notifier>())
 {
   // Create layers
-  mac = create_mac(mac_config{adapters->mac_ev_notifier,
-                              cfg.exec_mapper->ue_mapper(),
-                              cfg.exec_mapper->cell_mapper(),
-                              cfg.exec_mapper->du_control_executor(),
-                              *cfg.phy_adapter,
-                              cfg.mac_cfg,
-                              *cfg.pcap,
-                              cfg.sched_cfg,
-                              cfg.sched_ue_metrics_notifier ? *cfg.sched_ue_metrics_notifier : *metrics_notifier});
-  if (cfg.test_cfg.test_ue.has_value()) {
-    mac = std::make_unique<mac_test_mode_adapter>(std::move(mac), *cfg.test_cfg.test_ue);
-  }
-
+  mac =
+      create_du_high_mac(mac_config{adapters->mac_ev_notifier,
+                                    cfg.exec_mapper->ue_mapper(),
+                                    cfg.exec_mapper->cell_mapper(),
+                                    cfg.exec_mapper->du_control_executor(),
+                                    *cfg.phy_adapter,
+                                    cfg.mac_cfg,
+                                    *cfg.mac_p,
+                                    cfg.sched_cfg,
+                                    cfg.sched_ue_metrics_notifier ? *cfg.sched_ue_metrics_notifier : *metrics_notifier},
+                         cfg.test_cfg);
   f1ap       = create_f1ap(*cfg.f1c_client,
                      adapters->f1_to_du_notifier,
                      cfg.exec_mapper->du_control_executor(),
                      cfg.exec_mapper->ue_mapper(),
                      adapters->f1ap_paging_notifier);
   du_manager = create_du_manager(du_manager_params{
-      {cfg.gnb_du_name, cfg.gnb_du_id, 1, cfg.du_bind_addr, cfg.cells, cfg.qos},
+      {cfg.gnb_du_name, cfg.gnb_du_id, 1, cfg.du_bind_addr, cfg.cells, cfg.srbs, cfg.qos},
       {timers, cfg.exec_mapper->du_control_executor(), cfg.exec_mapper->ue_mapper(), cfg.exec_mapper->cell_mapper()},
       {*f1ap, *f1ap},
       {*config_.f1u_gw},
-      {mac->get_ue_control_info_handler(), *f1ap, *f1ap, cfg.rlc_metrics_notif},
+      {mac->get_ue_control_info_handler(), *f1ap, *f1ap, *cfg.rlc_p, cfg.rlc_metrics_notif},
       {mac->get_cell_manager(), mac->get_ue_configurator(), cfg.sched_cfg}});
 
   // Connect Layer<->DU manager adapters.
@@ -143,7 +153,7 @@ du_high_impl::du_high_impl(const du_high_configuration& config_) :
                                    cfg.e2_client,
                                    *cfg.e2_du_metric_iface,
                                    *f1ap,
-                                   get_e2sm_configurator(),
+                                   get_du_configurator(),
                                    timer_factory{timers, cfg.exec_mapper->du_e2_executor()},
                                    cfg.exec_mapper->du_e2_executor());
   }
@@ -151,9 +161,7 @@ du_high_impl::du_high_impl(const du_high_configuration& config_) :
 
 du_high_impl::~du_high_impl()
 {
-  logger.info("Stopping DU-High...");
   stop();
-  logger.info("DU-High stopped successfully");
 }
 
 void du_high_impl::start()
@@ -169,20 +177,30 @@ void du_high_impl::start()
   // If test mode is enabled, create a test-mode UE by injecting a Msg3.
   if (cfg.test_cfg.test_ue.has_value()) {
     // Push an UL-CCCH message that will trigger the creation of a UE for testing purposes.
-    mac->get_pdu_handler().handle_rx_data_indication(mac_rx_data_indication{
-        slot_point{0, 0},
-        to_du_cell_index(0),
-        {mac_rx_pdu{
-            cfg.test_cfg.test_ue->rnti, 0, 0, {0x34, 0x1e, 0x4f, 0xc0, 0x4f, 0xa6, 0x06, 0x3f, 0x00, 0x00, 0x00}}}});
+    for (auto ue_num = 0; ue_num < cfg.test_cfg.test_ue->nof_ues; ++ue_num) {
+      mac->get_pdu_handler().handle_rx_data_indication(
+          mac_rx_data_indication{slot_point{0, 0},
+                                 to_du_cell_index(0),
+                                 {mac_rx_pdu{to_rnti(to_value(cfg.test_cfg.test_ue->rnti) + ue_num),
+                                             0,
+                                             0,
+                                             {0x34, 0x1e, 0x4f, 0xc0, 0x4f, 0xa6, 0x06, 0x3f, 0x00, 0x00, 0x00}}}});
+    }
   }
 }
 
 void du_high_impl::stop()
 {
+  if (not is_running.exchange(false, std::memory_order::memory_order_relaxed)) {
+    return;
+  }
+
+  logger.info("Stopping DU-High...");
   du_manager->stop();
   if (e2ap_entity) {
     e2ap_entity->stop();
   }
+  logger.info("DU-High stopped successfully");
 }
 
 f1ap_message_handler& du_high_impl::get_f1ap_message_handler()
@@ -213,7 +231,7 @@ mac_cell_control_information_handler& du_high_impl::get_control_info_handler(du_
   return mac->get_control_info_handler(cell_index);
 }
 
-e2sm_param_configurator& du_high_impl::get_e2sm_configurator()
+du_configurator& du_high_impl::get_du_configurator()
 {
   return *du_manager;
 }

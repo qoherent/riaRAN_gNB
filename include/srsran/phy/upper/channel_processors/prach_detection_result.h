@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,10 +36,8 @@ struct prach_detection_result {
     unsigned preamble_index;
     /// Timing advance between the observed arrival time (for the considered UE) and the reference uplink time.
     phy_time_unit time_advance;
-    /// Average RSRP value in dB.
-    float power_dB;
-    /// Average SNR value in dB.
-    float snr_dB;
+    /// Detection metric normalized with respect to the detection threshold.
+    float detection_metric;
   };
 
   /// Average RSSI value in dB.

@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -40,6 +40,10 @@ gtest_discover_tests(csi_report_on_pusch_validator_test)
 
 add_library(du_test_suite ssb_coreset0_freq_pos_checker.cpp)
 target_link_libraries(du_test_suite srsran_ran gtest)
+
+add_executable(tbs_calculator_test sch/tbs_calculator_test.cpp)
+target_link_libraries(tbs_calculator_test srsran_sched srslog)
+add_test_vector(tbs_calculator_test none "")
 
 add_executable(test_ssb_coreset0_freq_pos_generator test_ssb_coreset0_freq_pos_generator.cpp)
 target_link_libraries(test_ssb_coreset0_freq_pos_generator srsran_support du_test_suite gtest gtest_main)
@@ -89,6 +93,10 @@ add_executable(pusch_mcs_table_test pusch/pusch_mcs_table_test.cpp)
 target_link_libraries(pusch_mcs_table_test srsran_ran srslog gtest gtest_main)
 add_test(pusch_mcs_table_test pusch_mcs_table_test)
 
+add_executable(pusch_tpmi_select_test pusch/pusch_tpmi_select_test.cpp)
+target_link_libraries(pusch_tpmi_select_test srsran_ran srslog gtest gtest_main)
+add_test_vector(pusch_tpmi_select_test none "")
+
 add_executable(ulsch_info_test pusch/ulsch_info_test.cpp)
 target_link_libraries(ulsch_info_test srsran_ran srslog gtest gtest_main)
 add_test_vector(ulsch_info_test none "")
@@ -117,6 +125,10 @@ add_test(ssb_gscn_test ssb_gscn_test)
 add_executable(ssb_mapping_test ssb_mapping_test.cpp)
 target_link_libraries(ssb_mapping_test srsran_ran srslog)
 add_test(ssb_mapping_test ssb_mapping_test)
+
+add_executable(srs_bandwidth_configuration_test srs/srs_bandwidth_configuration_test.cpp)
+target_link_libraries(srs_bandwidth_configuration_test srsran_ran srslog gtest gtest_main)
+add_test(srs_bandwidth_configuration_test srs_bandwidth_configuration_test)
 
 add_executable(bcd_helpers_test bcd_helpers_test.cpp)
 target_link_libraries(bcd_helpers_test srsran_support gtest gtest_main)

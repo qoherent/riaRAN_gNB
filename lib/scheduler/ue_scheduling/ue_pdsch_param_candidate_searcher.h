@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -156,7 +156,7 @@ public:
           dl_harq_candidates.begin(),
           dl_harq_candidates.end(),
           [](const dl_harq_process* lhs, const dl_harq_process* rhs) { return lhs->slot_ack() < rhs->slot_ack(); });
-    } else {
+    } else if (ue_ref.get_cell(cell_index).is_active()) {
       // If there are no pending new Tx bytes, return.
       if (not ue_ref.has_pending_dl_newtx_bytes()) {
         return;
@@ -208,7 +208,6 @@ private:
     // Update alloc_params list.
     ss_candidate_list = ue_cc.get_active_dl_search_spaces(pdcch_slot, preferred_rnti_type);
     current_rnti_type = preferred_rnti_type;
-    srsran_assert(not ss_candidate_list.empty(), "No searchSpace candidates for rnti type={}", preferred_rnti_type);
   }
 
   // Check if a candidate has valid parameters for an allocation.

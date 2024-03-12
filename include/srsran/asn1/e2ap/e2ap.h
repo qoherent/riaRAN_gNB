@@ -1,7 +1,7 @@
 
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -29,7 +29,7 @@
 
 #pragma once
 
-#include "../asn1_utils.h"
+#include "srsran/asn1/asn1_ap_utils.h"
 #include <cstdio>
 #include <stdarg.h>
 

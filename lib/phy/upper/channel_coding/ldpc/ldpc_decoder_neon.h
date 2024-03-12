@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -46,15 +46,11 @@ private:
                                  span<const log_likelihood_ratio> this_soft_bits,
                                  span<const log_likelihood_ratio> this_check_to_var) override;
 
-  span<log_likelihood_ratio> get_rotated_node(unsigned var_node) override;
-
   void analyze_var_to_check_msgs(span<log_likelihood_ratio>       min_var_to_check,
                                  span<log_likelihood_ratio>       second_min_var_to_check,
                                  span<uint8_t>                    min_var_to_check_index,
                                  span<uint8_t>                    sign_prod_var_to_check,
-                                 span<log_likelihood_ratio>       rotated_node,
-                                 span<const log_likelihood_ratio> this_var_to_check,
-                                 unsigned                         shift,
+                                 span<const log_likelihood_ratio> rotated_node,
                                  unsigned                         var_node) override;
 
   void compute_check_to_var_msgs(span<log_likelihood_ratio>       this_check_to_var,
@@ -68,7 +64,7 @@ private:
                                  unsigned                         var_node) override;
 
   /// Auxiliary buffer to store the rotated variable-to-check messages.
-  std::array<log_likelihood_ratio, ldpc::MAX_LIFTING_SIZE* MAX_CHECK_NODE_DEGREE> rotated_var_to_check = {};
+  std::array<log_likelihood_ratio, ldpc::MAX_LIFTING_SIZE * MAX_CHECK_NODE_DEGREE> rotated_var_to_check;
 
   /// Number of NEON vectors needed to cover a lifted node.
   unsigned node_size_neon = 0;

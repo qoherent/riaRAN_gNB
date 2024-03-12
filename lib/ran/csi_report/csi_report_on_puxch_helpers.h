@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -38,22 +38,6 @@ struct ri_li_cqi_cri_sizes {
   unsigned subband_diff_cqi_second_tb;
   unsigned cri;
 };
-
-/// Gets the number of CSI-RS antenna ports from the PMI codebook type.
-inline unsigned csi_report_get_nof_csi_rs_antenna_ports(pmi_codebook_type pmi_codebook)
-{
-  switch (pmi_codebook) {
-    case pmi_codebook_type::one:
-      return 1;
-    case pmi_codebook_type::two:
-      return 2;
-    case pmi_codebook_type::typeI_single_panel_4ports_mode1:
-      return 4;
-    case pmi_codebook_type::other:
-    default:
-      return 0;
-  }
-}
 
 /// Gets the RI, LI, wideband CQI, and CRI fields bit-width.
 ri_li_cqi_cri_sizes get_ri_li_cqi_cri_sizes(pmi_codebook_type        pmi_codebook,

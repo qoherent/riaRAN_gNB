@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -63,7 +63,7 @@ static void vec_function_g(span<log_likelihood_ratio>       z,
 /// Vectorial form of soft-to-hard bit conversion.
 static void vec_hard_bit(span<log_likelihood_ratio> x, span<uint8_t> z)
 {
-  assert(x.size() == z.size());
+  srsran_assert(x.size() == z.size(), "Input span sizes must be identical");
 
   std::transform(x.begin(), x.end(), z.begin(), [](log_likelihood_ratio a) { return a.to_hard_bit(); });
 }
@@ -158,7 +158,7 @@ polar_decoder_impl::polar_decoder_impl(std::unique_ptr<polar_encoder> enc_, uint
 
   // Assign a valid view for the first stage llr0 and an invalid view for llr1.
   llr0[0] = llr_alloc.first(1);
-  llr1[0] = {};
+  llr1[0] = span<log_likelihood_ratio>();
 
   // Assign a valid view for the rest of stages llr0 and llr1.
   for (uint8_t s = 1; s != n_llr_all_stages; ++s) {

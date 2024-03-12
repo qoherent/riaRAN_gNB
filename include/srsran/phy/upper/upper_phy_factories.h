@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,7 +26,7 @@
 #include "srsran/phy/upper/channel_coding/channel_coding_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
 #include "srsran/phy/upper/downlink_processor.h"
-#include "srsran/phy/upper/rx_softbuffer_pool.h"
+#include "srsran/phy/upper/rx_buffer_pool.h"
 #include "srsran/phy/upper/uplink_processor.h"
 #include "srsran/phy/upper/upper_phy.h"
 #include <memory>
@@ -132,9 +132,13 @@ struct pdsch_processor_concurrent_configuration {
   /// Only used when \ref pdsch_processor_type is set to \c concurrent. Ignored otherwise.
   ///
   /// \remark An assertion is triggered if it is not greater than 1.
-  unsigned nof_pdsch_codeblock_threads;
+  unsigned nof_pdsch_codeblock_threads = 0;
+  /// \brief Maximum number of simultaneous active PDSCH transmissions.
+  ///
+  /// Sets the maximum number of PDSCH processor instances that can be used simultaneously.
+  unsigned max_nof_simultaneous_pdsch = 0;
   /// PDSCH codeblock task executor. Set to \c nullptr if \ref nof_pdsch_threads is less than 2.
-  task_executor* pdsch_codeblock_task_executor;
+  task_executor* pdsch_codeblock_task_executor = nullptr;
 };
 
 /// Lite PDSCH processor configuration parameters.
@@ -171,6 +175,8 @@ struct downlink_processor_factory_sw_config {
           pdsch_processor_concurrent_configuration,
           pdsch_processor_lite_configuration>
       pdsch_processor;
+  /// Number of concurrent threads processing downlink transmissions.
+  unsigned nof_concurrent_threads;
 };
 
 /// Creates a full software based downlink processor factory.
@@ -224,6 +230,10 @@ struct upper_phy_config {
   channel_state_information::sinr_type pusch_sinr_calc_method;
   /// Receive symbol printer. Leave empty to disable.
   std::string rx_symbol_printer_filename;
+  /// Receive port the UL symbols are dumped from. Leave emtpy for all ports.
+  optional<unsigned> rx_symbol_printer_port;
+  /// Boolean flag for dumping PRACH symbols when set to true.
+  bool rx_symbol_printer_prach;
   /// \brief LDPC decoder type.
   ///
   /// Use of there options:
@@ -259,10 +269,13 @@ struct upper_phy_config {
   unsigned nof_tx_ports;
   /// Number of receive antenna ports.
   unsigned nof_rx_ports;
-  /// Number of slots the downlink resource grid will support.
-  unsigned nof_slots_dl_rg;
-  /// Number of slots the uplink resource grid will support.
-  unsigned nof_slots_ul_rg;
+  /// Number of downlink resource grids. Downlink resource grids minimum reuse time is \c dl_rg_expire_timeout_slots
+  /// slots.
+  unsigned nof_dl_rg;
+  /// Downlink resource grid timeout expiration in number of slots.
+  unsigned dl_rg_expire_timeout_slots;
+  /// Number of uplink resource grids. They are reused after \c nof_ul_rg slots.
+  unsigned nof_ul_rg;
   /// Number of PRACH buffer.
   unsigned nof_prach_buffer;
   /// Maximum number of time-domain occasions.
@@ -273,18 +286,22 @@ struct upper_phy_config {
   bool is_prach_long_format;
   /// Maximum number of concurrent downlink processes.
   unsigned nof_dl_processors;
-  /// Maximum number of concurrent uplink processes.
-  unsigned nof_ul_processors;
   /// Maximum uplink processor thread concurrency.
   unsigned max_ul_thread_concurrency;
+  /// Maximum asynchronous PUSCH processing concurrency for each UL processor.
+  unsigned max_pusch_concurrency;
+  /// Number of threads that simultaneously use a PUSCH decoder.
+  unsigned nof_pusch_decoder_threads;
   /// Number of RBs for downlink.
   unsigned dl_bw_rb;
   /// Number of RBs for uplink.
   unsigned ul_bw_rb;
+  /// Request headroom size in slots.
+  unsigned nof_slots_request_headroom;
   /// List of active subcarrier spacing, indexed by numerology.
   std::array<bool, to_numerology_value(subcarrier_spacing::invalid)> active_scs;
-  /// Softbuffer pool configuration.
-  rx_softbuffer_pool_config softbuffer_config;
+  /// Receive buffer pool configuration.
+  rx_buffer_pool_config rx_buffer_config;
   /// Upper PHY resource grid gateway.
   upper_phy_rg_gateway* rg_gateway;
   /// Downlink task executors.
@@ -293,10 +310,10 @@ struct upper_phy_config {
   task_executor* pucch_executor;
   /// PUSCH task executor.
   task_executor* pusch_executor;
+  /// PUSCH decoder task executor.
+  task_executor* pusch_decoder_executor;
   /// PRACH task executor.
   task_executor* prach_executor;
-  /// PDSCH encoder task executor. Set to \c nullptr to
-  task_executor* pdsch_encoder_executor;
   /// Received symbol request notifier.
   upper_phy_rx_symbol_request_notifier* rx_symbol_request_notifier;
 };

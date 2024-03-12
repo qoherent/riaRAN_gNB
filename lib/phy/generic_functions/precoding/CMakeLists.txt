@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -30,6 +30,11 @@ if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
     set_source_files_properties(channel_precoder_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;")
     set_source_files_properties(channel_precoder_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512bw")
 endif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
+
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+    list(APPEND channel_precoder_sources channel_precoder_neon.cpp)
+endif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+
 
 add_library(srsran_channel_precoder STATIC ${channel_precoder_sources})
 

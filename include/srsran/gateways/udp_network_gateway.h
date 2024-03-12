@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/adt/optional.h"
 #include "srsran/gateways/network_gateway.h"
 #include <netdb.h>
 #include <sys/types.h>
@@ -30,7 +31,9 @@ struct sockaddr_storage;
 
 namespace srsran {
 
-struct udp_network_gateway_config : common_network_gateway_config {};
+struct udp_network_gateway_config : common_network_gateway_config {
+  unsigned rx_max_mmsg = 256;
+};
 
 /// Interface to inject PDUs into gateway entity.
 class udp_network_gateway_data_handler
@@ -38,9 +41,10 @@ class udp_network_gateway_data_handler
 public:
   virtual ~udp_network_gateway_data_handler() = default;
 
-  /// \brief Handle the incoming PDU.
-  /// \param[in]  put Byte-buffer with new PDU.
-  virtual void handle_pdu(const byte_buffer& pdu, const sockaddr_storage& dest_addr) = 0;
+  /// \brief handle_pdu Transmit a new PDU.
+  /// \param pdu The PDU to be transmitted.
+  /// \param dest_addr The destination address of that PDU.
+  virtual void handle_pdu(byte_buffer pdu, const sockaddr_storage& dest_addr) = 0;
 };
 
 /// Interface to trigger bind/listen/connect operations on gateway socket.
@@ -62,7 +66,7 @@ public:
   ///
   /// In case the gateway was configured to bind to port 0, i.e. the operating system shall pick a random free port,
   /// this function can be used to get the actual port number.
-  virtual bool get_bind_port(uint16_t& port) = 0;
+  virtual optional<uint16_t> get_bind_port() = 0;
 
   /// \brief Return the address to which the socket is bound.
   ///

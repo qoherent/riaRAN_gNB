@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,8 +21,8 @@
  */
 
 #include "../../support/resource_grid_mapper_test_doubles.h"
-#include "../../support/resource_grid_test_doubles.h"
-#include "../rx_softbuffer_test_doubles.h"
+#include "../rx_buffer_test_doubles.h"
+#include "pdsch_processor_test_doubles.h"
 #include "srsran/phy/support/support_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_factories.h"
 #include "srsran/phy/upper/channel_processors/channel_processor_formatters.h"
@@ -89,7 +89,7 @@ const std::vector<test_case_t> pdsch_processor_validator_test_data = {
        pdu.dmrs_symbol_mask       = bounded_bitset<MAX_NSYMB_PER_SLOT>(MAX_NSYMB_PER_SLOT);
        return pdu;
      },
-     R"(The number of OFDM symbols carrying DM-RS RE must be greater than zero.)"},
+     R"(The number of OFDM symbols carrying DM-RS must be greater than zero\.)"},
     {[] {
        pdsch_processor::pdu_t pdu = base_pdu;
        pdu.dmrs_symbol_mask       = bounded_bitset<MAX_NSYMB_PER_SLOT>(MAX_NSYMB_PER_SLOT);
@@ -172,6 +172,20 @@ const std::vector<test_case_t> pdsch_processor_validator_test_data = {
        return pdu;
      },
      R"(Invalid BWP configuration \[0, 52\) for the given frequency allocation non-contiguous.)"},
+    {[] {
+       pdsch_processor::pdu_t pdu = base_pdu;
+
+       // Create RE pattern that collides with DM-RS.
+       re_pattern reserved_pattern;
+       reserved_pattern.prb_mask = ~bounded_bitset<MAX_RB>(MAX_RB);
+       reserved_pattern.prb_mask.fill(0, MAX_RB);
+       reserved_pattern.symbols = pdu.dmrs_symbol_mask;
+       reserved_pattern.re_mask = ~bounded_bitset<NRE>(NRE);
+       pdu.reserved.merge(reserved_pattern);
+
+       return pdu;
+     },
+     R"(The DM-RS symbol mask must not collide with reserved elements.)"},
 };
 
 class pdschProcessorFixture : public ::testing::TestWithParam<test_case_t>
@@ -262,17 +276,16 @@ TEST_P(pdschProcessorFixture, pdschProcessorValidatorDeathTest)
 
   // Prepare resource grid and resource grid mapper spies.
   resource_grid_writer_spy              grid(0, 0, 0);
-  std::unique_ptr<resource_grid_mapper> mapper = create_resource_grid_mapper(0, 0, 0, grid);
+  std::unique_ptr<resource_grid_mapper> mapper = create_resource_grid_mapper(0, 0, grid);
 
   // Prepare receive data.
   std::vector<uint8_t> data;
 
-  // Prepare softbuffer.
-  rx_softbuffer_spy softbuffer(ldpc::MAX_CODEBLOCK_SIZE, 0);
+  pdsch_processor_notifier_spy notifier_spy;
 
   // Process pdsch PDU.
 #ifdef ASSERTS_ENABLED
-  ASSERT_DEATH({ pdsch_proc->process(*mapper, {data}, param.get_pdu()); }, param.expr);
+  ASSERT_DEATH({ pdsch_proc->process(*mapper, notifier_spy, {data}, param.get_pdu()); }, param.expr);
 #endif // ASSERTS_ENABLED
 }
 

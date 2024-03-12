@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "srsran/adt/static_vector.h"
 #include "fmt/format.h"
 #include <algorithm>
 #include <array>
@@ -176,7 +177,7 @@ public:
   /// NOTE: Calling front on an empty span results in undefined behavior.
   reference front() const
   {
-    assert(!empty() && "called front with empty span");
+    srsran_assert(!empty(), "Called front() with empty span");
     return *data();
   }
 
@@ -184,7 +185,7 @@ public:
   /// NOTE: Calling back on an empty span results in undefined behavior.
   reference back() const
   {
-    assert(!empty() && "called back with empty span");
+    srsran_assert(!empty(), "called back with empty span");
     return *(data() + size() - 1);
   }
 
@@ -192,7 +193,7 @@ public:
   /// NOTE: The behavior is undefined if idx is out of range.
   reference operator[](size_type idx) const
   {
-    assert(idx < len && "index out of bounds!");
+    srsran_assert(idx < len, "Index out of bounds!");
     return ptr[idx];
   }
 
@@ -215,7 +216,7 @@ public:
   /// NOTE: The behavior is undefined if count > size().
   span<element_type> first(size_type count) const
   {
-    assert(count <= size() && "count is out of range");
+    srsran_assert(count <= size(), "Count is out of range");
     return subspan(0, count);
   }
 
@@ -223,19 +224,19 @@ public:
   /// NOTE: The behavior is undefined if count > size().
   span<element_type> last(size_type count) const
   {
-    assert(count <= size() && "count is out of range");
+    srsran_assert(count <= size(), "Count is out of range");
     return subspan(size() - count, count);
   }
 
   /// Obtains a span that is a view over the count elements of this span starting at offset offset.
   span<element_type> subspan(size_type offset, size_type count) const
   {
-    assert(count <= size() - offset && "size out of bounds!");
+    srsran_assert(count <= size() - offset, "Size out of bounds!");
     return {data() + offset, count};
   }
 
   /// Returns true if the input span has the same elements as this.
-  bool equals(span rhs) const { return (len == rhs.len) ? std::equal(begin(), end(), rhs.begin()) : false; }
+  bool equals(span rhs) const { return std::equal(begin(), end(), rhs.begin(), rhs.end()); }
 
 private:
   pointer   ptr = nullptr;
@@ -322,11 +323,63 @@ struct formatter<srsran::span<T>> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::span<T>& buf, FormatContext& ctx)
+  auto format(srsran::span<T> buf, FormatContext& ctx)
   {
     string_view format_str    = string_view(format_buffer.data(), format_buffer.size());
     string_view delimiter_str = string_view(delimiter_buffer.data(), delimiter_buffer.size());
     return format_to(ctx.out(), format_str, fmt::join(buf.begin(), buf.end(), delimiter_str));
   }
 };
+
+/// Custom formatter used by the \c copy_loggable_type defined below.
+template <typename T>
+struct formatter<std::vector<T>> : public formatter<srsran::span<T>> {
+  using formatter<srsran::span<T>>::delimiter_buffer;
+  using formatter<srsran::span<T>>::format_buffer;
+
+  template <typename FormatContext>
+  auto format(const std::vector<T>& buf, FormatContext& ctx)
+  {
+    string_view format_str    = string_view(format_buffer.data(), format_buffer.size());
+    string_view delimiter_str = string_view(delimiter_buffer.data(), delimiter_buffer.size());
+    return format_to(ctx.out(), format_str, fmt::join(buf.begin(), buf.end(), delimiter_str));
+  }
+};
+
+/// Custom formatter used by the \c copy_loggable_type defined below.
+template <typename T, size_t N>
+struct formatter<srsran::static_vector<T, N>> : public formatter<srsran::span<T>> {
+  using formatter<srsran::span<T>>::delimiter_buffer;
+  using formatter<srsran::span<T>>::format_buffer;
+
+  template <typename FormatContext>
+  auto format(const srsran::static_vector<T, N>& buf, FormatContext& ctx)
+  {
+    string_view format_str    = string_view(format_buffer.data(), format_buffer.size());
+    string_view delimiter_str = string_view(delimiter_buffer.data(), delimiter_buffer.size());
+    return format_to(ctx.out(), format_str, fmt::join(buf.begin(), buf.end(), delimiter_str));
+  }
+};
+
 } // namespace fmt
+
+namespace srslog {
+
+/// Type trait specialization to instruct the logger to use a user defined copy implementation as it is unsafe to
+/// directly copy the contents of a span.
+template <typename T>
+struct copy_loggable_type<srsran::span<T>> {
+  static constexpr bool is_copyable = false;
+
+  static void copy(fmt::dynamic_format_arg_store<fmt::format_context>* store, srsran::span<T> s)
+  {
+    static constexpr unsigned MAX_NOF_ELEMENTS = 128;
+    if (s.size() < MAX_NOF_ELEMENTS) {
+      store->push_back(srsran::static_vector<typename std::remove_cv_t<T>, MAX_NOF_ELEMENTS>(s.begin(), s.end()));
+    } else {
+      store->push_back(std::vector<typename std::remove_cv_t<T>>(s.begin(), s.end()));
+    }
+  }
+};
+
+} // namespace srslog

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,7 +28,7 @@
 using namespace srsran;
 using namespace srs_cu_cp;
 
-std::unique_ptr<cu_up_processor_interface>
+std::unique_ptr<cu_up_processor_impl_interface>
 srsran::srs_cu_cp::create_cu_up_processor(const cu_up_processor_config_t cu_up_processor_config_,
                                           e1ap_message_notifier&         e1ap_notifier_,
                                           e1ap_cu_cp_notifier&           e1ap_cu_cp_notif_,

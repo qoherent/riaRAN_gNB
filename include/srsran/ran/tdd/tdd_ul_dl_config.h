@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,7 @@
 
 #include "srsran/adt/optional.h"
 #include "srsran/ran/cyclic_prefix.h"
-#include "srsran/ran/ofdm_symbol_range.h"
+#include "srsran/ran/resource_allocation/ofdm_symbol_range.h"
 #include "srsran/ran/subcarrier_spacing.h"
 
 namespace srsran {

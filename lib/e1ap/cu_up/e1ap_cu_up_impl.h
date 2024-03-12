@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,7 @@
 
 #include "../common/e1ap_asn1_utils.h"
 #include "e1ap_cu_up_connection_handler.h"
-#include "e1ap_cu_up_ue_context.h"
+#include "ue_context/e1ap_cu_up_ue_context.h"
 #include "srsran/asn1/e1ap/e1ap.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/support/executors/task_executor.h"
@@ -59,6 +59,9 @@ public:
 
   // e1ap event handler functions
   void handle_connection_loss() override {}
+
+  // e1ap_statistics_handler functions
+  size_t get_nof_ues() const override { return ue_ctxt_list.size(); }
 
 private:
   /// \brief Notify about the reception of an initiating message.

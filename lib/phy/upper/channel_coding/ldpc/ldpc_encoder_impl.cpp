@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -35,14 +35,14 @@ void ldpc_encoder_impl::init(const codeblock_metadata::tb_common_metadata& cfg)
   bg_N_short    = current_graph->get_nof_BG_var_nodes_short();
   bg_M          = current_graph->get_nof_BG_check_nodes();
   bg_K          = current_graph->get_nof_BG_info_nodes();
-  assert(bg_K == bg_N_full - bg_M);
+  srsran_assert(bg_K == bg_N_full - bg_M, "Invalid value for bg_K");
   lifting_size = static_cast<uint16_t>(cfg.lifting_size);
 
   select_strategy();
 }
 
-void ldpc_encoder_impl::encode(span<uint8_t>                                 output,
-                               span<const uint8_t>                           input,
+void ldpc_encoder_impl::encode(bit_buffer&                                   output,
+                               const bit_buffer&                             input,
                                const codeblock_metadata::tb_common_metadata& cfg)
 {
   init(cfg);

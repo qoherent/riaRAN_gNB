@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,14 +26,48 @@
 #include "rrc_ue_test_messages.h"
 #include "test_helpers.h"
 #include "srsran/adt/byte_buffer.h"
+#include "srsran/asn1/rrc_nr/dl_ccch_msg.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/rrc/rrc_config.h"
+#include "srsran/rrc/rrc_du.h"
 #include "srsran/support/async/async_test_utils.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include <gtest/gtest.h>
 
 namespace srsran {
 namespace srs_cu_cp {
+
+// Free-function to generate dummy security context (used by e.g. Mobility tests)
+static security::security_context generate_security_context()
+{
+  const char* sk_gnb_cstr = "8d2abb1a4349319ea4276295c33d107a6e274495cb9bc2433fb7d7ca4c3f7646";
+
+  // Pack hex strings into srsgnb types
+  security::sec_key sk_gnb = make_sec_key(sk_gnb_cstr);
+
+  // Initialize security context and capabilities.
+  security::security_context sec_ctxt = {};
+  sec_ctxt.k                          = sk_gnb;
+  std::fill(sec_ctxt.supported_int_algos.begin(), sec_ctxt.supported_int_algos.end(), true);
+  std::fill(sec_ctxt.supported_enc_algos.begin(), sec_ctxt.supported_enc_algos.end(), true);
+
+  // Select preferred integrity algorithm.
+  security::preferred_integrity_algorithms inc_algo_pref_list  = {security::integrity_algorithm::nia2,
+                                                                  security::integrity_algorithm::nia1,
+                                                                  security::integrity_algorithm::nia3,
+                                                                  security::integrity_algorithm::nia0};
+  security::preferred_ciphering_algorithms ciph_algo_pref_list = {security::ciphering_algorithm::nea0,
+                                                                  security::ciphering_algorithm::nea2,
+                                                                  security::ciphering_algorithm::nea1,
+                                                                  security::ciphering_algorithm::nea3};
+
+  sec_ctxt.select_algorithms(inc_algo_pref_list, ciph_algo_pref_list);
+
+  // Generate K_rrc_enc and K_rrc_int
+  sec_ctxt.generate_as_keys();
+
+  return sec_ctxt;
+}
 
 /// Helper class to setup RRC UE for testing specific
 /// RRC procedures
@@ -49,9 +83,19 @@ protected:
     rrc_ue_create_msg.ue_index = ALLOCATED_UE_INDEX;
     rrc_ue_create_msg.c_rnti   = to_rnti(0x1234);
     rrc_ue_create_msg.du_to_cu_container.resize(1);
-    rrc_ue_create_msg.f1ap_pdu_notifier = &rrc_ue_f1ap_notifier;
+    rrc_ue_create_msg.f1ap_pdu_notifier     = &rrc_ue_f1ap_notifier;
+    rrc_ue_create_msg.rrc_ue_cu_cp_notifier = &rrc_ue_cu_cp_notifier;
+    rrc_ue_create_msg.measurement_notifier  = &rrc_ue_cu_cp_notifier;
     rrc_ue_create_msg.cell.bands.push_back(nr_band::n78);
     rrc_ue_cfg_t ue_cfg;
+    ue_cfg.int_algo_pref_list = {security::integrity_algorithm::nia2,
+                                 security::integrity_algorithm::nia1,
+                                 security::integrity_algorithm::nia3,
+                                 security::integrity_algorithm::nia0};
+    ue_cfg.enc_algo_pref_list = {security::ciphering_algorithm::nea0,
+                                 security::ciphering_algorithm::nea2,
+                                 security::ciphering_algorithm::nea1,
+                                 security::ciphering_algorithm::nea3};
     // Add meas timing
     rrc_meas_timing meas_timing;
     meas_timing.freq_and_timing.emplace();
@@ -67,15 +111,15 @@ protected:
                                            *rrc_ue_create_msg.f1ap_pdu_notifier,
                                            rrc_ue_ngap_notifier,
                                            rrc_ue_ngap_notifier,
-                                           rrc_ue_cu_cp_notifier,
-                                           cell_meas_mng,
+                                           *rrc_ue_create_msg.rrc_ue_cu_cp_notifier,
+                                           *rrc_ue_create_msg.measurement_notifier,
                                            rrc_ue_create_msg.ue_index,
                                            rrc_ue_create_msg.c_rnti,
                                            rrc_ue_create_msg.cell,
                                            ue_cfg,
                                            std::move(rrc_ue_create_msg.du_to_cu_container),
                                            *task_sched_handle,
-                                           reject_users);
+                                           optional<rrc_ue_transfer_context>{});
 
     ASSERT_NE(rrc_ue, nullptr);
   }
@@ -116,12 +160,6 @@ protected:
     return {rrc_ue_f1ap_notifier.last_rrc_pdu.begin(), rrc_ue_f1ap_notifier.last_rrc_pdu.end()};
   }
 
-  ue_index_t get_old_ue_index()
-  {
-    EXPECT_EQ(rrc_ue_f1ap_notifier.last_srb_id, srb_id_t::srb1);
-    return rrc_ue_f1ap_notifier.last_ue_index;
-  }
-
   byte_buffer get_srb2_pdu()
   {
     // generated PDU must not be empty
@@ -139,12 +177,6 @@ protected:
   rrc_ue_control_message_handler* get_rrc_ue_control_message_handler()
   {
     return &rrc_ue->get_rrc_ue_control_message_handler();
-  }
-
-  void connect_amf()
-  {
-    // Notify RRC about successful AMF connection
-    reject_users = false;
   }
 
   void init_security_context()
@@ -180,6 +212,12 @@ protected:
     rrc_ue->get_ul_ccch_pdu_handler().handle_ul_ccch_pdu(byte_buffer{rrc_setup_pdu});
   }
 
+  void receive_invalid_setup_request()
+  {
+    // inject corrupted RRC setup into UE object
+    rrc_ue->get_ul_ccch_pdu_handler().handle_ul_ccch_pdu(byte_buffer{{0x9d, 0xec, 0x89, 0xde, 0x57, 0x66}});
+  }
+
   void receive_invalid_reestablishment_request(pci_t pci, rnti_t c_rnti)
   {
     // inject RRC Reestablishment Request into UE object
@@ -190,6 +228,13 @@ protected:
   {
     // inject RRC Reestablishment Request into UE object
     rrc_ue->get_ul_ccch_pdu_handler().handle_ul_ccch_pdu(generate_valid_rrc_reestablishment_request_pdu(pci, c_rnti));
+  }
+
+  void receive_valid_reestablishment_request_with_cause_recfg_fail(pci_t pci, rnti_t c_rnti)
+  {
+    // inject RRC Reestablishment Request into UE object
+    rrc_ue->get_ul_ccch_pdu_handler().handle_ul_ccch_pdu(generate_valid_rrc_reestablishment_request_pdu(
+        pci, c_rnti, "0111011100001000", asn1::rrc_nr::reest_cause_opts::options::recfg_fail));
   }
 
   void receive_reestablishment_complete()
@@ -204,11 +249,10 @@ protected:
     rrc_ue->get_ul_dcch_pdu_handler().handle_ul_dcch_pdu(srb_id_t::srb1, byte_buffer{rrc_setup_complete_pdu});
   }
 
-  void send_dl_info_transfer(byte_buffer nas_msg)
+  void send_dl_info_transfer(byte_buffer nas_pdu)
   {
-    dl_nas_transport_message msg{std::move(nas_msg)};
     // inject RRC setup complete
-    rrc_ue->handle_dl_nas_transport_message(msg);
+    rrc_ue->handle_dl_nas_transport_message(std::move(nas_pdu));
   }
 
   void check_srb1_exists()
@@ -231,14 +275,16 @@ protected:
     }
   }
 
+  void set_ue_context_release_outcome(bool outcome) { rrc_ue_ngap_notifier.set_ue_context_release_outcome(outcome); }
+
   void check_ue_release_not_requested()
   {
-    ASSERT_NE(rrc_ue_ev_notifier.last_rrc_ue_context_release_command.ue_index, ALLOCATED_UE_INDEX);
+    ASSERT_NE(rrc_ue_ev_notifier.last_cu_cp_ue_context_release_command.ue_index, ALLOCATED_UE_INDEX);
   }
 
   void check_ue_release_requested()
   {
-    ASSERT_EQ(rrc_ue_ev_notifier.last_rrc_ue_context_release_command.ue_index, ALLOCATED_UE_INDEX);
+    ASSERT_EQ(rrc_ue_ev_notifier.last_cu_cp_ue_context_release_command.ue_index, ALLOCATED_UE_INDEX);
   }
 
   void receive_smc_complete()
@@ -272,37 +318,6 @@ protected:
   {
     // inject RRC Reconfiguration complete into UE object
     rrc_ue->get_ul_dcch_pdu_handler().handle_ul_dcch_pdu(srb_id_t::srb1, byte_buffer{rrc_reconfig_complete_pdu});
-  }
-
-  security::security_context generate_security_context()
-  {
-    const char* sk_gnb_cstr = "8d2abb1a4349319ea4276295c33d107a6e274495cb9bc2433fb7d7ca4c3f7646";
-
-    // Pack hex strings into srsgnb types
-    security::sec_key sk_gnb = make_sec_key(sk_gnb_cstr);
-
-    // Initialize security context and capabilities.
-    security::security_context sec_ctxt = {};
-    sec_ctxt.k                          = sk_gnb;
-    std::fill(sec_ctxt.supported_int_algos.begin(), sec_ctxt.supported_int_algos.end(), true);
-    std::fill(sec_ctxt.supported_enc_algos.begin(), sec_ctxt.supported_enc_algos.end(), true);
-
-    // Select preferred integrity algorithm.
-    security::preferred_integrity_algorithms inc_algo_pref_list  = {security::integrity_algorithm::nia2,
-                                                                    security::integrity_algorithm::nia1,
-                                                                    security::integrity_algorithm::nia3,
-                                                                    security::integrity_algorithm::nia0};
-    security::preferred_ciphering_algorithms ciph_algo_pref_list = {security::ciphering_algorithm::nea0,
-                                                                    security::ciphering_algorithm::nea2,
-                                                                    security::ciphering_algorithm::nea1,
-                                                                    security::ciphering_algorithm::nea3};
-
-    sec_ctxt.select_algorithms(inc_algo_pref_list, ciph_algo_pref_list);
-
-    // Generate K_rrc_enc and K_rrc_int
-    sec_ctxt.generate_as_keys();
-
-    return sec_ctxt;
   }
 
   void add_ue_reestablishment_context(ue_index_t ue_index)
@@ -388,7 +403,6 @@ protected:
               92);
   }
 
-private:
   const ue_index_t ALLOCATED_UE_INDEX = uint_to_ue_index(23);
   rrc_cfg_t        cfg{}; // empty config
 
@@ -398,13 +412,10 @@ private:
   dummy_rrc_ue_du_processor_adapter        rrc_ue_ev_notifier;
   dummy_rrc_ue_ngap_adapter                rrc_ue_ngap_notifier;
   dummy_rrc_ue_cu_cp_adapter               rrc_ue_cu_cp_notifier;
-  dummy_cell_meas_manager                  cell_meas_mng;
   timer_manager                            timers;
   std::unique_ptr<dummy_ue_task_scheduler> task_sched_handle;
   std::unique_ptr<rrc_ue_interface>        rrc_ue;
   manual_task_worker                       ctrl_worker{64};
-
-  bool reject_users = true;
 
   srslog::basic_logger& logger = srslog::fetch_basic_logger("TEST", false);
 

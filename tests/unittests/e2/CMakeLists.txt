@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -21,8 +21,8 @@
 set_directory_properties(PROPERTIES LABELS "e2ap")
 add_executable(e2_asn1_packer_test common/e2_asn1_packer_test.cpp)
 target_link_libraries(e2_asn1_packer_test
-                      srsran_e2
                       srsran_support
+                      srsran_e2
                       srslog
                       e2ap_asn1
                       srsran_ran

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -110,7 +110,7 @@ struct sib_test_bench {
                  duplex_mode          duplx_mode,
                  sib1_rtx_periodicity sib1_rtx_period = sib1_rtx_periodicity::ms160,
                  ssb_periodicity      ssb_period      = ssb_periodicity::ms5) :
-    sched_cfg(make_scheduler_expert_cfg({10, aggregation_level::n4, sib1_rtx_period})),
+    sched_cfg(make_scheduler_expert_cfg({10, aggregation_level::n4, 10, aggregation_level::n4, sib1_rtx_period})),
     cfg_msg{make_cell_cfg_req_for_sib_sched(init_bwp_scs,
                                             pdcch_config_sib1,
                                             ssb_bitmap,
@@ -127,7 +127,7 @@ struct sib_test_bench {
   // Test bench ctor for SIB1 scheduler test use in case of partial slot TDD configuration.
   sib_test_bench(sched_cell_configuration_request_message msg,
                  sib1_rtx_periodicity                     sib1_rtx_period = sib1_rtx_periodicity::ms160) :
-    sched_cfg(make_scheduler_expert_cfg({10, aggregation_level::n4, sib1_rtx_period})),
+    sched_cfg(make_scheduler_expert_cfg({10, aggregation_level::n4, 10, aggregation_level::n4, sib1_rtx_period})),
     cfg_msg{msg},
     sl_tx{to_numerology_value(cfg.dl_cfg_common.init_dl_bwp.generic_params.scs), 0}
   {
@@ -144,7 +144,8 @@ struct sib_test_bench {
                  subcarrier_spacing init_bwp_scs,
                  uint8_t            pdcch_config_sib1,
                  uint16_t           carrier_bw_mhz) :
-    sched_cfg(make_scheduler_expert_cfg({10, aggregation_level::n4, sib1_rtx_periodicity::ms10})),
+    sched_cfg(
+        make_scheduler_expert_cfg({10, aggregation_level::n4, 10, aggregation_level::n4, sib1_rtx_periodicity::ms10})),
     cfg_msg{make_cell_cfg_req_for_sib_sched(freq_arfcn,
                                             offset_to_point_A,
                                             k_ssb,
@@ -229,8 +230,14 @@ struct sib_test_bench {
         cell_cfg.scs_common,
         cell_cfg.band.has_value() ? band_helper::get_freq_range(cell_cfg.band.value()) : frequency_range::FR1);
 
-    optional<band_helper::ssb_coreset0_freq_location> ssb_freq_loc = band_helper::get_ssb_coreset0_freq_location(
-        cell_cfg.dl_arfcn, *cell_cfg.band, nof_crbs, cell_cfg.scs_common, cell_cfg.scs_common, 0);
+    optional<band_helper::ssb_coreset0_freq_location> ssb_freq_loc =
+        band_helper::get_ssb_coreset0_freq_location(cell_cfg.dl_arfcn,
+                                                    *cell_cfg.band,
+                                                    nof_crbs,
+                                                    cell_cfg.scs_common,
+                                                    cell_cfg.scs_common,
+                                                    cell_cfg.search_space0_index,
+                                                    cell_cfg.max_coreset0_duration);
     srsran_assert(ssb_freq_loc.has_value(), "Invalid cell config parameters");
     cell_cfg.offset_to_point_a = ssb_freq_loc->offset_to_point_A;
     cell_cfg.k_ssb             = ssb_freq_loc->k_ssb;
@@ -271,12 +278,13 @@ struct sib_test_bench {
     // Test SIB_information message
     const sib_information& test_sib1 = res_grid[0].result.dl.bc.sibs.back();
     TESTASSERT_EQ(sib_information::si_indicator_type::sib1, test_sib1.si_indicator);
-    TESTASSERT_EQ(SI_RNTI, test_sib1.pdsch_cfg.rnti);
+    TESTASSERT_EQ(rnti_t::SI_RNTI, test_sib1.pdsch_cfg.rnti);
 
     // Test PDCCH_grant and DCI
-    const pdcch_dl_information* pdcch = std::find_if(res_grid[0].result.dl.dl_pdcchs.begin(),
-                                                     res_grid[0].result.dl.dl_pdcchs.end(),
-                                                     [](const auto& pdcch_) { return pdcch_.ctx.rnti == SI_RNTI; });
+    const pdcch_dl_information* pdcch =
+        std::find_if(res_grid[0].result.dl.dl_pdcchs.begin(),
+                     res_grid[0].result.dl.dl_pdcchs.end(),
+                     [](const auto& pdcch_) { return pdcch_.ctx.rnti == rnti_t::SI_RNTI; });
     TESTASSERT(pdcch != nullptr);
     TESTASSERT_EQ(dci_dl_rnti_config_type::si_f1_0, pdcch->dci.type);
     TESTASSERT_EQ(si_cfg.sib1_mcs_index, pdcch->dci.si_f1_0.modulation_coding_scheme);

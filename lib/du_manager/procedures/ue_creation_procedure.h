@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "../converters/mac_config_helpers.h"
 #include "../du_ue/du_ue.h"
 #include "../du_ue/du_ue_manager_repository.h"
 #include "procedure_logger.h"
 #include "srsran/du_manager/du_manager_params.h"
+#include "srsran/mac/config/mac_config_helpers.h"
 #include "srsran/mac/mac.h"
 #include "srsran/support/async/async_task.h"
 
@@ -72,10 +72,10 @@ public:
 
 private:
   /// Creates a UE object in the DU UE manager.
-  du_ue* create_du_ue_context();
+  expected<du_ue*, std::string> create_du_ue_context();
 
   /// Remove UE from DU Manager UE repository.
-  void clear_ue();
+  async_task<void> clear_ue();
 
   /// Setups DU manager resources used by DU UE being created.
   bool setup_du_ue_resources();
@@ -96,9 +96,10 @@ private:
   du_ran_resource_manager&     du_res_alloc;
   ue_procedure_logger          proc_logger;
 
-  du_ue*                    ue_ctx = nullptr;
-  mac_ue_create_response    mac_resp{};
-  f1ap_ue_creation_response f1ap_resp{};
+  du_ue*                        ue_ctx                  = nullptr;
+  expected<du_ue*, std::string> ue_ctx_creation_outcome = nullptr;
+  mac_ue_create_response        mac_resp{};
+  f1ap_ue_creation_response     f1ap_resp{};
 };
 
 } // namespace srs_du

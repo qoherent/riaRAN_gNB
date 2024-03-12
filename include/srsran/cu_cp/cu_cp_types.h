@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -48,11 +48,11 @@ namespace srs_cu_cp {
 /// Maximum number of UEs per DU (implementation-defined).
 const uint16_t MAX_NOF_UES_PER_DU = 1024;
 /// Maximum number of DUs supported by CU-CP (implementation-defined).
-const uint16_t MAX_NOF_DUS = 2;
+const uint16_t MAX_NOF_DUS = 65535;
 /// Maximum number of UEs supported by CU-CP (implementation-defined).
 #define MAX_NOF_CU_UES (MAX_NOF_DUS * MAX_NOF_UES_PER_DU)
 /// Maximum number of CU-UPs supported by CU-CP (implementation-defined).
-const uint16_t MAX_NOF_CU_UPS = 2;
+const uint16_t MAX_NOF_CU_UPS = 65535;
 /// Maximum number of cells per DU supported by CU-CP (implementation-defined).
 const uint16_t MAX_NOF_DU_CELLS = 16;
 
@@ -132,26 +132,6 @@ constexpr inline std::underlying_type_t<du_cell_index_t> du_cell_index_to_uint(d
   return static_cast<std::underlying_type_t<du_cell_index_t>>(du_cell_index);
 }
 
-/// \brief The UE creation is triggered from the F1AP.
-/// It carries an RRC container and the C-RNTI if the DU sent an Initial UL RRC transfer. If the user is created
-/// during handover the RNTI is only allocated after the Random Access.
-struct cu_cp_ue_creation_message {
-  ue_index_t          ue_index = ue_index_t::invalid;
-  nr_cell_global_id_t cgi;
-  uint32_t            tac;
-  byte_buffer         du_to_cu_rrc_container;
-  rnti_t              c_rnti;
-  bool                is_inter_cu_handover = false;
-};
-
-// Globally unique AMF identifier.
-struct guami_t {
-  optional<std::string> plmn;
-  uint16_t              amf_set_id;
-  uint8_t               amf_pointer;
-  uint8_t               amf_region_id;
-};
-
 /// QoS Configuration, i.e. 5QI and the associated PDCP
 /// and SDAP configuration for DRBs
 struct cu_cp_qos_config {
@@ -163,6 +143,32 @@ struct cu_cp_qos_config {
 struct cu_cp_tai {
   std::string plmn_id;
   uint32_t    tac;
+};
+
+struct cu_cp_user_location_info_nr {
+  nr_cell_global_id_t nr_cgi;
+  cu_cp_tai           tai;
+  optional<uint64_t>  time_stamp;
+};
+
+struct cu_cp_five_g_s_tmsi {
+  uint16_t amf_set_id;
+  uint8_t  amf_pointer;
+  uint32_t five_g_tmsi;
+};
+
+struct cu_cp_initial_ue_message {
+  ue_index_t                    ue_index = ue_index_t::invalid;
+  byte_buffer                   nas_pdu;
+  establishment_cause_t         establishment_cause;
+  cu_cp_user_location_info_nr   user_location_info;
+  optional<cu_cp_five_g_s_tmsi> five_g_s_tmsi;
+};
+
+struct cu_cp_ul_nas_transport {
+  ue_index_t                  ue_index = ue_index_t::invalid;
+  byte_buffer                 nas_pdu;
+  cu_cp_user_location_info_nr user_location_info;
 };
 
 struct cu_cp_tx_bw {
@@ -216,22 +222,52 @@ struct cu_cp_served_cell_info {
   std::vector<std::string> served_plmns;
   cu_cp_nr_mode_info       nr_mode_info;
   byte_buffer              meas_timing_cfg;
+
+  cu_cp_served_cell_info() = default;
+  cu_cp_served_cell_info(const cu_cp_served_cell_info& other) :
+    nr_cgi(other.nr_cgi),
+    nr_pci(other.nr_pci),
+    five_gs_tac(other.five_gs_tac),
+    cfg_eps_tac(other.cfg_eps_tac),
+    served_plmns(other.served_plmns),
+    nr_mode_info(other.nr_mode_info),
+    meas_timing_cfg(other.meas_timing_cfg.copy())
+  {
+  }
+  cu_cp_served_cell_info& operator=(const cu_cp_served_cell_info& other)
+  {
+    if (this != &other) {
+      nr_cgi          = other.nr_cgi;
+      nr_pci          = other.nr_pci;
+      five_gs_tac     = other.five_gs_tac;
+      cfg_eps_tac     = other.cfg_eps_tac;
+      served_plmns    = other.served_plmns;
+      nr_mode_info    = other.nr_mode_info;
+      meas_timing_cfg = other.meas_timing_cfg.copy();
+    }
+    return *this;
+  }
 };
 
 struct cu_cp_gnb_du_sys_info {
   byte_buffer mib_msg;
   byte_buffer sib1_msg;
+
+  cu_cp_gnb_du_sys_info() = default;
+  cu_cp_gnb_du_sys_info(const cu_cp_gnb_du_sys_info& other) : mib_msg(other.mib_msg), sib1_msg(other.sib1_msg) {}
+  cu_cp_gnb_du_sys_info& operator=(const cu_cp_gnb_du_sys_info& other)
+  {
+    if (this != &other) {
+      mib_msg  = other.mib_msg.copy();
+      sib1_msg = other.sib1_msg.copy();
+    }
+    return *this;
+  }
 };
 
 struct cu_cp_du_served_cells_item {
   cu_cp_served_cell_info          served_cell_info;
   optional<cu_cp_gnb_du_sys_info> gnb_du_sys_info; // not optional for NG-RAN
-};
-
-struct cu_cp_user_location_info_nr {
-  nr_cell_global_id_t nr_cgi;
-  cu_cp_tai           tai;
-  optional<uint64_t>  time_stamp;
 };
 
 struct cu_cp_alloc_and_retention_prio {
@@ -441,7 +477,7 @@ struct cu_cp_pdu_session_resource_modify_response {
   // id-CriticalityDiagnostics
 };
 
-struct cu_cp_ngap_ue_context_release_command {
+struct cu_cp_ue_context_release_command {
   ue_index_t ue_index = ue_index_t::invalid;
   cause_t    cause;
 };
@@ -463,7 +499,7 @@ struct cu_cp_recommended_cells_for_paging {
 
 struct cu_cp_global_gnb_id {
   std::string plmn_id;
-  std::string gnb_id;
+  uint64_t    gnb_id;
 };
 
 struct cu_cp_amf_paging_target {
@@ -492,12 +528,6 @@ struct cu_cp_ue_context_release_complete {
   optional<cu_cp_info_on_recommended_cells_and_ran_nodes_for_paging> info_on_recommended_cells_and_ran_nodes_for_paging;
   std::vector<pdu_session_id_t>                                      pdu_session_res_list_cxt_rel_cpl;
   optional<crit_diagnostics_t>                                       crit_diagnostics;
-};
-
-struct cu_cp_five_g_s_tmsi {
-  uint16_t amf_set_id;
-  uint8_t  amf_pointer;
-  uint32_t five_g_tmsi;
 };
 
 struct cu_cp_tai_list_for_paging_item {

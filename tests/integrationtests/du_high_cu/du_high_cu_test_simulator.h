@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,6 @@
 #include "tests/test_doubles/f1ap/f1c_test_local_gateway.h"
 #include "tests/test_doubles/mac/dummy_mac_result_notifier.h"
 #include "tests/test_doubles/mac/dummy_scheduler_ue_metric_notifier.h"
-#include "tests/test_doubles/mac/mac_pcap_dummy.h"
 #include "tests/unittests/f1ap/common/test_helpers.h"
 #include "tests/unittests/f1ap/cu_cp/f1ap_cu_test_helpers.h"
 #include "tests/unittests/ngap/test_helpers.h"
@@ -64,7 +63,8 @@ public:
   struct du_sim {
     srs_du::du_high_configuration       du_high_cfg;
     phy_test_dummy                      phy;
-    mac_pcap_dummy                      mac_pcap;
+    null_mac_pcap                       mac_pcap;
+    null_rlc_pcap                       rlc_pcap;
     dummy_scheduler_ue_metrics_notifier ue_metrics_notifier;
     std::unique_ptr<du_high>            du_high_inst;
 
@@ -92,8 +92,8 @@ public:
   srs_cu_cp::dummy_ngap_amf_notifier ngap_amf_notifier;
   f1c_test_local_gateway             f1c_gw;
 
-  std::unique_ptr<srs_cu_cp::cu_cp_interface> cu_cp_inst;
-  std::vector<std::unique_ptr<du_sim>>        dus;
+  std::unique_ptr<srs_cu_cp::cu_cp>    cu_cp_inst;
+  std::vector<std::unique_ptr<du_sim>> dus;
 };
 
 } // namespace srsran

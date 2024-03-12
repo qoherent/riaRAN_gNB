@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,7 @@
 #pragma once
 
 #include "srsran/adt/circular_array.h"
-#include "srsran/phy/upper/rx_softbuffer_pool.h"
+#include "srsran/phy/upper/rx_buffer_pool.h"
 #include "srsran/phy/upper/uplink_slot_pdu_repository.h"
 #include "srsran/phy/upper/upper_phy_rx_symbol_handler.h"
 #include "srsran/srslog/srslog.h"
@@ -35,27 +35,50 @@ class uplink_processor;
 class uplink_processor_pool;
 class upper_phy_rx_results_notifier;
 
-/// Payload buffer pool for received data.
+/// \brief Represents a pool of payload buffers.
+///
+/// The pool comprises a circular byte array, and this class provides functionality
+/// to assign a specified number of bytes from the pool. When the array is exhausted,
+/// the payload view is started from the beginning again.
 class rx_payload_buffer_pool
 {
-  /// Maximum number of payloads contained by the pool.
-  static const size_t MAX_NUM_PAYLOAD = 4096U;
-  static const size_t MAX_BUFFER_SIZE = MAX_RB * 156 * 8;
+  /// Maximum number of slots to store.
+  static constexpr size_t nof_slots = 40U;
+  /// Maximum number of bits that could potentially be allocated in a slot.
+  static constexpr units::bits max_buffer_size = units::bits(MAX_RB * 156 * 8);
+  /// Minimum block size. It ensures that the payload offsets are selected using multiples of blocks.
+  static constexpr unsigned min_block_size = 64;
 
 public:
-  /// Returns the next available buffer from the pool.
-  span<uint8_t> acquire_payload_buffer(size_t size)
+  /// Returns the next available portion of the pool.
+  span<uint8_t> acquire_payload_buffer(units::bytes size)
   {
-    srsran_assert(size <= MAX_BUFFER_SIZE, "Buffer size (i.e., {}) exceeds maximum {}.", size, pool[index].size());
-    unsigned i = index++ % MAX_NUM_PAYLOAD;
-    return span<uint8_t>(pool[i]).first(size);
+    // Convert the maximum buffer size from bits to bytes for comparison and allocation.
+    static constexpr units::bytes max_buffer_size_bytes = max_buffer_size.truncate_to_bytes();
+
+    srsran_assert(size <= max_buffer_size_bytes, "Buffer size (i.e., {}) exceeds maximum {}.", size, pool.size());
+
+    // Round the number of consumed bytes to the next block.
+    size_t count = divide_ceil(size.value(), min_block_size) * min_block_size;
+
+    // Reset the available bytes if the pool is exhausted.
+    if (available.size() < count) {
+      available = pool;
+    }
+
+    // Select the first bytes as the payload for the transmission.
+    span<uint8_t> payload = available.first(size.value());
+
+    // Advance available bytes.
+    available = available.last(available.size() - count);
+    return payload;
   }
 
 private:
-  /// Buffer pool.
-  circular_array<std::array<uint8_t, MAX_BUFFER_SIZE>, MAX_NUM_PAYLOAD> pool;
-  /// Index used to retrieve the next container.
-  unsigned index = 0;
+  /// Pool.
+  std::array<uint8_t, max_buffer_size.truncate_to_bytes().value() * nof_slots> pool;
+  /// Span that points to the unused portion of the pool.
+  span<uint8_t> available;
 };
 
 /// \brief Implementation of the upper PHY handler of receive symbols events.
@@ -69,7 +92,7 @@ class upper_phy_rx_symbol_handler_impl : public upper_phy_rx_symbol_handler
 public:
   upper_phy_rx_symbol_handler_impl(uplink_processor_pool&         ul_processor_pool_,
                                    uplink_slot_pdu_repository&    ul_pdu_repository_,
-                                   rx_softbuffer_pool&            softbuffer_pool_,
+                                   rx_buffer_pool&                buffer_pool_,
                                    upper_phy_rx_results_notifier& rx_results_notifier_,
                                    srslog::basic_logger&          logger_);
 
@@ -94,8 +117,8 @@ private:
   uplink_processor_pool& ul_processor_pool;
   /// Uplink slot PDU registry.
   uplink_slot_pdu_repository& ul_pdu_repository;
-  /// Softbuffer pool.
-  rx_softbuffer_pool& softbuffer_pool;
+  /// buffer pool.
+  rx_buffer_pool& rm_buffer_pool;
   /// Upper PHY results notifier.
   upper_phy_rx_results_notifier& rx_results_notifier;
   /// Upper PHY logger.

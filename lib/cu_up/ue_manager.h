@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,6 +36,7 @@ class ue_manager : public ue_manager_ctrl
 {
 public:
   explicit ue_manager(network_interface_config&            net_config_,
+                      n3_interface_config&                 n3_config_,
                       e1ap_control_message_handler&        e1ap_,
                       timer_manager&                       timers_,
                       f1u_cu_up_gateway&                   f1u_gw_,
@@ -52,7 +53,7 @@ public:
   ue_context* add_ue(const ue_context_cfg& cfg) override;
   void        remove_ue(ue_index_t ue_index) override;
   ue_context* find_ue(ue_index_t ue_index) override;
-  size_t      get_nof_ues() override;
+  size_t      get_nof_ues() const override { return ue_db.size(); };
 
 private:
   /// \brief Get the next available UE index.
@@ -60,6 +61,7 @@ private:
   ue_index_t get_next_ue_index();
 
   network_interface_config&            net_config;
+  n3_interface_config&                 n3_config;
   e1ap_control_message_handler&        e1ap;
   f1u_cu_up_gateway&                   f1u_gw;
   gtpu_tunnel_tx_upper_layer_notifier& gtpu_tx_notifier;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -134,20 +134,16 @@ using task_worker = general_task_worker<>;
 /// Executor for single-thread task worker.
 template <concurrent_queue_policy      QueuePolicy = concurrent_queue_policy::locking_mpsc,
           concurrent_queue_wait_policy WaitPolicy  = concurrent_queue_wait_policy::condition_variable>
-class general_task_worker_executor : public task_executor
+class general_task_worker_executor final : public task_executor
 {
 public:
   general_task_worker_executor() = default;
 
-  general_task_worker_executor(general_task_worker<QueuePolicy, WaitPolicy>& worker_,
-                               bool                                          report_on_push_failure = true) :
-    worker(&worker_), report_on_failure(report_on_push_failure)
-  {
-  }
+  general_task_worker_executor(general_task_worker<QueuePolicy, WaitPolicy>& worker_) : worker(&worker_) {}
 
-  bool execute(unique_task task) override
+  SRSRAN_NODISCARD bool execute(unique_task task) override
   {
-    if (worker->get_id() == std::this_thread::get_id()) {
+    if (can_run_task_inline()) {
       // Same thread. Run task right away.
       task();
       return true;
@@ -155,28 +151,26 @@ public:
     return defer(std::move(task));
   }
 
-  bool defer(unique_task task) override
-  {
-    if (not worker->push_task(std::move(task))) {
-      if (report_on_failure) {
-        srslog::fetch_basic_logger("ALL").warning("Cannot push more tasks into the {} worker queue. Maximum size is {}",
-                                                  worker->worker_name(),
-                                                  worker->max_pending_tasks());
-      }
-      return false;
-    }
-    return true;
-  }
+  SRSRAN_NODISCARD bool defer(unique_task task) override { return worker->push_task(std::move(task)); }
+
+  /// Determine whether the caller is in the same thread as the worker this executor adapts.
+  bool can_run_task_inline() const { return worker->get_id() == std::this_thread::get_id(); }
 
 private:
-  general_task_worker<QueuePolicy, WaitPolicy>* worker            = nullptr;
-  bool                                          report_on_failure = true;
+  general_task_worker<QueuePolicy, WaitPolicy>* worker = nullptr;
 };
 
 using task_worker_executor = general_task_worker_executor<>;
 
 template <concurrent_queue_policy QueuePolicy, concurrent_queue_wait_policy WaitPolicy>
-inline std::unique_ptr<task_executor> make_task_executor(general_task_worker<QueuePolicy, WaitPolicy>& w)
+inline general_task_worker_executor<QueuePolicy, WaitPolicy>
+make_task_executor(general_task_worker<QueuePolicy, WaitPolicy>& w)
+{
+  return general_task_worker_executor<QueuePolicy, WaitPolicy>(w);
+}
+
+template <concurrent_queue_policy QueuePolicy, concurrent_queue_wait_policy WaitPolicy>
+inline std::unique_ptr<task_executor> make_task_executor_ptr(general_task_worker<QueuePolicy, WaitPolicy>& w)
 {
   return std::make_unique<general_task_worker_executor<QueuePolicy, WaitPolicy>>(w);
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,7 @@
 #include "srsran/support/io/io_broker_factory.h"
 #include "srsran/support/test_utils.h"
 #include <arpa/inet.h>
+#include <chrono>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
@@ -104,7 +105,7 @@ protected:
 
     // create worker thread and executer
     worker   = std::make_unique<task_worker>("thread", 128, os_thread_realtime_priority::no_realtime());
-    executor = make_task_executor(*worker);
+    executor = make_task_executor_ptr(*worker);
 
     app_timers   = std::make_unique<timer_manager>(256);
     f1u_gw       = std::make_unique<dummy_f1u_gateway>(f1u_bearer);
@@ -116,14 +117,20 @@ protected:
   {
     // create config
     cu_up_configuration cfg;
-    cfg.cu_up_executor        = executor.get();
-    cfg.gtpu_pdu_executor     = executor.get();
-    cfg.e1ap.e1ap_conn_client = &e1ap_client;
-    cfg.f1u_gateway           = f1u_gw.get();
-    cfg.epoll_broker          = broker.get();
-    cfg.timers                = app_timers.get();
-    cfg.gtpu_pcap             = &dummy_pcap;
-    cfg.net_cfg.n3_bind_port  = 0; // Random free port selected by the OS.
+    cfg.ctrl_executor                = executor.get();
+    cfg.dl_executor                  = executor.get();
+    cfg.ul_executor                  = executor.get();
+    cfg.io_ul_executor               = executor.get();
+    cfg.e1ap.e1ap_conn_client        = &e1ap_client;
+    cfg.f1u_gateway                  = f1u_gw.get();
+    cfg.epoll_broker                 = broker.get();
+    cfg.timers                       = app_timers.get();
+    cfg.qos[uint_to_five_qi(9)]      = {};
+    cfg.gtpu_pcap                    = &dummy_pcap;
+    cfg.net_cfg.n3_bind_port         = 0; // Random free port selected by the OS.
+    cfg.n3_cfg.gtpu_reordering_timer = std::chrono::milliseconds(0);
+    cfg.n3_cfg.warn_on_drop          = false;
+    cfg.statistics_report_period     = std::chrono::seconds(1);
 
     return cfg;
   }
@@ -147,7 +154,7 @@ protected:
 
   std::unique_ptr<task_worker>   worker;
   std::unique_ptr<task_executor> executor;
-  dummy_dlt_pcap                 dummy_pcap = {};
+  null_dlt_pcap                  dummy_pcap;
 
   std::string upf_addr_str;
 
@@ -199,7 +206,7 @@ TEST_F(cu_up_test, dl_data_flow)
 
   sockaddr_in cu_up_addr;
   cu_up_addr.sin_family      = AF_INET;
-  cu_up_addr.sin_port        = htons(cu_up->get_n3_bind_port());
+  cu_up_addr.sin_port        = htons(cu_up->get_n3_bind_port().value());
   cu_up_addr.sin_addr.s_addr = inet_addr(cfg.net_cfg.n3_bind_addr.c_str());
 
   // teid=2, qfi=1
@@ -216,12 +223,12 @@ TEST_F(cu_up_test, dl_data_flow)
   // send message 1
   ret = sendto(sock_fd, gtpu_ping_vec, sizeof(gtpu_ping_vec), 0, (sockaddr*)&cu_up_addr, sizeof(cu_up_addr));
   ASSERT_GE(ret, 0) << "Failed to send message via sock_fd=" << sock_fd << " to `" << cfg.net_cfg.n3_bind_addr << ":"
-                    << cu_up->get_n3_bind_port() << "` - " << strerror(errno);
+                    << cu_up->get_n3_bind_port().value() << "` - " << strerror(errno);
 
   // send message 2
   ret = sendto(sock_fd, gtpu_ping_vec, sizeof(gtpu_ping_vec), 0, (sockaddr*)&cu_up_addr, sizeof(cu_up_addr));
   ASSERT_GE(ret, 0) << "Failed to send message via sock_fd=" << sock_fd << " to `" << cfg.net_cfg.n3_bind_addr << ":"
-                    << cu_up->get_n3_bind_port() << "` - " << strerror(errno);
+                    << cu_up->get_n3_bind_port().value() << "` - " << strerror(errno);
 
   close(sock_fd);
 

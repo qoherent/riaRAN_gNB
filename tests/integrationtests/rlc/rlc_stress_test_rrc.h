@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,7 +32,7 @@ class rrc_dummy : public pdcp_rx_upper_control_notifier, public pdcp_tx_upper_co
   rlc_bearer_logger logger;
 
 public:
-  explicit rrc_dummy(uint32_t id) : logger("RRC", {id, drb_id_t::drb1, "DL/UL"}) {}
+  explicit rrc_dummy(uint32_t id) : logger("RRC", {0, id, drb_id_t::drb1, "DL/UL"}) {}
 
   // PDCP -> RRC
   void on_integrity_failure() final {}

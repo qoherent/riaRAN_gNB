@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,6 +27,8 @@
 #include "lib/du_manager/procedures/ue_configuration_procedure.h"
 #include "srsran/asn1/rrc_nr/cell_group_config.h"
 #include "srsran/du/du_cell_config_helpers.h"
+#include "srsran/mac/config/mac_config_helpers.h"
+#include "srsran/rlc/rlc_srb_config_factory.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
 
@@ -48,12 +50,15 @@ protected:
       this->cell_res_alloc.next_context_update_result.rlc_bearers.emplace_back();
       this->cell_res_alloc.next_context_update_result.rlc_bearers.back().lcid    = srb_id_to_lcid(srb_id);
       this->cell_res_alloc.next_context_update_result.rlc_bearers.back().rlc_cfg = make_default_srb_rlc_config();
+      this->cell_res_alloc.next_context_update_result.rlc_bearers.back().mac_cfg =
+          make_default_srb_mac_lc_config(srb_id_to_lcid(srb_id));
     }
     for (const f1ap_drb_to_setup& drb : req.drbs_to_setup) {
       this->cell_res_alloc.next_context_update_result.rlc_bearers.emplace_back();
       this->cell_res_alloc.next_context_update_result.rlc_bearers.back().lcid = uint_to_lcid(3 + (unsigned)drb.drb_id);
       this->cell_res_alloc.next_context_update_result.rlc_bearers.back().drb_id  = drb.drb_id;
       this->cell_res_alloc.next_context_update_result.rlc_bearers.back().rlc_cfg = make_default_srb_rlc_config();
+      this->cell_res_alloc.next_context_update_result.rlc_bearers.back().mac_cfg = make_default_drb_mac_lc_config();
     }
 
     proc = launch_async<ue_configuration_procedure>(req, ue_mng, params);
@@ -63,7 +68,7 @@ protected:
   void mac_finishes_ue_config(du_ue_index_t ue_index, bool result)
   {
     this->mac.wait_ue_reconf.result.result   = result;
-    this->mac.wait_ue_reconf.result.ue_index = this->ue_mng.ues.begin()->get()->ue_index;
+    this->mac.wait_ue_reconf.result.ue_index = this->ue_mng.ues.begin()->ue_index;
     this->mac.wait_ue_reconf.ready_ev.set();
   }
 
@@ -204,7 +209,7 @@ TEST_F(ue_config_tester, when_du_manager_finishes_processing_ue_config_request_t
   // > Add dummy RLC data header.
   byte_buffer mac_rx_sdu(dummy_rlc_header);
   // > Append data buffer.
-  mac_rx_sdu.append(test_payload.copy());
+  ASSERT_TRUE(mac_rx_sdu.append(test_payload.copy()));
   // > Push MAC Rx SDU through MAC logical channel.
   mac.last_ue_reconf_msg->bearers_to_addmod[0].ul_bearer->on_new_sdu({mac_rx_sdu.copy()});
   // > Check arrival of F1-C Tx SDU to F1-C bearer.
@@ -216,10 +221,11 @@ TEST_F(ue_config_tester, when_du_manager_finishes_processing_ue_config_request_t
   // > Push F1-C Rx SDU through F1-C bearer Rx SDU notifier.
   f1ap.last_ue_config->f1c_bearers_to_add[0].rx_sdu_notifier->on_new_sdu(std::move(f1c_rx_sdu), {});
   // > Check arrival of MAC Tx SDU to MAC logical channel.
-  auto        mac_tx_sdu = mac.last_ue_reconf_msg->bearers_to_addmod[0].dl_bearer->on_new_tx_sdu(test_payload.length() +
-                                                                                          dummy_rlc_header.size());
-  byte_buffer extracted_payload(mac_tx_sdu.begin() + dummy_rlc_header.size(), mac_tx_sdu.end());
-  ASSERT_EQ(test_payload, extracted_payload);
+  std::vector<uint8_t> mac_tx_sdu(test_payload.length() + dummy_rlc_header.size());
+  size_t               nwritten = mac.last_ue_reconf_msg->bearers_to_addmod[0].dl_bearer->on_new_tx_sdu(mac_tx_sdu);
+  byte_buffer          extracted_payload(mac_tx_sdu.begin() + dummy_rlc_header.size(), mac_tx_sdu.begin() + nwritten);
+  ASSERT_EQ(test_payload, extracted_payload)
+      << fmt::format("Byte buffers do not match:\n{}\n{}\n", test_payload, extracted_payload);
 }
 
 TEST_F(ue_config_tester, when_du_manager_finishes_processing_ue_config_request_then_mac_rlc_f1u_bearers_are_connected)
@@ -235,7 +241,7 @@ TEST_F(ue_config_tester, when_du_manager_finishes_processing_ue_config_request_t
   // > Add dummy RLC data header.
   byte_buffer mac_sdu(dummy_rlc_header);
   // > Append data buffer.
-  mac_sdu.append(test_payload.copy());
+  ASSERT_TRUE(mac_sdu.append(test_payload.copy()));
   // > Push MAC Rx SDU through MAC logical channel.
   mac.last_ue_reconf_msg->bearers_to_addmod[0].ul_bearer->on_new_sdu({mac_sdu.copy()});
   // > Check arrival of F1-U Tx SDU to F1-U bearer.
@@ -249,9 +255,9 @@ TEST_F(ue_config_tester, when_du_manager_finishes_processing_ue_config_request_t
   // > Push F1-U Rx SDU through F1-U bearer Rx SDU notifier.
   bearer.du_rx.on_new_sdu(std::move(rx_sdu));
   // > Check arrival of MAC Tx SDU to MAC logical channel.
-  auto        mac_tx_sdu = mac.last_ue_reconf_msg->bearers_to_addmod[0].dl_bearer->on_new_tx_sdu(test_payload.length() +
-                                                                                          dummy_rlc_header.size());
-  byte_buffer extracted_payload(mac_tx_sdu.begin() + dummy_rlc_header.size(), mac_tx_sdu.end());
+  std::vector<uint8_t> mac_tx_sdu(test_payload.length() + dummy_rlc_header.size());
+  unsigned             nwritten = mac.last_ue_reconf_msg->bearers_to_addmod[0].dl_bearer->on_new_tx_sdu(mac_tx_sdu);
+  byte_buffer          extracted_payload(mac_tx_sdu.begin() + dummy_rlc_header.size(), mac_tx_sdu.begin() + nwritten);
   ASSERT_EQ(test_payload, extracted_payload);
 }
 

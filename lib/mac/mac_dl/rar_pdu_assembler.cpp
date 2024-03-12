@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -112,9 +112,9 @@ void rar_pdu_encoder::encode_rar_grant_payload(const rar_ul_grant& grant)
   ++ptr;
 
   // Encode Temporary C-RNTI (2 Octets).
-  *ptr = (grant.temp_crnti >> 8U) & 0xffU;
+  *ptr = (to_value(grant.temp_crnti) >> 8U) & 0xffU;
   ++ptr;
-  *ptr = grant.temp_crnti & 0xffU;
+  *ptr = to_value(grant.temp_crnti) & 0xffU;
   ++ptr;
 }
 

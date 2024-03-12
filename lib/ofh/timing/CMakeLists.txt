@@ -1,5 +1,5 @@
 #
-# Copyright 2021-2023 Software Radio Systems Limited
+# Copyright 2021-2024 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -19,7 +19,7 @@
 #
 
 set(SOURCES
-        ofh_ota_symbol_dispatcher.cpp
+        ofh_timing_manager_impl.cpp
         realtime_timing_worker.cpp)
 
 add_library(srsran_ofh_timing STATIC ${SOURCES})

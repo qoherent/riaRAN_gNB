@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,7 +28,7 @@ using namespace srsran;
 using namespace fapi_adaptor;
 using namespace unittests;
 
-TEST(ULPRACHPDUTest, ValidPRACHShouldPass)
+TEST(mac_fapi_ul_prach_pdu_conversor_test, valid_prach_pdu_should_pass)
 {
   const prach_occasion_info& mac_pdu = build_valid_prach_occassion();
   fapi::ul_prach_pdu         fapi_pdu;

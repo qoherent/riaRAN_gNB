@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -27,10 +27,10 @@ using namespace ofh;
 
 void sector_controller::start()
 {
-  receiver.start();
+  ofh_rx.get_controller().start();
 }
 
 void sector_controller::stop()
 {
-  receiver.stop();
+  ofh_rx.get_controller().stop();
 }

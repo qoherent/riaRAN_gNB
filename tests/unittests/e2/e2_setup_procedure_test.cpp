@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -66,7 +66,7 @@ TEST_F(e2_entity_test, on_start_send_e2ap_setup_request)
       .value.e2setup_resp()
       ->ra_nfunctions_accepted.value[0]
       ->ra_nfunction_id_item()
-      .ran_function_id = 147;
+      .ran_function_id = e2sm_kpm_asn1_packer::ran_func_id;
   test_logger.info("Injecting E2SetupResponse");
   e2->handle_message(e2_setup_response);
 }
@@ -212,12 +212,12 @@ TEST_F(e2_test_setup, e2_sends_correct_rc_ran_function_definition)
             "Slice-level PRB quota");
   ASSERT_EQ(ran_func_def.ran_function_definition_ctrl.ric_ctrl_style_list[0]
                 .ric_ctrl_action_list[0]
-                .ran_ctrl_action_params_list[0]
+                .ran_ctrl_action_params_list[9]
                 .ran_param_id,
-            10);
+            11);
   ASSERT_EQ(ran_func_def.ran_function_definition_ctrl.ric_ctrl_style_list[0]
                 .ric_ctrl_action_list[0]
-                .ran_ctrl_action_params_list[0]
+                .ran_ctrl_action_params_list[9]
                 .ran_param_name.to_string(),
             "Min PRB Policy Ratio");
 

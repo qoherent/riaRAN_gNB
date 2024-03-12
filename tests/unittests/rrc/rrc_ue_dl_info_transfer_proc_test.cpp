@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -23,7 +23,7 @@
 #include "rrc_ue_test_helpers.h"
 #include "rrc_ue_test_messages.h"
 #include "srsran/adt/byte_buffer.h"
-#include "srsran/support/async/async_task_loop.h"
+#include "srsran/support/async/fifo_async_task_scheduler.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
 
@@ -44,7 +44,6 @@ protected:
     rrc_logger.set_level(srslog::basic_levels::debug);
     rrc_logger.set_hex_dump_max_size(32);
 
-    connect_amf();
     receive_setup_request();
 
     // check if the RRC setup message was generated

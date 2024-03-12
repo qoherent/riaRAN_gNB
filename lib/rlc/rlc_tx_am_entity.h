@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -26,10 +26,10 @@
 #include "rlc_am_pdu.h"
 #include "rlc_pdu_recycler.h"
 #include "rlc_retx_queue.h"
-#include "rlc_sdu_queue.h"
-#include "rlc_sdu_window.h"
+#include "rlc_sdu_queue_lockfree.h"
 #include "rlc_tx_entity.h"
 #include "srsran/support/executors/task_executor.h"
+#include "srsran/support/sdu_window.h"
 #include "srsran/support/timers.h"
 #include "fmt/format.h"
 
@@ -37,10 +37,11 @@ namespace srsran {
 
 /// Container to hold a SDU for transmission, the progress in case of segmentation, and associated meta data
 struct rlc_tx_am_sdu_info {
-  byte_buffer        sdu = {};
-  optional<uint32_t> pdcp_sn;
-  uint32_t           next_so    = 0;
-  uint32_t           retx_count = RETX_COUNT_NOT_STARTED;
+  byte_buffer                           sdu = {};
+  std::chrono::system_clock::time_point time_of_arrival;
+  optional<uint32_t>                    pdcp_sn;
+  uint32_t                              next_so    = 0;
+  uint32_t                              retx_count = RETX_COUNT_NOT_STARTED;
 };
 
 /// \brief TX state variables
@@ -87,11 +88,12 @@ private:
   rlc_tx_am_state st;
 
   // TX SDU buffers
-  rlc_sdu_queue sdu_queue;
-  uint32_t      sn_under_segmentation = INVALID_RLC_SN; // SN of the SDU currently being segmented
+  rlc_sdu_queue_lockfree sdu_queue;
+  uint32_t               sn_under_segmentation = INVALID_RLC_SN; // SN of the SDU currently being segmented
 
   // RETX buffers
   rlc_retx_queue retx_queue;
+  uint32_t       retx_sn = INVALID_RLC_SN; // SN of the most recent ReTx since last status report
 
   // Mutexes
   std::mutex mutex;
@@ -104,7 +106,7 @@ private:
   const uint32_t am_window_size;
 
   /// TX window
-  std::unique_ptr<rlc_sdu_window_base<rlc_tx_am_sdu_info>> tx_window;
+  std::unique_ptr<sdu_window<rlc_tx_am_sdu_info>> tx_window;
 
   /// Recycler for discarded PDUs (from tx_window) that shall be deleted by a different executor off the critical path
   rlc_pdu_recycler pdu_recycler;
@@ -123,6 +125,8 @@ private:
   task_executor& pcell_executor;
   task_executor& ue_executor;
 
+  pcap_rlc_pdu_context pcap_context;
+
   // Storage for previous buffer state
   unsigned prev_buffer_state = 0;
 
@@ -133,7 +137,8 @@ private:
   std::atomic_flag pending_buffer_state = ATOMIC_FLAG_INIT;
 
 public:
-  rlc_tx_am_entity(du_ue_index_t                        du_index,
+  rlc_tx_am_entity(uint32_t                             du_index,
+                   du_ue_index_t                        ue_index,
                    rb_id_t                              rb_id,
                    const rlc_tx_am_config&              config,
                    rlc_tx_upper_layer_data_notifier&    upper_dn_,
@@ -141,7 +146,9 @@ public:
                    rlc_tx_lower_layer_notifier&         lower_dn_,
                    timer_factory                        timers,
                    task_executor&                       pcell_executor_,
-                   task_executor&                       ue_executor_);
+                   task_executor&                       ue_executor_,
+                   bool                                 metrics_enabled_,
+                   rlc_pcap&                            pcap_);
 
   // TX/RX interconnect
   void set_status_provider(rlc_rx_am_status_provider* status_provider_) { status_provider = status_provider_; }
@@ -151,7 +158,7 @@ public:
   void discard_sdu(uint32_t pdcp_sn) override;
 
   // Interfaces for lower layers
-  byte_buffer_chain pull_pdu(uint32_t grant_len) override;
+  size_t pull_pdu(span<uint8_t> rlc_pdu_buf) override;
 
   uint32_t get_buffer_state() override;
 
@@ -182,6 +189,15 @@ public:
   /// \param sn Sequence Number to check
   /// \return true if sn is inside the TX window, false otherwise
   bool inside_tx_window(uint32_t sn) const;
+
+  /// \brief Checks if the TX window is currently full.
+  ///
+  /// Note "full" may be smaller than the full window size to try to limit
+  /// memory usage. A virtual full window configuration parameter can be used
+  /// to avoid many UEs with 2^18 windows full of PDUs.
+  ///
+  /// \return true if the window is full.
+  bool is_tx_window_full() const;
 
   /// \brief This function is used to check if a received status report as a valid ACK_SN.
   ///
@@ -221,30 +237,33 @@ private:
   /// It will read an SDU from the SDU queue, build a new PDU, and add it to the tx_window.
   /// SDU segmentation is applied if necessary.
   ///
-  /// An empty PDU is returned if grant_len is insufficient or the TX buffer is empty.
+  /// No PDU is written if the size of \c rlc_pdu_buf is insufficient or the TX buffer is empty.
   ///
-  /// \param grant_len Limits the maximum size of the requested PDU.
-  /// \return One PDU
-  byte_buffer_chain build_new_pdu(uint32_t grant_len);
+  /// \param rlc_pdu_buf TX buffer where to encode an RLC Tx PDU. The encoded PDU size cannot exceed the size of the
+  /// buffer.
+  /// \return Number of bytes taken by the written RLC PDU.
+  size_t build_new_pdu(span<uint8_t> rlc_pdu_buf);
 
   /// \brief Builds a RLC PDU containing the first segment of a new SDU.
   ///
   /// This function will set sn_under_segmentation to the sequence number of the SDU under segmentation.
   ///
-  /// \param tx_pdu the tx_pdu info contained in the tx_window.
-  /// \param grant_len Limits the maximum size of the requested PDU.
-  /// \return One PDU
-  byte_buffer_chain build_first_sdu_segment(rlc_tx_am_sdu_info& sdu_info, uint32_t grant_len);
+  /// \param rlc_pdu_buf TX buffer where to encode an RLC Tx PDU. The encoded PDU size cannot exceed the size of the
+  /// buffer.
+  /// \param sdu_info The tx_pdu info contained in the tx_window.
+  /// \return Number of bytes taken by the written RLC PDU.
+  size_t build_first_sdu_segment(span<uint8_t> rlc_pdu_buf, rlc_tx_am_sdu_info& sdu_info);
 
   /// \brief Builds a RLC PDU containing an SDU segment for an SDU that is undergoing segmentation.
   ///
   /// This function will reset sn_under_segmentation to RLC_INVALID_SN if the produced PDU contains
   /// the last segment of the SDU under segmentation.
   ///
-  /// \param tx_pdu The tx_pdu info contained in the tx_window.
-  /// \param grant_len Limits the maximum size of the requested PDU.
-  /// \return One PDU
-  byte_buffer_chain build_continued_sdu_segment(rlc_tx_am_sdu_info& sdu_info, uint32_t grant_len);
+  /// \param rlc_pdu_buf TX buffer where to encode an RLC Tx PDU. The encoded PDU size cannot exceed the size of the
+  /// buffer.
+  /// \param sdu_info The tx_pdu info contained in the tx_window.
+  /// \return Number of bytes taken by the written RLC PDU.
+  size_t build_continued_sdu_segment(span<uint8_t> rlc_pdu_buf, rlc_tx_am_sdu_info& sdu_info);
 
   /// \brief Builds a RETX RLC PDU.
   ///
@@ -252,9 +271,9 @@ private:
   /// being RETX'ed. The RETX may have been previously transmitted as
   /// a full PDU or an PDU segment(s).
   ///
-  /// \param grant_len Limits the maximum size of the requested PDU.
-  /// \return One PDU or PDU segment segment
-  byte_buffer_chain build_retx_pdu(uint32_t grant_len);
+  /// \param sdu_info The tx_pdu info contained in the tx_window.
+  /// \return Number of bytes taken by the written RLC PDU.
+  size_t build_retx_pdu(span<uint8_t> rlc_pdu_buf);
 
   constexpr uint32_t get_retx_expected_hdr_len(const rlc_tx_amd_retx retx)
   {
@@ -283,6 +302,12 @@ private:
   /// Caller _must_ hold the mutex when calling the function.
   /// \param sn The SN of the SDU for which the retx_counter shall be incremented.
   void increment_retx_count(uint32_t sn);
+
+  /// \brief Decrements the retx_count for a given SN if applicable.
+  ///
+  /// Caller _must_ hold the mutex when calling the function.
+  /// \param sn The SN of the SDU for which the retx_counter shall be decremented.
+  void decrement_retx_count(uint32_t sn);
 
   /// \brief Helper to check if a SN has reached the max RETX threshold
   ///
@@ -318,7 +343,7 @@ private:
   /// Creates the tx_window according to sn_size
   /// \param sn_size Size of the sequence number (SN)
   /// \return unique pointer to tx_window instance
-  std::unique_ptr<rlc_sdu_window_base<rlc_tx_am_sdu_info>> create_tx_window(rlc_am_sn_size sn_size);
+  std::unique_ptr<sdu_window<rlc_tx_am_sdu_info>> create_tx_window(rlc_am_sn_size sn_size);
 
   void log_state(srslog::basic_levels level)
   {

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -61,6 +61,8 @@ using concurrent_queue_types = ::testing::Types<
                      concurrent_queue_wait_policy::condition_variable>,
     concurrent_queue<int, concurrent_queue_policy::lockfree_spsc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<moveonly_test_object, concurrent_queue_policy::lockfree_spsc, concurrent_queue_wait_policy::sleep>,
+    concurrent_queue<int, concurrent_queue_policy::lockfree_mpmc, concurrent_queue_wait_policy::sleep>,
+    concurrent_queue<moveonly_test_object, concurrent_queue_policy::lockfree_mpmc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<int, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<moveonly_test_object, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::sleep>,
     concurrent_queue<int, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::condition_variable>,

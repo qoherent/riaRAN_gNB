@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,6 +21,7 @@
  */
 
 #pragma once
+
 #include "pusch_uci_decoder_notifier.h"
 #include "srsran/adt/optional.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_decoder_notifier.h"
@@ -33,14 +34,16 @@ namespace srsran {
 
 namespace detail {
 
-/// \brief PUSCH processor notifier adaptor internal UCI callback.
+/// \brief PUSCH processor notifier adaptor internal callback.
 ///
-/// Interfaces the different UCI notifiers with the notifier adaptor.
-class pusch_processor_notifier_uci_callback
+/// Interfaces the different notifiers with the notifier adaptor.
+class pusch_processor_notifier_callback
 {
 public:
   /// Default destructor.
-  virtual ~pusch_processor_notifier_uci_callback() = default;
+  virtual ~pusch_processor_notifier_callback() = default;
+
+  virtual void on_sch_data(const pusch_decoder_result& result) = 0;
 
   /// Notifies HARQ-ACK.
   virtual void on_harq_ack(const pusch_uci_field& field) = 0;
@@ -59,31 +62,41 @@ class pusch_processor_csi_part1_feedback
 public:
   virtual ~pusch_processor_csi_part1_feedback() = default;
 
-  virtual void on_csi_part1(span<const uint8_t> part1) = 0;
+  virtual void on_csi_part1(const uci_payload_type& part1) = 0;
 };
 
 /// \brief Adapts the notifiers of each PUSCH decoder to the PUSCH processor notifier.
 ///
 /// The UCI fields notifier getters set flags of their respective fields as pending.
-class pusch_processor_notifier_adaptor : private detail::pusch_processor_notifier_uci_callback
+class pusch_processor_notifier_adaptor : private detail::pusch_processor_notifier_callback
 {
 public:
   /// Creates a notifier adaptor from a PUSCH processor notifier.
-  pusch_processor_notifier_adaptor(pusch_processor_result_notifier&    notifier_,
-                                   const channel_state_information&    csi,
-                                   pusch_processor_csi_part1_feedback& csi_part_1_feedback_) :
-    notifier(notifier_),
+  pusch_processor_notifier_adaptor() :
     pusch_demod_notifier(uci_payload.csi),
-    sch_data_notifier(notifier, uci_payload.csi),
+    sch_data_notifier(*this),
     harq_ack_notifier(*this),
     csi_part_1_notifier(*this),
-    csi_part_2_notifier(*this),
-    csi_part_1_feedback(csi_part_1_feedback_)
+    csi_part_2_notifier(*this)
   {
+  }
+
+  /// \brief Configures the notifier for a new transmission.
+  /// \param[in] notifier_            PUSCH processor result notifier.
+  /// \param[in] csi_part_1_feedback_ Uplink control information field CSI Part 1 feedback notifier.
+  /// \param[in] csi                  Channel state information.
+  /// \return A PUSCH processor notifier adaptor.
+  void new_transmission(pusch_processor_result_notifier&    notifier_,
+                        pusch_processor_csi_part1_feedback& csi_part_1_feedback_,
+                        const channel_state_information&    csi)
+  {
+    notifier            = &notifier_;
+    csi_part_1_feedback = &csi_part_1_feedback_;
+    uci_payload.csi     = csi;
+
     uci_payload.harq_ack.clear();
     uci_payload.csi_part1.clear();
     uci_payload.csi_part2.clear();
-    uci_payload.csi = csi;
   }
 
   /// Gets the PUSCH demodulator notifier.
@@ -95,7 +108,7 @@ public:
   /// Gets the HARQ-ACK notifier and sets the field as pending.
   pusch_uci_decoder_notifier& get_harq_ack_notifier()
   {
-    srsran_assert(!pending_csi_part1, "HARQ-ACK has already been requested.");
+    srsran_assert(!pending_harq_ack, "HARQ-ACK has already been requested.");
     pending_harq_ack = true;
     return harq_ack_notifier;
   }
@@ -116,7 +129,8 @@ public:
     return csi_part_2_notifier;
   }
 
-  ~pusch_processor_notifier_adaptor()
+  /// Default destructor - verifies that the previous fields are valid.
+  ~pusch_processor_notifier_adaptor() override
   {
     srsran_assert(!pending_harq_ack, "HARQ-ACK has not been notified.");
     srsran_assert(!pending_csi_part1, "CSI Part 1 has not been notified.");
@@ -155,86 +169,81 @@ private:
   class sch_data_notifier_impl : public pusch_decoder_notifier
   {
   public:
-    sch_data_notifier_impl(pusch_processor_result_notifier& notifier_, channel_state_information& csi_) :
-      notifier(notifier_), csi(csi_)
-    {
-    }
+    sch_data_notifier_impl(detail::pusch_processor_notifier_callback& notifier_) : notifier(notifier_) {}
 
     // See interface for documentation.
-    void on_sch_data(const pusch_decoder_result& result) override
-    {
-      pusch_processor_result_data result_data;
-      result_data.data = result;
-      result_data.csi  = csi;
-      notifier.on_sch(result_data);
-    }
+    void on_sch_data(const pusch_decoder_result& result) override { notifier.on_sch_data(result); }
 
   private:
-    pusch_processor_result_notifier& notifier;
-    channel_state_information&       csi;
+    detail::pusch_processor_notifier_callback& notifier;
   };
 
   /// Implements the HARQ-ACK notifier.
   class harq_ack_notifier_impl : public pusch_uci_decoder_notifier
   {
   public:
-    harq_ack_notifier_impl(detail::pusch_processor_notifier_uci_callback& callback_) : callback(callback_) {}
+    harq_ack_notifier_impl(detail::pusch_processor_notifier_callback& callback_) : callback(callback_) {}
 
     // See interface for documentation.
     void on_uci_decoded(span<const uint8_t> message, const uci_status& status) override
     {
       pusch_uci_field field;
-      field.payload.resize(message.size());
-      srsvec::copy(field.payload, message);
-      field.status = status;
+      field.payload = uci_payload_type(message.begin(), message.end());
+      field.status  = status;
       callback.on_harq_ack(field);
     }
 
   private:
-    detail::pusch_processor_notifier_uci_callback& callback;
+    detail::pusch_processor_notifier_callback& callback;
   };
 
   /// Implements the CSI Part 1 notifier.
   class csi_part1_notifier_impl : public pusch_uci_decoder_notifier
   {
   public:
-    csi_part1_notifier_impl(detail::pusch_processor_notifier_uci_callback& callback_) : callback(callback_) {}
+    csi_part1_notifier_impl(detail::pusch_processor_notifier_callback& callback_) : callback(callback_) {}
 
     // See interface for documentation.
     void on_uci_decoded(span<const uint8_t> message, const uci_status& status) override
     {
       pusch_uci_field field;
-      field.payload.resize(message.size());
-      srsvec::copy(field.payload, message);
-      field.status = status;
+      field.payload = uci_payload_type(message.begin(), message.end());
+      field.status  = status;
       callback.on_csi_part1(field);
     }
 
   private:
-    detail::pusch_processor_notifier_uci_callback& callback;
+    detail::pusch_processor_notifier_callback& callback;
   };
 
   /// Implements the CSI Part 2 notifier.
   class csi_part2_notifier_impl : public pusch_uci_decoder_notifier
   {
   public:
-    csi_part2_notifier_impl(detail::pusch_processor_notifier_uci_callback& callback_) : callback(callback_) {}
+    csi_part2_notifier_impl(detail::pusch_processor_notifier_callback& callback_) : callback(callback_) {}
 
     // See interface for documentation.
     void on_uci_decoded(span<const uint8_t> message, const uci_status& status) override
     {
       pusch_uci_field field;
-      field.payload.resize(message.size());
-      srsvec::copy(field.payload, message);
-      field.status = status;
+      field.payload = uci_payload_type(message.begin(), message.end());
+      field.status  = status;
       callback.on_csi_part2(field);
     }
 
   private:
-    detail::pusch_processor_notifier_uci_callback& callback;
+    detail::pusch_processor_notifier_callback& callback;
   };
 
-  // See detail::pusch_processor_notifier_uci_callback for documentation.
+  void on_sch_data(const pusch_decoder_result& result) override
+  {
+    pusch_processor_result_data result_data;
+    result_data.data = result;
+    result_data.csi  = uci_payload.csi;
+    notifier->on_sch(result_data);
+  }
+
+  // See detail::pusch_processor_notifier_callback for documentation.
   void on_harq_ack(const pusch_uci_field& field) override
   {
     // Check HARQ ACK is pending.
@@ -250,14 +259,15 @@ private:
     check_and_notify_uci();
   }
 
-  // See detail::pusch_processor_notifier_uci_callback for documentation.
+  // See detail::pusch_processor_notifier_callback for documentation.
   void on_csi_part1(const pusch_uci_field& field) override
   {
     // Check CSI Part 1 is pending.
     srsran_assert(pending_csi_part1, "CSI Part 1 is not pending.");
 
     if (field.status == uci_status::valid) {
-      csi_part_1_feedback.on_csi_part1(field.payload);
+      srsran_assert(csi_part_1_feedback != nullptr, "Invalid CSI Part 1 feedback.");
+      csi_part_1_feedback->on_csi_part1(field.payload);
     }
 
     // Set CSI Part 1 field.
@@ -270,7 +280,7 @@ private:
     check_and_notify_uci();
   }
 
-  // See detail::pusch_processor_notifier_uci_callback for documentation.
+  // See detail::pusch_processor_notifier_callback for documentation.
   void on_csi_part2(const pusch_uci_field& field) override
   {
     // Check CSI Part 2 is pending.
@@ -289,8 +299,9 @@ private:
   /// Check if the no UCI fields are pending and notify the results.
   void check_and_notify_uci()
   {
+    srsran_assert(notifier != nullptr, "Invalid notifier.");
     if (!pending_harq_ack && !pending_csi_part1 && !pending_csi_part2) {
-      notifier.on_uci(uci_payload);
+      notifier->on_uci(uci_payload);
     }
   }
 
@@ -301,9 +312,11 @@ private:
   /// Set to true if the CSI Part 2 was requested but it has not notified back.
   bool pending_csi_part2 = false;
   /// Stored UCI payload.
-  pusch_processor_result_control uci_payload = {};
+  pusch_processor_result_control uci_payload;
   /// Reference to PUSCH processor notifier.
-  pusch_processor_result_notifier& notifier;
+  pusch_processor_result_notifier* notifier;
+  /// CSI Part 1 feedback.
+  pusch_processor_csi_part1_feedback* csi_part_1_feedback;
   /// Channel state information notifier.
   pusch_demodulator_notifier_impl pusch_demod_notifier;
   /// SCH data notifier.
@@ -314,8 +327,6 @@ private:
   csi_part1_notifier_impl csi_part_1_notifier;
   /// CSI Part 2 notifier.
   csi_part2_notifier_impl csi_part_2_notifier;
-  /// CSI Part 1 feedback.
-  pusch_processor_csi_part1_feedback& csi_part_1_feedback;
 };
 
 } // namespace srsran

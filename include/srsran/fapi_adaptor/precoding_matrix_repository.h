@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2021-2023 Software Radio Systems Limited
+ * Copyright 2021-2024 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,7 +33,10 @@ namespace fapi_adaptor {
 class precoding_matrix_repository
 {
 public:
-  explicit precoding_matrix_repository(std::vector<precoding_weight_matrix>&& repo_) : repo(std::move(repo_)) {}
+  explicit precoding_matrix_repository(std::vector<precoding_weight_matrix>&& repo_) : repo(std::move(repo_))
+  {
+    srsran_assert(!repo.empty(), "Empty container");
+  }
 
   /// \brief Returns the precoding matrix associated to the given index.
   ///
