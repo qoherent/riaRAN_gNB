@@ -24,6 +24,7 @@
 
 #include "srsran/f1u/cu_up/f1u_bearer.h"
 #include "srsran/f1u/cu_up/f1u_bearer_logger.h"
+#include "srsran/f1u/cu_up/f1u_config.h"
 #include "srsran/f1u/cu_up/f1u_rx_delivery_notifier.h"
 #include "srsran/f1u/cu_up/f1u_rx_sdu_notifier.h"
 #include "srsran/f1u/cu_up/f1u_tx_pdu_notifier.h"
@@ -39,13 +40,13 @@ public:
   f1u_bearer_impl(uint32_t                       ue_index,
                   drb_id_t                       drb_id_,
                   const up_transport_layer_info& ul_tnl_info_,
+                  const f1u_config&              config,
                   f1u_tx_pdu_notifier&           tx_pdu_notifier_,
                   f1u_rx_delivery_notifier&      rx_delivery_notifier_,
                   f1u_rx_sdu_notifier&           rx_sdu_notifier_,
                   timer_factory                  ue_dl_timer_factory,
                   unique_timer&                  ue_inactivity_timer_,
-                  task_executor&                 ul_exec_,
-                  f1u_bearer_disconnector&       diconnector_);
+                  task_executor&                 ul_exec_);
   f1u_bearer_impl(const f1u_bearer_impl&)            = delete;
   f1u_bearer_impl& operator=(const f1u_bearer_impl&) = delete;
 
@@ -54,16 +55,10 @@ public:
   f1u_rx_pdu_handler& get_rx_pdu_handler() override { return *this; }
   f1u_tx_sdu_handler& get_tx_sdu_handler() override { return *this; }
 
-  void stop() override
-  {
-    if (not stopped) {
-      disconnector.disconnect_cu_bearer(ul_tnl_info);
-    }
-    stopped = true;
-  }
+  void stop() override { dl_notif_timer.stop(); }
 
   void handle_pdu(nru_ul_message msg) override;
-  void handle_sdu(pdcp_tx_pdu sdu) override;
+  void handle_sdu(byte_buffer sdu, bool is_retx) override;
   void discard_sdu(uint32_t pdcp_sn) override;
 
   /// \brief Returns the UL tunnel info that was assigned upon construction.
@@ -78,12 +73,14 @@ public:
   void on_expired_dl_notif_timer();
 
 private:
-  bool                      stopped = false;
-  f1u_bearer_logger         logger;
+  f1u_bearer_logger logger;
+
+  /// Config storage
+  const f1u_config cfg;
+
   f1u_tx_pdu_notifier&      tx_pdu_notifier;
   f1u_rx_delivery_notifier& rx_delivery_notifier;
   f1u_rx_sdu_notifier&      rx_sdu_notifier;
-  f1u_bearer_disconnector&  disconnector;
   up_transport_layer_info   ul_tnl_info;
   task_executor&            ul_exec;
 

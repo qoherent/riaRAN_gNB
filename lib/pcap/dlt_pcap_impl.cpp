@@ -37,7 +37,7 @@ dlt_pcap_impl::dlt_pcap_impl(uint32_t           dlt,
                              const std::string& layer_name_,
                              const std::string& filename,
                              task_executor&     backend_exec_) :
-  layer_name(layer_name_), logger(srslog::fetch_basic_logger("ALL")), writer(dlt, layer_name_, filename, backend_exec_)
+  logger(srslog::fetch_basic_logger("ALL")), writer(dlt, layer_name_, filename, backend_exec_)
 {
 }
 
@@ -58,7 +58,7 @@ void dlt_pcap_impl::push_pdu(const_span<uint8_t> pdu)
     return;
   }
   auto pdu_buffer = byte_buffer::create(pdu);
-  if (pdu_buffer.is_error()) {
+  if (not pdu_buffer.has_value()) {
     return;
   }
   writer.write_pdu(std::move(pdu_buffer.value()));

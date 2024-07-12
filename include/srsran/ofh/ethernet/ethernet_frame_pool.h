@@ -30,6 +30,7 @@
 #include "srsran/ofh/timing/slot_symbol_point.h"
 #include "srsran/ran/frame_types.h"
 #include "srsran/ran/slot_point.h"
+#include "srsran/srslog/srslog.h"
 #include "srsran/support/units.h"
 #include <mutex>
 
@@ -183,7 +184,8 @@ public:
   void reset_buffers()
   {
     for (auto& buffer : buffers_array) {
-      if (buffer.status != frame_buffer::frame_buffer_status::marked_to_send) {
+      if (buffer.status != frame_buffer::frame_buffer_status::marked_to_send &&
+          buffer.status != frame_buffer::frame_buffer_status::reserved) {
         buffer.status = frame_buffer::frame_buffer_status::free;
       }
     }

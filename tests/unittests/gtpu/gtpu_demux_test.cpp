@@ -23,14 +23,14 @@
 #include "gtpu_test_shared.h"
 #include "srsran/gtpu/gtpu_demux.h"
 #include "srsran/gtpu/gtpu_demux_factory.h"
+#include "srsran/srslog/srslog.h"
 #include "srsran/support/executors/manual_task_worker.h"
-#include "srsran/support/executors/task_worker.h"
 #include <gtest/gtest.h>
 #include <sys/socket.h>
 
 using namespace srsran;
 
-class gtpu_tunnel_rx_upper_dummy : public gtpu_tunnel_rx_upper_layer_interface
+class gtpu_tunnel_rx_upper_dummy : public gtpu_tunnel_common_rx_upper_layer_interface
 {
 public:
   void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) final { last_rx = std::move(pdu); }
@@ -93,14 +93,33 @@ TEST_F(gtpu_demux_test, when_tunnel_registered_pdu_is_forwarded)
   ASSERT_EQ(gtpu_tunnel->last_rx.length(), sizeof(gtpu_ping_vec_teid_1));
 }
 
-TEST_F(gtpu_demux_test, when_tunnel_is_removed_pdu_is_dropped)
+TEST_F(gtpu_demux_test, when_tunnel_was_removed_pdu_is_dropped)
 {
   sockaddr_storage src_addr = {};
   byte_buffer      pdu      = byte_buffer::create(gtpu_ping_vec_teid_1).value();
   dut->add_tunnel(gtpu_teid_t{0x1}, teid_worker, gtpu_tunnel.get());
   dut->remove_tunnel(gtpu_teid_t{0x1});
 
+  // pass and handle PDU when tunnel was already removed
   dut->handle_pdu(std::move(pdu), src_addr);
+  teid_worker.run_pending_tasks();
+
+  ASSERT_EQ(gtpu_tunnel->last_rx.length(), 0);
+}
+
+TEST_F(gtpu_demux_test, when_tunnel_is_being_removed_pdu_is_dropped)
+{
+  sockaddr_storage src_addr = {};
+  byte_buffer      pdu      = byte_buffer::create(gtpu_ping_vec_teid_1).value();
+  dut->add_tunnel(gtpu_teid_t{0x1}, teid_worker, gtpu_tunnel.get());
+
+  // pass PDU while tunnel is present
+  dut->handle_pdu(std::move(pdu), src_addr);
+
+  // remove tunnel while the PDU handler is queued for execution
+  dut->remove_tunnel(gtpu_teid_t{0x1});
+
+  // handle PDU when tunnel was removed; the PDU shall be dropped
   teid_worker.run_pending_tasks();
 
   ASSERT_EQ(gtpu_tunnel->last_rx.length(), 0);

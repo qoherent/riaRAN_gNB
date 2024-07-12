@@ -36,13 +36,12 @@ namespace ofh {
 class message_transmitter_impl : public ota_symbol_boundary_notifier
 {
   /// Maximum number of frames allowed to be transmitted in a single burst.
-  static constexpr unsigned MAX_BURST_SIZE = 64;
+  static constexpr unsigned MAX_BURST_SIZE = 128;
 
   /// Logger.
   srslog::basic_logger& logger;
   /// Ethernet frame pool.
-  std::shared_ptr<ether::eth_frame_pool> pool_ptr;
-  ether::eth_frame_pool&                 pool;
+  std::shared_ptr<ether::eth_frame_pool> pool;
   /// Gateway handling message transmission.
   std::unique_ptr<ether::gateway> gateway;
   /// Internal representation of timing parameters.

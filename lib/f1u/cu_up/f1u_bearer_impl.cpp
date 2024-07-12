@@ -28,18 +28,18 @@ using namespace srs_cu_up;
 f1u_bearer_impl::f1u_bearer_impl(uint32_t                       ue_index,
                                  drb_id_t                       drb_id_,
                                  const up_transport_layer_info& ul_tnl_info_,
+                                 const f1u_config&              config,
                                  f1u_tx_pdu_notifier&           tx_pdu_notifier_,
                                  f1u_rx_delivery_notifier&      rx_delivery_notifier_,
                                  f1u_rx_sdu_notifier&           rx_sdu_notifier_,
                                  timer_factory                  ue_dl_timer_factory,
                                  unique_timer&                  ue_inactivity_timer_,
-                                 task_executor&                 ul_exec_,
-                                 f1u_bearer_disconnector&       disconnector_) :
+                                 task_executor&                 ul_exec_) :
   logger("CU-F1-U", {ue_index, drb_id_, ul_tnl_info_}),
+  cfg(config),
   tx_pdu_notifier(tx_pdu_notifier_),
   rx_delivery_notifier(rx_delivery_notifier_),
   rx_sdu_notifier(rx_sdu_notifier_),
-  disconnector(disconnector_),
   ul_tnl_info(ul_tnl_info_),
   ul_exec(ul_exec_),
   dl_notif_timer(ue_dl_timer_factory.create_timer()),
@@ -54,7 +54,11 @@ void f1u_bearer_impl::handle_pdu(nru_ul_message msg)
   auto fn = [this, m = std::move(msg)]() mutable { handle_pdu_impl(std::move(m)); };
 
   if (not ul_exec.defer(std::move(fn))) {
-    logger.log_warning("Dropped F1-U PDU, queue is full.");
+    if (!cfg.warn_on_drop) {
+      logger.log_info("Dropped F1-U PDU, queue is full.");
+    } else {
+      logger.log_warning("Dropped F1-U PDU, queue is full.");
+    }
   }
 }
 
@@ -85,29 +89,31 @@ void f1u_bearer_impl::handle_pdu_impl(nru_ul_message msg)
       logger.log_debug("Notifying highest successfully delivered pdcp_sn={}", pdcp_sn);
       rx_delivery_notifier.on_delivery_notification(pdcp_sn);
     }
-    // Highest successfully delivered retransmitted PDCP SN
-    if (status.highest_delivered_retransmitted_pdcp_sn.has_value()) {
-      uint32_t pdcp_sn = status.highest_delivered_retransmitted_pdcp_sn.value();
-      logger.log_warning("Unhandled highest successfully delivered retransmitted pdcp_sn={}", pdcp_sn);
-      // TODO
-    }
     // Highest retransmitted PDCP SN
     if (status.highest_retransmitted_pdcp_sn.has_value()) {
       uint32_t pdcp_sn = status.highest_retransmitted_pdcp_sn.value();
-      logger.log_warning("Unhandled highest retransmitted pdcp_sn={}", pdcp_sn);
-      // TODO
+      logger.log_debug("Notifying highest retransmitted pdcp_sn={}", pdcp_sn);
+      rx_delivery_notifier.on_retransmit_notification(pdcp_sn);
+    }
+    // Highest successfully delivered retransmitted PDCP SN
+    if (status.highest_delivered_retransmitted_pdcp_sn.has_value()) {
+      uint32_t pdcp_sn = status.highest_delivered_retransmitted_pdcp_sn.value();
+      logger.log_debug("Notifying highest successfully delivered retransmitted pdcp_sn={}", pdcp_sn);
+      rx_delivery_notifier.on_delivery_retransmitted_notification(pdcp_sn);
     }
   }
 }
 
-void f1u_bearer_impl::handle_sdu(pdcp_tx_pdu sdu)
+void f1u_bearer_impl::handle_sdu(byte_buffer sdu, bool is_retx)
 {
-  logger.log_debug("F1-U bearer received SDU with pdcp_sn={}, size={}", sdu.pdcp_sn, sdu.buf.length());
+  logger.log_debug("F1-U bearer received SDU. size={} is_retx={}", sdu.length(), is_retx);
   nru_dl_message msg = {};
 
   // attach the SDU
-  msg.t_pdu   = std::move(sdu.buf);
-  msg.pdcp_sn = sdu.pdcp_sn;
+  msg.t_pdu = std::move(sdu);
+
+  // set retransmission flag
+  msg.dl_user_data.retransmission_flag = is_retx;
 
   // attach discard blocks (if any)
   fill_discard_blocks(msg);

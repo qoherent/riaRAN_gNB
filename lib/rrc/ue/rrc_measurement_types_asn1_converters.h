@@ -26,8 +26,8 @@
 #include "srsran/asn1/asn1_utils.h"
 #include "srsran/asn1/rrc_nr/common.h"
 #include "srsran/asn1/rrc_nr/dl_dcch_msg.h"
-#include "srsran/asn1/rrc_nr/rrc_nr.h"
-#include "srsran/asn1/rrc_nr/ul_dcch_msg.h"
+#include "srsran/asn1/rrc_nr/meas_timing_cfg.h"
+#include "srsran/asn1/rrc_nr/ul_dcch_msg_ies.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/rrc/meas_types.h"
 #include "srsran/srslog/srslog.h"
@@ -1270,7 +1270,8 @@ inline rrc_meas_result_nr asn1_to_meas_result_nr(const asn1::rrc_nr::meas_result
   return meas_result_nr;
 };
 
-inline rrc_meas_results asn1_to_measurement_results(const asn1::rrc_nr::meas_results_s& asn1_meas_results)
+inline rrc_meas_results asn1_to_measurement_results(const asn1::rrc_nr::meas_results_s& asn1_meas_results,
+                                                    srslog::basic_logger&               logger)
 {
   rrc_meas_results meas_results;
 
@@ -1307,8 +1308,8 @@ inline rrc_meas_results asn1_to_measurement_results(const asn1::rrc_nr::meas_res
       }
     } else {
       // error
-      report_fatal_error("Invalid meas result neigh cells type = {}.",
-                         asn1_meas_results.meas_result_neigh_cells.type());
+      logger.error("Ignoring neighbor cell measurement. Cause: Unsupported cell type {}",
+                   asn1_meas_results.meas_result_neigh_cells.type().to_string());
     }
 
     meas_results.meas_result_neigh_cells = meas_result_neigh_cell;

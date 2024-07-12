@@ -23,7 +23,7 @@
 #pragma once
 
 #include "pusch_codeblock_decoder.h"
-#include "srsran/adt/concurrent_queue.h"
+#include "srsran/adt/mutexed_mpsc_queue.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_decoder.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_decoder_buffer.h"
 #include "srsran/phy/upper/unique_rx_buffer.h"
@@ -189,7 +189,7 @@ private:
   /// Enqueues code block decoder statistics.
   concurrent_queue<unsigned, concurrent_queue_policy::locking_mpsc, concurrent_queue_wait_policy::sleep> cb_stats;
   /// Number of UL-SCH codeword softbits. If set, the decoder will start decoding codeblocks as they become available.
-  optional<units::bits> nof_ulsch_softbits;
+  std::optional<units::bits> nof_ulsch_softbits;
   /// Number of codeblocks in the current codeword.
   unsigned nof_codeblocks;
   /// CRC calculator for inner codeblock checks.
