@@ -9,11 +9,13 @@ amf:
 
 ru_sdr:
   device_driver: uhd                                              
-  device_args: type=x300
+  device_args: addr0=192.168.64.2, addr1=192.168.40.2, master_clock_rate=184.32e6
   srate: 23.04                                                    
-  otw_format: sc12  
-  tx_gain: 80                                                     
-  rx_gain: 40                                                     
+  #otw_format: sc12  
+  tx_gain: 20                                               
+  rx_gain: 20 
+  clock: external
+  sync: external                                             
 
 cell_cfg:
   dl_arfcn: 632628                                               

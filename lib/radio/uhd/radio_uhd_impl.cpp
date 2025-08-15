@@ -23,7 +23,7 @@
 #include "radio_uhd_impl.h"
 #include "radio_uhd_device.h"
 #include <thread>
-
+#include <chrono>
 #include <uhd/utils/thread_priority.h>
 
 using namespace srsran;
@@ -287,6 +287,22 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
       return;
     }
   }
+
+  // alec modification - align sample clocks
+  uhd::time_spec_t time_zero(0.0);
+  size_t num_mboards = 0;
+
+  if (device.get_num_mboards(num_mboards)) {
+      for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
+          device.set_time_next_pps(time_zero, mboard);
+      }
+  } else {
+      std::cerr << "Failed to get number of mboards." << std::endl;
+  }
+
+  // Wait 2 seconds to let PPS edge occur
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+
 
   // Set Tx rate.
   double actual_tx_rate_Hz = 0.0;

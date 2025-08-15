@@ -240,6 +240,18 @@ public:
   {
     return safe_execution([this, &timespec]() { timespec = usrp->get_time_now(); });
   }
+
+  //alec
+  bool get_num_mboards(size_t& num_mboards)
+  {
+    return safe_execution([this, &num_mboards]() { num_mboards = usrp->get_num_mboards(); });
+  }
+
+  bool set_time_next_pps(const uhd::time_spec_t& timespec, size_t mboard)
+  {
+    return safe_execution([this, &timespec, mboard]() { usrp->set_time_next_pps(timespec, mboard); });
+  }
+
   bool set_sync_source(const radio_configuration::clock_sources& config)
   {
     // Convert clock source to string.
