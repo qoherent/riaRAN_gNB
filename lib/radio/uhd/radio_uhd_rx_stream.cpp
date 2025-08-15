@@ -47,6 +47,9 @@ bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& comple
     buffs_flat_ptr[channel] = (void*)data[channel].subspan(offset, num_samples).data();
   }
 
+  size_t num_channels = data.get_nof_channels();
+  std::cout << "Number of channels: " << num_channels << std::endl;
+
   uhd::rx_streamer::buffs_type buffs_cpp(buffs_flat_ptr.data(), nof_channels);
 
   // Protect the UHD Tx stream against concurrent access.
