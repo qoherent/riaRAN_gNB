@@ -417,21 +417,20 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
       rx_port_map.emplace_back(port_to_stream_channel(stream_idx, channel_idx));
     }
 
-    //alec - set rx frequencies synchronously
-    uhd::time_spec_t cmd_time;
-    device.get_time_now(cmd_time);
-    cmd_time += 1.0;
+    // //alec - set rx frequencies synchronously
+    // uhd::time_spec_t cmd_time;
+    // device.get_time_now(cmd_time);
+    // cmd_time += 1.0;
 
-    size_t num_mboards = 0;
-    if (dev.get_num_mboards(num_mboards)) {
-        for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
-            device.set_command_time(cmd_time, mboard);
-            device.set_rx_rate(sample_rate, mboard);  // your wrapper
-        }
-    }
+    // if (device.get_num_mboards(num_mboards)) {
+    //     for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
+    //         device.set_command_time(cmd_time, mboard);
+    //         device.set_rx_rate(sample_rate, mboard);  // your wrapper
+    //     }
+    // }
 
     // Setup port.
-    for (unsigned channel_idx = 0; channel_idx != stream.channels.size(); ++channel_idx) {
+    for (unsigned channel_idx = 0; stream.channels.size(); ++channel_idx) {
       // Get the port index.
       unsigned port_idx = stream_description.ports[channel_idx];
 

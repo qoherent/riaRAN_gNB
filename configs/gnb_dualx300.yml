@@ -13,9 +13,11 @@ ru_sdr:
   srate: 23.04                                                    
   #otw_format: sc12  
   tx_gain: 20                                               
-  rx_gain: 20 
+  rx_gain: 20
   clock: external
-  sync: external                                             
+  sync: external     
+  expert_cfg:
+    tx_mode: discontinuous                                   
 
 cell_cfg:
   dl_arfcn: 632628                                               
@@ -24,7 +26,9 @@ cell_cfg:
   common_scs: 30                                                 
   plmn: "00101"                                                  
   tac: 7                                                         
-  pci: 1                                                         
+  pci: 1                    
+  nof_antennas_ul: 1
+  nof_antennas_dl: 1                                    
 
 log:
   filename: /tmp/gnb.log                                         
