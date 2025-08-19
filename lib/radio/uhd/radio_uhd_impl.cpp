@@ -430,7 +430,7 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
     // }
 
     // Setup port.
-    for (unsigned channel_idx = 0; stream.channels.size(); ++channel_idx) {
+    for (unsigned channel_idx = 0; channel_idx != stream.channels.size(); ++channel_idx) {
       // Get the port index.
       unsigned port_idx = stream_description.ports[channel_idx];
 
