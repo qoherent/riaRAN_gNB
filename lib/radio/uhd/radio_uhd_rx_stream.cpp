@@ -59,13 +59,13 @@ bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& comple
     nof_rxd_samples = stream->recv(buffs_cpp, num_samples, md, RECEIVE_TIMEOUT_S, ONE_PACKET);
 	
 	// Create a complex buffer to hold the received data
-    complex_buffer.resize(nof_rxd_samples);
+    // complex_buffer.resize(nof_rxd_samples);
 
     // Copy the received data into the complex buffer
-     memcpy(complex_buffer.data(), buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>));
+    // memcpy(complex_buffer.data(), buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>));
 
     // Send complex_buffer data to the socket
-    socket.send_to(boost::asio::buffer(complex_buffer.data(), nof_rxd_samples * sizeof(std::complex<float>)), endpoint);
+    socket.send_to(boost::asio::buffer(buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>)), endpoint);
 
   });
 }
