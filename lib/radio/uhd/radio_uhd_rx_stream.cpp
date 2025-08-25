@@ -65,7 +65,16 @@ bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& comple
     // memcpy(complex_buffer.data(), buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>));
 
     // Send complex_buffer data to the socket
-    socket.send_to(boost::asio::buffer(buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>)), endpoint);
+    std::vector<std::complex<float>> packet_buffer;
+    packet_buffer.resize(nof_channels * nof_rxd_samples);
+
+    for (unsigned i = 0; i < nof_rxd_samples; i++) {
+        for (unsigned ch = 0; ch < nof_channels; ch++) {
+            packet_buffer[i * nof_channels + ch] = ((std::complex<float>*)buffs_cpp[ch])[i];
+        }
+    }
+
+    socket.send_to(boost::asio::buffer(packet_buffer), endpoint);
 
   });
 }

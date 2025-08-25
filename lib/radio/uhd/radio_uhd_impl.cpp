@@ -181,26 +181,29 @@ bool radio_session_uhd_impl::set_rx_freq(unsigned port_idx, radio_configuration:
 
 bool radio_session_uhd_impl::start_rx_stream(baseband_gateway_timestamp init_time)
 {
-  // Prevent multiple threads from starting streams simultaneously.
   std::unique_lock<std::mutex> lock(stream_start_mutex);
-
   if (!stream_start_required) {
     return true;
   }
-
-  // Flag stream start is no longer required.
   stream_start_required = false;
 
-  // Immediate start of the stream.
-  uhd::time_spec_t time_spec = uhd::time_spec_t::from_ticks(init_time, actual_sampling_rate_Hz);
+  uhd::time_spec_t now_ts;
+  device.get_time_now(now_ts);
 
-  // Issue all streams to start.
+  // Convert init_time (ticks) -> timespec
+  uhd::time_spec_t req_ts = uhd::time_spec_t::from_ticks(init_time, actual_sampling_rate_Hz);
+
+  // Ensure start is at least 100 ms in the future
+  const uhd::time_spec_t safety = uhd::time_spec_t(0.10);
+  if (req_ts <= now_ts + uhd::time_spec_t(0.01)) {
+    req_ts = now_ts + safety;
+  }
+
   for (auto& bb_gateway : bb_gateways) {
-    if (!bb_gateway->get_rx_stream().start(time_spec)) {
+    if (!bb_gateway->get_rx_stream().start(req_ts)) {
       return false;
     }
   }
-
   return true;
 }
 
@@ -288,20 +291,26 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
     }
   }
 
-  // alec modification - align sample clocks
-  uhd::time_spec_t time_zero(0.0);
-  size_t num_mboards = 0;
+  // // alec modification - align sample clocks
+  // uhd::time_spec_t time_zero(0.0);
+  // size_t num_mboards = 0;
 
-  if (device.get_num_mboards(num_mboards)) {
-      for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
-          device.set_time_next_pps(time_zero, mboard);
-      }
-  } else {
-      std::cerr << "Failed to get number of mboards." << std::endl;
-  }
+  // if (device.get_num_mboards(num_mboards)) {
+  //     fmt::print("Num mboards {}\n", num_mboards);
 
-  // Wait 2 seconds to let PPS edge occur
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  //     const double stagger_step = 0.001; // 100 µs per mboard
+
+  //     for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
+  //         uhd::time_spec_t staggered_time = time_zero + uhd::time_spec_t(mboard * stagger_step);
+  //         device.set_time_next_pps(staggered_time, mboard);
+  //         fmt::print("Armed mboard {} for PPS at {} s\n", mboard, staggered_time.get_real_secs());
+  //     }
+  // } else {
+  //     std::cerr << "Failed to get number of mboards." << std::endl;
+  // }
+
+  // // Wait 2 seconds to let PPS edge occur
+  // std::this_thread::sleep_for(std::chrono::seconds(2));
 
 
   // Set Tx rate.
@@ -324,10 +333,10 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
   actual_sampling_rate_Hz = actual_rx_rate_Hz;
 
   // Reset timestamps.
-  if ((total_rx_channel_count > 1 || total_tx_channel_count > 1) &&
-      radio_config.clock.sync != radio_configuration::clock_sources::source::GPSDO) {
-    device.set_time_unknown_pps(uhd::time_spec_t());
-  }
+  // if ((total_rx_channel_count > 1 || total_tx_channel_count > 1) &&
+  //     radio_config.clock.sync != radio_configuration::clock_sources::source::GPSDO) {
+  //   device.set_time_unknown_pps(uhd::time_spec_t());
+  // }
 
   // Lists of stream descriptions.
   std::vector<radio_uhd_tx_stream::stream_description> tx_stream_description_list;
@@ -417,17 +426,18 @@ radio_session_uhd_impl::radio_session_uhd_impl(const radio_configuration::radio&
       rx_port_map.emplace_back(port_to_stream_channel(stream_idx, channel_idx));
     }
 
-    // //alec - set rx frequencies synchronously
-    // uhd::time_spec_t cmd_time;
-    // device.get_time_now(cmd_time);
-    // cmd_time += 1.0;
+    // // //alec - set rx frequencies synchronously
+    // // uhd::time_spec_t cmd_time;
+    // // device.get_time_now(cmd_time);
+    // // cmd_time += 1.0;
 
-    // if (device.get_num_mboards(num_mboards)) {
-    //     for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
-    //         device.set_command_time(cmd_time, mboard);
-    //         device.set_rx_rate(sample_rate, mboard);  // your wrapper
-    //     }
-    // }
+    // // if (device.get_num_mboards(num_mboards)) {
+    // //     for (size_t mboard = 0; mboard < num_mboards; ++mboard) {
+    // //         device.set_command_time(cmd_time, mboard);
+    // //         device.set_rx_rate(sample_rate, mboard);  // your wrapper
+    // //     }
+    // // }
+
 
     // Setup port.
     for (unsigned channel_idx = 0; channel_idx != stream.channels.size(); ++channel_idx) {
