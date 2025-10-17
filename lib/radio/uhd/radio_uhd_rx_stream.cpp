@@ -21,103 +21,178 @@
  */
 
 #include "radio_uhd_rx_stream.h"
-#include <complex>
-#include <vector> 
 
+#include <complex>
+#include <vector>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 using namespace srsran;
 
-bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& complex_buffer,unsigned& nof_rxd_samples, baseband_gateway_buffer_writer& data, unsigned offset, uhd::rx_metadata_t& md)
-{
-  // Extract number of samples.
-  unsigned num_samples = data.get_nof_samples() - offset;
-  
-  // Ignore reception if it is not streaming.
-  if (state != states::STREAMING) {
-    nof_rxd_samples = num_samples;
-    return true;
-  }
+static float* gp_shared = nullptr;  // Shared memory pointer to 8 floats (4 gains + 4 phases)
 
-  // Make sure the number of channels is equal.
-  srsran_assert(data.get_nof_channels() == nof_channels, "Number of channels does not match."); //alec
+// Initialize shared memory once
+void init_shared_memory() {
+    const char* shm_name = "dev/shm/my_shared_mem";
+    size_t shm_size = 8 * sizeof(float);
 
-  // Flatten buffers.
-  static_vector<void*, RADIO_MAX_NOF_CHANNELS> buffs_flat_ptr(nof_channels);
-  for (unsigned channel = 0; channel != nof_channels; ++channel) {
-    buffs_flat_ptr[channel] = (void*)data[channel].subspan(offset, num_samples).data();
-  }
-
-  // size_t num_channels = data.get_nof_channels();
-  // std::cout << "Number of channels: " << num_channels << std::endl;
-
-  uhd::rx_streamer::buffs_type buffs_cpp(buffs_flat_ptr.data(), nof_channels);
-
-  // Protect the UHD Tx stream against concurrent access.
-  std::unique_lock<std::mutex> lock(stream_mutex);
-
-  return safe_execution([this, buffs_cpp, num_samples, &md, &nof_rxd_samples, &complex_buffer]() {
-    nof_rxd_samples = stream->recv(buffs_cpp, num_samples, md, RECEIVE_TIMEOUT_S, ONE_PACKET);
-	
-	// Create a complex buffer to hold the received data
-    // complex_buffer.resize(nof_rxd_samples);
-
-    // Copy the received data into the complex buffer
-    // memcpy(complex_buffer.data(), buffs_cpp[0], nof_rxd_samples * sizeof(std::complex<float>));
-
-    // Send complex_buffer data to the socket
-    std::vector<std::complex<float>> packet_buffer;
-    packet_buffer.resize(nof_channels * nof_rxd_samples);
-
-    for (unsigned i = 0; i < nof_rxd_samples; i++) {
-        for (unsigned ch = 0; ch < nof_channels; ch++) {
-            packet_buffer[i * nof_channels + ch] = ((std::complex<float>*)buffs_cpp[ch])[i];
-        }
+    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(1);
     }
 
-    socket.send_to(boost::asio::buffer(packet_buffer), endpoint);
+    int ret = ftruncate(shm_fd, shm_size);
+    if (ret != 0) {
+        perror("ftruncate");
+        exit(1);
+    }
 
-  });
+
+    void* ptr = mmap(0, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (ptr == MAP_FAILED) {
+        perror("mmap");
+        exit(1);
+    }
+
+    gp_shared = static_cast<float*>(ptr);
 }
+
+// --------------------------- receive_block ---------------------------
+
+bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& complex_buffer,
+                                        unsigned& nof_rxd_samples,
+                                        baseband_gateway_buffer_writer& data,
+                                        unsigned offset,
+                                        uhd::rx_metadata_t& md)
+{
+    unsigned num_samples = data.get_nof_samples() - offset;
+
+    if (state != states::STREAMING) {
+        nof_rxd_samples = num_samples;
+        return true;
+    }
+
+    srsran_assert(data.get_nof_channels() == nof_channels, "Number of channels does not match.");
+
+    // Flatten channel buffers
+    static_vector<void*, RADIO_MAX_NOF_CHANNELS> buffs_flat_ptr(nof_channels);
+    for (unsigned channel = 0; channel != nof_channels; ++channel) {
+        buffs_flat_ptr[channel] = (void*)data[channel].subspan(offset, num_samples).data();
+    }
+
+    uhd::rx_streamer::buffs_type buffs_cpp(buffs_flat_ptr.data(), nof_channels);
+
+    std::unique_lock<std::mutex> lock(stream_mutex);
+
+    return safe_execution([this, buffs_cpp, num_samples, &md, &nof_rxd_samples]() {
+        // Receive samples
+        nof_rxd_samples = stream->recv(buffs_cpp, num_samples, md, RECEIVE_TIMEOUT_S, ONE_PACKET);
+
+        // Interleaved UDP packet
+        std::vector<std::complex<float>> packet_buffer(nof_channels * nof_rxd_samples);
+        for (unsigned i = 0; i < nof_rxd_samples; i++) {
+            for (unsigned ch = 0; ch < nof_channels; ch++) {
+                packet_buffer[i * nof_channels + ch] = ((std::complex<float>*)buffs_cpp[ch])[i];
+            }
+        }
+        socket.send_to(boost::asio::buffer(packet_buffer), endpoint);
+
+        // -------- Apply gains/phases from shared memory and sum --------
+        std::array<float,4> gains = {1,1,1,1};
+        std::array<float,4> phases = {0,0,0,0};
+        if (gp_shared) {
+            for (unsigned ch = 0; ch < 4; ch++) {
+                gains[ch] = gp_shared[ch];
+                phases[ch] = gp_shared[4 + ch];
+                
+            }
+        }
+
+           // ⚡ Minimal debug print
+        if (++debug_print_counter % 100 == 0) { // prints every 100 calls
+            std::printf("[DEBUG] Gains: %.3f %.3f %.3f %.3f | Phases: %.3f %.3f %.3f %.3f\n",
+                        gains[0], gains[1], gains[2], gains[3],
+                        phases[0], phases[1], phases[2], phases[3]);
+        }
+
+
+        std::vector<std::complex<float>> output(nof_rxd_samples, {0.0f, 0.0f});
+        std::complex<float> mult[4];
+        for (unsigned ch = 0; ch < nof_channels; ch++) {
+            mult[ch] = std::polar(gains[ch], phases[ch]);
+        }
+
+        for (unsigned i = 0; i < nof_rxd_samples; i++) {
+            std::complex<float> sum(0.0f, 0.0f);
+            for (unsigned ch = 0; ch < nof_channels; ch++) {
+                std::complex<float>* channel_data = reinterpret_cast<std::complex<float>*>(buffs_cpp[ch]);
+                sum += channel_data[i] * mult[ch];
+            }
+            output[i] = sum;
+        }
+
+        // -------- Overwrite each channel in buffs_cpp with output --------
+        for (unsigned ch = 0; ch < nof_channels; ch++) {
+            std::complex<float>* channel_data = reinterpret_cast<std::complex<float>*>(buffs_cpp[ch]);
+            for (unsigned i = 0; i < nof_rxd_samples; i++) {
+                channel_data[i] = output[i];
+            }
+        }
+    });
+}
+
+// --------------------------- Constructor ---------------------------
 
 radio_uhd_rx_stream::radio_uhd_rx_stream(uhd::usrp::multi_usrp::sptr& usrp,
-                                         const stream_description&    description,
-                                         radio_notification_handler&  notifier_) :
-  id(description.id), srate_Hz(description.srate_Hz), notifier(notifier_),  // Initialize the notifier member first
-  socket(io_service),   // Initialize the socket member next
-  endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 5588) // Change IP and port as needed
+                                         const stream_description& description,
+                                         radio_notification_handler& notifier_) :
+    id(description.id),
+    srate_Hz(description.srate_Hz),
+    notifier(notifier_),
+    socket(io_service),
+    endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 5588)
 {
-  srsran_assert(std::isnormal(srate_Hz) && (srate_Hz > 0.0), "Invalid sampling rate {}.", srate_Hz);
+    srsran_assert(std::isnormal(srate_Hz) && (srate_Hz > 0.0), "Invalid sampling rate {}.", srate_Hz);
 
-  // Build stream arguments.
-  uhd::stream_args_t stream_args = {};
-  stream_args.cpu_format         = "fc32";
-  switch (description.otw_format) {
-    case radio_configuration::over_the_wire_format::DEFAULT:
-    case radio_configuration::over_the_wire_format::SC16:
-      stream_args.otw_format = "sc16";
-      break;
-    case radio_configuration::over_the_wire_format::SC12:
-      stream_args.otw_format = "sc12";
-      break;
-    case radio_configuration::over_the_wire_format::SC8:
-      stream_args.otw_format = "sc8";
-      break;
-  }
-  stream_args.args     = description.args;
-  stream_args.channels = description.ports;
+    uhd::stream_args_t stream_args = {};
+    stream_args.cpu_format = "fc32";
+    switch (description.otw_format) {
+        case radio_configuration::over_the_wire_format::DEFAULT:
+        case radio_configuration::over_the_wire_format::SC16:
+            stream_args.otw_format = "sc16";
+            break;
+        case radio_configuration::over_the_wire_format::SC12:
+            stream_args.otw_format = "sc12";
+            break;
+        case radio_configuration::over_the_wire_format::SC8:
+            stream_args.otw_format = "sc8";
+            break;
+    }
+    stream_args.args = description.args;
+    stream_args.channels = description.ports;
 
-  if (!safe_execution([this, usrp, &stream_args]() {
-        stream          = usrp->get_rx_stream(stream_args);
+    if (!safe_execution([this, usrp, &stream_args]() {
+        stream = usrp->get_rx_stream(stream_args);
         max_packet_size = stream->get_max_num_samps();
-        nof_channels    = stream->get_num_channels();
-      })) {
-    return;
-  }
+        nof_channels = stream->get_num_channels();
+    })) {
+        return;
+    }
 
-  state = states::SUCCESSFUL_INIT;
+    // ✅ Initialize shared memory
+    init_shared_memory();
 
-  socket.open(boost::asio::ip::udp::v4());
+    state = states::SUCCESSFUL_INIT;
+
+    socket.open(boost::asio::ip::udp::v4());
 }
+
 
 
 bool radio_uhd_rx_stream::start(const uhd::time_spec_t& time_spec)

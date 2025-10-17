@@ -37,6 +37,8 @@ namespace srsran {
 class radio_uhd_rx_stream : public uhd_exception_handler, public baseband_gateway_receiver
 {
 private:
+
+   unsigned debug_print_counter = 0;
    
     /// Receive timeout in seconds.
   static constexpr double RECEIVE_TIMEOUT_S = 0.2f;
