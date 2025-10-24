@@ -8,8 +8,9 @@ amf:
   bind_addr: 127.0.0.5                             
 
 ru_sdr:
-  device_driver: uhd                                              
-  device_args: addr0=192.168.64.2, addr1=192.168.40.2, master_clock_rate=184.32e6,recv_buff_size=24912805,send_buff_size=24912805,recv_frame_size=8000,send_frame_size=8000
+  device_driver: uhd    
+  device_args: addr0=192.168.64.2, master_clock_rate=184.32e6,recv_buff_size=24912805,send_buff_size=24912805,recv_frame_size=8000,send_frame_size=8000                                          
+  # device_args: addr0=192.168.64.2, addr1=192.168.40.2, master_clock_rate=184.32e6,recv_buff_size=24912805,send_buff_size=24912805,recv_frame_size=8000,send_frame_size=8000
   srate: 23.04                                                    
   #otw_format: sc12  
   tx_gain: 20                                               
@@ -27,7 +28,7 @@ cell_cfg:
   plmn: "00101"                                                  
   tac: 7                                                         
   pci: 1                    
-  nof_antennas_ul: 4
+  nof_antennas_ul: 2
   nof_antennas_dl: 1                               
 
 log:

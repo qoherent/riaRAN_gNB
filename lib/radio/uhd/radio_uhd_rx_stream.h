@@ -67,6 +67,7 @@ private:
   boost::asio::io_service io_service;
   boost::asio::ip::udp::socket socket;
   boost::asio::ip::udp::endpoint endpoint;
+  boost::asio::ip::udp::endpoint endpoint2; // temporary endpoint for testing (Elsayed)
 
   /// \brief Receives a single block of baseband samples.
   /// \param[out] nof_rxd_samples Indicate the number of samples received in the block.

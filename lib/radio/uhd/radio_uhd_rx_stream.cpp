@@ -35,12 +35,16 @@
 using namespace srsran;
 
 static float* gp_shared = nullptr;  // Shared memory pointer to 8 floats (4 gains + 4 phases)
+float gains_id = -1;
+std::array<float,2> gains = {1, 1};
+std::array<float,2> phases = {0, 0};
+std::complex<float> mult[2] = {1, 1};
 
 // Initialize shared memory once
 void init_shared_memory() {
-    const char* shm_name = "dev/shm/my_shared_mem";
-    size_t shm_size = 8 * sizeof(float);
-
+    const char* shm_name = "/iris_gains_and_phases_2";
+    size_t shm_size = 9 * sizeof(float);
+    
     int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
         perror("shm_open");
@@ -63,6 +67,20 @@ void init_shared_memory() {
     gp_shared = static_cast<float*>(ptr);
 }
 
+void connect_to_shared_memory(){
+    const char* SHM_NAME = "/iris_gains_and_phases";
+    size_t SHM_SIZE = (4+1) * sizeof(float);
+    int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
+    if (shm_fd == -1) {
+        // std::cerr << "Failed to open shared memory\n";
+        perror("Failed to open shared memory");
+        exit(1);
+    }
+    void* shm_ptr = mmap(nullptr, SHM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
+    gp_shared = static_cast<float*>(shm_ptr);
+    gains_id = gp_shared[0];
+  
+}
 // --------------------------- receive_block ---------------------------
 
 bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& complex_buffer,
@@ -79,7 +97,6 @@ bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& comple
     }
 
     srsran_assert(data.get_nof_channels() == nof_channels, "Number of channels does not match.");
-
     // Flatten channel buffers
     static_vector<void*, RADIO_MAX_NOF_CHANNELS> buffs_flat_ptr(nof_channels);
     for (unsigned channel = 0; channel != nof_channels; ++channel) {
@@ -92,9 +109,10 @@ bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& comple
 
     return safe_execution([this, buffs_cpp, num_samples, &md, &nof_rxd_samples]() {
         // Receive samples
-        nof_rxd_samples = stream->recv(buffs_cpp, num_samples, md, RECEIVE_TIMEOUT_S, ONE_PACKET);
+        nof_rxd_samples = stream->recv(buffs_cpp, num_samples, md, RECEIVE_TIMEOUT_S, ONE_PACKET); // 1996
 
         // Interleaved UDP packet
+        // std::printf("PHASE2: %.2f\n", phases[1]);
         std::vector<std::complex<float>> packet_buffer(nof_channels * nof_rxd_samples);
         for (unsigned i = 0; i < nof_rxd_samples; i++) {
             for (unsigned ch = 0; ch < nof_channels; ch++) {
@@ -104,46 +122,75 @@ bool radio_uhd_rx_stream::receive_block(std::vector<std::complex<float>>& comple
         socket.send_to(boost::asio::buffer(packet_buffer), endpoint);
 
         // -------- Apply gains/phases from shared memory and sum --------
-        std::array<float,4> gains = {1,1,1,1};
-        std::array<float,4> phases = {0,0,0,0};
-        if (gp_shared) {
-            for (unsigned ch = 0; ch < 4; ch++) {
-                gains[ch] = gp_shared[ch];
-                phases[ch] = gp_shared[4 + ch];
-                
+        
+    
+        if (gp_shared[0] != gains_id){
+          gains_id = gp_shared[0];
+          for (unsigned ch = 0; ch < 2; ch++) {
+                gains[ch] = gp_shared[ch+1];
+                phases[ch] = gp_shared[(2+1) + ch];
             }
-        }
-
-           // ⚡ Minimal debug print
-        if (++debug_print_counter % 100 == 0) { // prints every 100 calls
-            std::printf("[DEBUG] Gains: %.3f %.3f %.3f %.3f | Phases: %.3f %.3f %.3f %.3f\n",
-                        gains[0], gains[1], gains[2], gains[3],
-                        phases[0], phases[1], phases[2], phases[3]);
-        }
-
-
-        std::vector<std::complex<float>> output(nof_rxd_samples, {0.0f, 0.0f});
-        std::complex<float> mult[4];
+        //   ⚡ Minimal debug print
+        // if (++debug_print_counter % 100 == 0) { // prints every 100 calls
+          std::printf("[DEBUG] Gains: %.3f %.3f | Phases: %.3f %.3f\n",
+                      gains[0], gains[1],// gains[2], gains[3],
+                      phases[0], phases[1]);//, phases[2], phases[3]);
+        // }
         for (unsigned ch = 0; ch < nof_channels; ch++) {
             mult[ch] = std::polar(gains[ch], phases[ch]);
+            std::printf("mult[%d] = %.4f +i %.4f\n", ch, mult[ch].real(), mult[ch].imag());
+        }
         }
 
-        for (unsigned i = 0; i < nof_rxd_samples; i++) {
-            std::complex<float> sum(0.0f, 0.0f);
-            for (unsigned ch = 0; ch < nof_channels; ch++) {
-                std::complex<float>* channel_data = reinterpret_cast<std::complex<float>*>(buffs_cpp[ch]);
-                sum += channel_data[i] * mult[ch];
-            }
-            output[i] = sum;
-        }
+           
+
+
+        
+        
+        
+
+        // std::vector<std::complex<float>> output(nof_rxd_samples, {0.0f, 0.0f});
+        // for (unsigned i = 0; i < nof_rxd_samples; i++) {
+        //     std::complex<float> sum(0.0f, 0.0f);
+        //     for (unsigned ch = 0; ch < nof_channels; ch++) {
+        //         std::complex<float>* channel_data = reinterpret_cast<std::complex<float>*>(buffs_cpp[ch]);
+        //         sum += channel_data[i] * mult[ch];                
+        //     }
+        //     output[i] = sum;
+        // } // ELsayed --> not being used for now but it should be
+        
+        // std::complex<float>* ch0_print = reinterpret_cast<std::complex<float>*>(buffs_cpp[0]);
+        // std::complex<float>* ch1_print = reinterpret_cast<std::complex<float>*>(buffs_cpp[1]);
+        // std::cout << "before [0][100]: " << " --> "  << ch0_print[100]  << std::endl;
+        // std::cout << "before [1][100]: " << " --> "  << ch1_print[100]  << std::endl;
+        // std::cout << "before [0][1291]: " << " --> "  << ch0_print[1291]  << std::endl;
+        // std::cout << "before [1][1291]: " << " --> "  << ch1_print[1291]  << std::endl;
 
         // -------- Overwrite each channel in buffs_cpp with output --------
         for (unsigned ch = 0; ch < nof_channels; ch++) {
             std::complex<float>* channel_data = reinterpret_cast<std::complex<float>*>(buffs_cpp[ch]);
             for (unsigned i = 0; i < nof_rxd_samples; i++) {
-                channel_data[i] = output[i];
+                // channel_data[i] = output[i]; 
+                channel_data[i] = channel_data[i] * mult[ch];
             }
         }
+        // std::complex<float>* ch0_print2 = reinterpret_cast<std::complex<float>*>(buffs_cpp[0]);
+        // std::complex<float>* ch1_print2 = reinterpret_cast<std::complex<float>*>(buffs_cpp[1]);
+        // std::cout << "after [0][100]: " << " --> "  << ch0_print2[100]  << std::endl;
+        // std::cout << "after [1][100]: " << " --> "  << ch1_print2[100]  << std::endl;
+        // std::cout << "after [0][1291]: " << " --> "  << ch0_print2[1291]  << std::endl;
+        // std::cout << "after [1][1291]: " << " --> "  << ch1_print2[1291]  << std::endl;
+        
+
+        // ----------------------------- 2nd Transmission -------------------------- //
+        // Interleaved UDP packet
+        std::vector<std::complex<float>> packet_buffer2(nof_channels * nof_rxd_samples);
+        for (unsigned i = 0; i < nof_rxd_samples; i++) {
+            for (unsigned ch = 0; ch < nof_channels; ch++) {
+                packet_buffer2[i * nof_channels + ch] = ((std::complex<float>*)buffs_cpp[ch])[i];
+            }
+        }
+        socket.send_to(boost::asio::buffer(packet_buffer2), endpoint2);
     });
 }
 
@@ -156,7 +203,8 @@ radio_uhd_rx_stream::radio_uhd_rx_stream(uhd::usrp::multi_usrp::sptr& usrp,
     srate_Hz(description.srate_Hz),
     notifier(notifier_),
     socket(io_service),
-    endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 5588)
+    endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 5588),
+    endpoint2(boost::asio::ip::address::from_string("127.0.0.1"), 5589)
 {
     srsran_assert(std::isnormal(srate_Hz) && (srate_Hz > 0.0), "Invalid sampling rate {}.", srate_Hz);
 
@@ -186,7 +234,8 @@ radio_uhd_rx_stream::radio_uhd_rx_stream(uhd::usrp::multi_usrp::sptr& usrp,
     }
 
     // ✅ Initialize shared memory
-    init_shared_memory();
+    // init_shared_memory();
+    connect_to_shared_memory();
 
     state = states::SUCCESSFUL_INIT;
 
